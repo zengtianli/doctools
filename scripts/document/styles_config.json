@@ -1,0 +1,16 @@
+{
+  "source": "template.docx",
+  "body_style": "ZDWP",
+  "body_style_name": "ZDWP正文",
+  "styles": {
+    "a": "Normal",
+    "10": "heading 1",
+    "2": "heading 2",
+    "3": "heading 3",
+    "4": "heading 4",
+    "ZDWP": "ZDWP正文",
+    "ZDWP1": "ZDWP 表名",
+    "ZDWP3": "ZDWP表格内容",
+    "ZDWP4": "ZDWP图名"
+  }
+}

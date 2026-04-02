@@ -1,0 +1,27 @@
+# Ruff configuration for ~/Dev/scripts
+# 99 个 Python 脚本的质量门禁
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+# 启用常用规则，排除过严的
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (format 会处理)
+    "E402",   # module import not at top (脚本常有 sys.path 操作)
+    "B008",   # function call in default argument
+    "SIM108", # use ternary operator (可读性优先)
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
