@@ -11,7 +11,7 @@
 # @raycast.description 把 MD 文件或目录渲染成网页在浏览器中打开
 # @raycast.argument1 { "type": "text", "placeholder": "文件或目录路径" }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "$0")")" SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)" pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PYTHON=$(which python3)
 
