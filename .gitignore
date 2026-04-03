@@ -3,3 +3,17 @@ __pycache__/
 .DS_Store
 .ruff_cache/
 templates/
+
+# Baseline (auto-added by /groom)
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.egg-info/
+dist/
+build/
