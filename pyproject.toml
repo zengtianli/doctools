@@ -1,0 +1,25 @@
+[project]
+name = "doctools"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.135.3",
+    "lxml>=6.0.3",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.4",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.2",
+    "plotly>=6.7.0",
+    "pydantic>=2.12.5",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.26",
+    "python-pptx>=1.0.2",
+    "pyyaml>=6.0.3",
+    "requests>=2.33.1",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "streamlit>=1.56.0",
+    "uvicorn>=0.44.0",
+    "xlrd>=2.0.2",
+]
