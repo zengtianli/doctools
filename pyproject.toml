@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "dockit",
     "fastapi>=0.135.3",
     "lxml>=6.0.3",
     "matplotlib>=3.10.8",
@@ -23,3 +24,6 @@ dependencies = [
     "uvicorn>=0.44.0",
     "xlrd>=2.0.2",
 ]
+
+[tool.uv.sources]
+dockit = { path = "../dockit", editable = true }

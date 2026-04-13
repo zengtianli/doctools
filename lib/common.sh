@@ -19,11 +19,10 @@ readonly PROJECT_ROOT="$(cd "$_COMMON_SH_DIR/.." && pwd)"
 readonly SCRIPTS_DIR="$PROJECT_ROOT/scripts"
 
 # ===== 环境变量设置 =====
-# 确保 miniforge bin 在 PATH 中（Raycast 非交互式 shell 不继承 alias/profile）
-readonly MINIFORGE_BIN="$HOME/miniforge3/bin"
-if [ -d "$MINIFORGE_BIN" ]; then
-    export PATH="$MINIFORGE_BIN:$PATH"
-fi
+# 确保 uv 和 homebrew 的 bin 在 PATH 中（Raycast 非交互式 shell 不继承 profile）
+for _bin_dir in "$HOME/.local/bin" "/opt/homebrew/bin"; do
+    [ -d "$_bin_dir" ] && export PATH="$_bin_dir:$PATH"
+done
 # 加载用户环境变量（API keys 等）
 _ENV_ZSH="$HOME/Documents/sync/zsh/config/env.zsh"
 if [ -f "$_ENV_ZSH" ]; then

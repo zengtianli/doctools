@@ -7,7 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
 
 run_python() {
     local script_name="$1"; shift
-    exec python3 "$SCRIPTS_DIR/$script_name" "$@"
+    exec uv run --project "$PROJECT_ROOT" python3 "$SCRIPTS_DIR/$script_name" "$@"
 }
 
 run_streamlit() {
