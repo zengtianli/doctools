@@ -8,7 +8,7 @@
 
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh"
 
-PYTHON="$PYTHON_PATH"
+PYTHON="uv run --project $PROJECT_ROOT python3"
 SCRIPT_DIR="$SCRIPTS_DIR/document"
 
 # ── 处理单个文件 ─────────────────────────────────────────────
