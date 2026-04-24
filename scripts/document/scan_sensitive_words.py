@@ -457,10 +457,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例：
-  %(prog)s ~/Work/zdwp/docs/                    # 扫描目录，输出表格
-  %(prog)s ~/Work/zdwp/docs/ --json              # 输出 JSON
-  %(prog)s ~/Work/zdwp/docs/ --update            # 扫描后交互式更新词表
-  %(prog)s ~/Work/zdwp/docs/ --config words.json # 指定配置文件
+  %(prog)s ~/Dev/Work/zdwp/docs/                    # 扫描目录，输出表格
+  %(prog)s ~/Dev/Work/zdwp/docs/ --json              # 输出 JSON
+  %(prog)s ~/Dev/Work/zdwp/docs/ --update            # 扫描后交互式更新词表
+  %(prog)s ~/Dev/Work/zdwp/docs/ --config words.json # 指定配置文件
         """,
     )
     parser.add_argument("directory", help="要扫描的目录路径")
