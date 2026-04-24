@@ -26,4 +26,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-dockit = { path = "../dockit", editable = true }
+dockit = { path = "../../stations/dockit", editable = true }
