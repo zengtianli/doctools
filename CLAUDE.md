@@ -2,6 +2,8 @@
 
 文档处理与数据转换工具集，从 scripts 仓库拆分。主要通过 Raycast 调用。
 
+> **Python venv**：共享于 `~/Dev/.venv`（uv workspace member · 见 `~/Dev/CLAUDE.md` § uv workspace）。本 repo 不建独立 `.venv`。改 deps → 改 `pyproject.toml` + `cd ~/Dev && uv sync`。
+
 ## 目录结构
 
 ```
