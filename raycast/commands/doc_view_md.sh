@@ -10,5 +10,6 @@
 # @raycast.icon 📄
 # @raycast.description 把 MD 文件或目录渲染成网页在浏览器中打开
 # @raycast.argument1 { "type": "text", "placeholder": "文件或目录路径" }
+source ~/Dev/devtools/lib/log_usage.sh
 
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/md_tools.py" to-html "$1"

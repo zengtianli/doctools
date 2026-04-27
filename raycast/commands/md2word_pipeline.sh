@@ -5,6 +5,7 @@
 # @raycast.mode fullOutput
 # @raycast.icon 📝
 # @raycast.packageName Document Processing
+source ~/Dev/devtools/lib/log_usage.sh
 
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh"
 

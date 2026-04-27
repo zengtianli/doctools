@@ -6,4 +6,5 @@
 # @raycast.packageName Document Processing
 # @raycast.description Fix text formatting in Word document (quotes, punctuation, units)
 # @raycast.argument1 { "type": "text", "placeholder": "文件路径", "optional": true }
+source ~/Dev/devtools/lib/log_usage.sh
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/docx_text_formatter.py" "$@"

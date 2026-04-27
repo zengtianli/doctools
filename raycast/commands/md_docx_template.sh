@@ -5,4 +5,5 @@
 # @raycast.mode fullOutput
 # @raycast.icon 📄
 # @raycast.packageName DOCX
+source ~/Dev/devtools/lib/log_usage.sh
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/md_docx_template.py" "$@"

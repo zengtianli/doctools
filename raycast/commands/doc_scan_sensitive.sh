@@ -6,4 +6,5 @@
 # @raycast.packageName Document Processing
 # @raycast.description Scan bid documents for sensitive words using Claude AI
 # @raycast.argument1 { "type": "text", "placeholder": "Directory path", "optional": false }
+source ~/Dev/devtools/lib/log_usage.sh
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/scan_sensitive_words.py" "$1"

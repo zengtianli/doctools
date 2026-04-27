@@ -6,6 +6,7 @@
 # @raycast.icon 📝
 # @raycast.packageName Scripts
 # @raycast.argument1 { "type": "text", "placeholder": "MD 文件/目录路径", "optional": true }
+source ~/Dev/devtools/lib/log_usage.sh
 
 input="$1"
 
