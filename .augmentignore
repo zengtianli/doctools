@@ -1,6 +1,5 @@
 # augment 索引排除（gitignore glob 语法）
-# 2026-04-27 立 · ssot-os v0.2-1.2 · 472M 中 .venv 占 472M
+# 顶层 ~/Dev/.augmentignore 已覆盖 .venv / __pycache__
+# 此处仅保留 doctools 特有的样本目录
 
-.venv/
-**/__pycache__/
 templates/_samples/
