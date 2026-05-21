@@ -31,6 +31,7 @@ from matplotlib.font_manager import FontProperties
 from matplotlib.patches import FancyBboxPatch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from display import show_error, show_info, show_success, show_warning
 
 # ── 版本信息（原 chart_common.py）──────────────────────────────

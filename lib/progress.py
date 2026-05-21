@@ -3,6 +3,10 @@
 进度跟踪模块
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))
+
 from display import show_info, show_processing
 
 

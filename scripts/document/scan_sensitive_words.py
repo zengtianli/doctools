@@ -26,6 +26,7 @@ from pathlib import Path
 # === 路径设置 ===
 SCRIPTS_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPTS_ROOT / "lib"))
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 
 from display import show_error, show_info, show_processing, show_success, show_warning
 from file_ops import find_files_by_extension

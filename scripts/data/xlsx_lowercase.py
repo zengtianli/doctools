@@ -19,6 +19,7 @@ from pathlib import Path
 
 # 添加 lib 到搜索路径
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 
 from finder import get_input_files
 

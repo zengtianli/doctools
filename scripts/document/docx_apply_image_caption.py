@@ -24,6 +24,7 @@ from docx import Document
 from docx.oxml.ns import qn
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from finder import get_input_files
 from progress import ProgressTracker
 

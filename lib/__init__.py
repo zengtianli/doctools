@@ -12,6 +12,11 @@
 
 __version__ = "1.0.0"
 
+# Redirect 5 canonical modules to tools/dev/lib (single source of truth)
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))
+
 # === clipboard ===
 from clipboard import (  # noqa: F401
     copy_to_clipboard,

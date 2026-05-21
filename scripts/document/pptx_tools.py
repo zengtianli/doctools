@@ -31,6 +31,7 @@ from pathlib import Path
 
 # ── lib 路径 ──────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from finder import get_input_files
 from progress import ProgressTracker
 from dockit.text import fix_punctuation, fix_quotes, fix_units
