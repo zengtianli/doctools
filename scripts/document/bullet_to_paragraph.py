@@ -31,6 +31,7 @@ import argparse
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
@@ -325,11 +326,24 @@ def main():
     show_info(f"{mode} | 共 {len(md_files)} 个文件")
     print()
 
-    all_stats = []
-    for md_file in md_files:
+    # 文件间独立 → 文件级并发；文件内 block 因 in-place 切片有顺序依赖，
+    # 仍由 process_file 内部串行处理（每文件保持原顺序）。
+    def _one(md_file: Path) -> dict:
         output = (args.output_dir / md_file.name) if args.output_dir else md_file
-        stats = process_file(client, md_file, output, args.dry_run)
-        all_stats.append(stats)
+        try:
+            return process_file(client, md_file, output, args.dry_run)
+        except Exception as e:  # 失败隔离：单文件崩不拖垮整批
+            show_error(f"{md_file.name}: 处理失败: {e}")
+            return {"file": md_file.name, "blocks": 0, "bullets": 0,
+                    "converted": 0, "remaining": 0}
+
+    if len(md_files) == 1:
+        all_stats = [_one(md_files[0])]
+    else:
+        workers = max(1, min(8, len(md_files)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            # map 保序，与原串行 all_stats 顺序一致
+            all_stats = list(ex.map(_one, md_files))
 
     # 汇总
     total_blocks = sum(s["blocks"] for s in all_stats)

@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # ── lib path setup ──────────────────────────────────────────────────
@@ -114,9 +115,24 @@ def cmd_format(args):
 
     tracker = ProgressTracker()
 
-    for file_path in files:
+    # 纯本地 I/O，文件间独立 → 文件级 ThreadPoolExecutor 并发（max_workers=8）。
+    # map 保序，逐文件独立读写各自 *_fixed.md，无共享状态。
+    def _one(file_path) -> bool:
         print(f"\n处理文件: {Path(file_path).name}")
-        success = format_process_file(str(file_path))
+        try:
+            return format_process_file(str(file_path))
+        except Exception as e:  # 失败隔离：单文件崩不拖垮整批
+            show_error(f"处理失败: {e}")
+            return False
+
+    if len(files) == 1:
+        results = [_one(files[0])]
+    else:
+        workers = max(1, min(8, len(files)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(_one, files))
+
+    for success in results:
         if success:
             tracker.add_success()
         else:

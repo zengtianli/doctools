@@ -124,6 +124,9 @@ def _parse_json_response(text: str) -> list[dict] | None:
     return None
 
 
+SCAN_SYSTEM = "你是标书文档审阅专家。只输出纯 JSON 数组，不要 markdown 代码块。"
+
+
 def call_api(client, prompt: str, max_retries: int = 2) -> list[dict] | None:
     """调用 Claude 分析内容，带 retry 和容错解析"""
     from llm_client import chat as llm_chat
@@ -131,7 +134,7 @@ def call_api(client, prompt: str, max_retries: int = 2) -> list[dict] | None:
     for attempt in range(1, max_retries + 1):
         try:
             text = llm_chat(
-                system="你是标书文档审阅专家。只输出纯 JSON 数组，不要 markdown 代码块。",
+                system=SCAN_SYSTEM,
                 message=prompt,
             )
 
@@ -153,6 +156,17 @@ def call_api(client, prompt: str, max_retries: int = 2) -> list[dict] | None:
                 show_warning(f"  第 {attempt} 次失败，重试中...")
                 continue
             return None
+
+
+def _consume_response(result) -> list[dict] | None:
+    """消费 chat_many 单项返回：Exception → 报错跳过；正常 → 容错解析 JSON。"""
+    if isinstance(result, Exception):
+        show_error(f"API 调用失败: {result}")
+        return None
+    parsed = _parse_json_response(result)
+    if parsed is None:
+        show_warning(f"  JSON 解析失败，跳过此块。原始返回: {str(result)[:200]}")
+    return parsed
 
 
 # === 配置文件操作 ===
@@ -276,39 +290,88 @@ def verify_findings(findings: list[dict], content: str, whitelist: set[str] | No
     return verified
 
 
-def scan_file(client, filepath: Path, existing_words: list[str], whitelist: set[str] | None = None) -> list[dict]:
-    """扫描单个文件"""
+def build_file_tasks(filepath: Path, existing_words: list[str]) -> tuple[str | None, list[dict]]:
+    """读取单文件并切块，为每个块构造一个 chat_many task。
+
+    返回 (content, tasks)；content=None 表示文件不可读/为空（无 task）。
+    每个 task = {"system","message"} + 元信息 "_file"（保序回填用）。
+    """
     try:
         content = filepath.read_text(encoding="utf-8")
     except Exception as e:
         show_warning(f"无法读取 {filepath}: {e}")
-        return []
+        return None, []
 
     if not content.strip():
-        return []
+        return None, []
 
     chunks = chunk_text(content)
-    all_findings = []
+    tasks = []
+    for chunk in chunks:
+        tasks.append({
+            "system": SCAN_SYSTEM,
+            "message": build_prompt(chunk, existing_words, filepath.name),
+            "_file": str(filepath),
+        })
+    return content, tasks
 
-    for i, chunk in enumerate(chunks):
-        if len(chunks) > 1:
-            show_processing(f"  分块 {i + 1}/{len(chunks)}")
 
-        prompt = build_prompt(chunk, existing_words, filepath.name)
-        findings = call_api(client, prompt)
+def scan_files_parallel(
+    md_files: list[Path],
+    existing_words: list[str],
+    whitelist: set[str] | None = None,
+    *,
+    quiet: bool = False,
+) -> list[dict]:
+    """并发扫描全部文件的全部块：把所有 (file, chunk) 的 LLM 调用一次性 chat_many。
 
+    保序回填到各自文件后，对每个文件做 verify_findings（幻觉/白名单过滤）。
+    """
+    from llm_client import chat_many
+
+    # 1) 收集所有块的 task（保序），并记录每个文件的 content 用于后续验证
+    file_contents: dict[str, str] = {}
+    all_tasks: list[dict] = []
+    for filepath in md_files:
+        content, tasks = build_file_tasks(filepath, existing_words)
+        if content is None:
+            continue
+        file_contents[str(filepath)] = content
+        all_tasks.extend(tasks)
+
+    if not all_tasks:
+        return []
+
+    if not quiet:
+        show_processing(f"并发分析 {len(all_tasks)} 个块（{len(file_contents)} 个文件，max_workers=8）...")
+
+    # 2) 一次性并发（仅传 system/message；保序返回）
+    results = chat_many(
+        [{"system": t["system"], "message": t["message"]} for t in all_tasks],
+        max_workers=8,
+    )
+
+    # 3) 保序回填：按文件聚合 findings
+    per_file: dict[str, list[dict]] = {fp: [] for fp in file_contents}
+    for task, result in zip(all_tasks, results):
+        findings = _consume_response(result)
         if findings:
+            fp = task["_file"]
             for f in findings:
-                f["file"] = str(filepath)
-            all_findings.extend(findings)
+                f["file"] = fp
+            per_file[fp].extend(findings)
 
-    # 过滤 AI 幻觉：验证词是否真的出现在文件中，同时过滤白名单
-    verified = verify_findings(all_findings, content, whitelist)
-    if len(verified) < len(all_findings):
-        diff = len(all_findings) - len(verified)
-        show_warning(f"  过滤 {diff} 个幻觉词条（文件中不存在）")
+    # 4) 逐文件验证（保持原 verify_findings 语义）
+    all_verified: list[dict] = []
+    for fp, content in file_contents.items():
+        raw = per_file[fp]
+        verified = verify_findings(raw, content, whitelist)
+        if not quiet and len(verified) < len(raw):
+            diff = len(raw) - len(verified)
+            show_warning(f"  {Path(fp).name}: 过滤 {diff} 个幻觉词条（文件中不存在）")
+        all_verified.extend(verified)
 
-    return verified
+    return all_verified
 
 
 # === 去重与过滤 ===
@@ -510,16 +573,13 @@ def main():
     if not args.json:
         show_info(f"找到 {len(md_files)} 个 .md 文件")
 
-    # 创建 API 客户端
-    client = create_client()
+    # 创建 API 客户端（保留接口兼容；并发路径不再逐项 fork）
+    create_client()
 
-    # 逐文件扫描
-    all_findings = []
-    for i, filepath in enumerate(md_files, 1):
-        if not args.json:
-            show_processing(f"扫描 ({i}/{len(md_files)}): {filepath.name}")
-        findings = scan_file(client, filepath, existing_words, whitelist)
-        all_findings.extend(findings)
+    # 全文件 × 全块一次性并发扫描（保序回填 + 逐文件验证）
+    all_findings = scan_files_parallel(
+        md_files, existing_words, whitelist, quiet=args.json
+    )
 
     # 去重
     unique_findings = deduplicate_findings(all_findings, existing_words, whitelist)

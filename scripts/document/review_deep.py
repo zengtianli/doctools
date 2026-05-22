@@ -26,7 +26,7 @@ PYTHON = "/opt/homebrew/bin/python3"
 
 # llm_client
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / "lib"))
-from llm_client import chat
+from llm_client import chat, chat_many
 
 # 规则目录：cc-harness/rules/review-deep/
 RULES_DIR = Path.home() / "Dev" / "cc-harness" / "rules" / "review-deep"
@@ -124,7 +124,7 @@ def parse_llm_response(response: str) -> list[dict]:
 def review_chapter(chapter: dict, dimensions: dict, doc_name: str,
                    target_dims: list[str] | None = None,
                    model: str = "haiku") -> list[dict]:
-    """对单个章节执行多维度检查。"""
+    """对单个章节执行多维度检查（串行，保留向后兼容）。"""
     all_issues = []
 
     for dim_key, dim_config in dimensions.items():
@@ -143,6 +143,57 @@ def review_chapter(chapter: dict, dimensions: dict, doc_name: str,
             print(f"失败: {e}")
 
     return all_issues
+
+
+def review_all(chapters: list[dict], dimensions: dict, doc_name: str,
+               target_dims: list[str] | None = None,
+               model: str = "haiku") -> list[dict]:
+    """章 × 维度笛卡尔积全独立 → 扁平成 task 列表一次性并发检查。
+
+    所有 (chapter, dimension) 组合互不依赖，一次 chat_many 并发；保序回填后
+    按原「逐章 → 逐维度」顺序聚合 all_rules（与串行结果顺序一致）。
+    内容过短的章节（<50 字）仍跳过，行为不变。
+    """
+    # 1) 扁平化所有 (chapter, dimension) task，保留章节顺序与维度顺序
+    tasks = []          # list of {"system","message","model"}
+    meta = []           # 与 tasks 对齐的元信息 (chapter_idx, dim_name)
+    for ci, chapter in enumerate(chapters):
+        if len(chapter["text"].strip()) < 50:
+            continue
+        for dim_key, dim_config in dimensions.items():
+            if target_dims and dim_key not in target_dims:
+                continue
+            system, user = build_prompt(chapter["text"], dim_config, doc_name)
+            tasks.append({"system": system, "message": user, "model": model})
+            meta.append((ci, dim_config["name"]))
+
+    if not tasks:
+        return []
+
+    print(f"并发检查 {len(tasks)} 个 (章节×维度) 组合（max_workers=8）...")
+    results = chat_many(tasks, max_workers=8)
+
+    # 2) 保序回填：先按章节分组打印进度，再展平聚合
+    by_chapter: dict[int, list[tuple[str, list[dict]]]] = {}
+    for (ci, dim_name), result in zip(meta, results):
+        if isinstance(result, Exception):
+            print(f"  [{chapters[ci]['title']}] [{dim_name}] 失败: {result}")
+            issues = []
+        else:
+            issues = parse_llm_response(result)
+        by_chapter.setdefault(ci, []).append((dim_name, issues))
+
+    # 3) 按原章节顺序聚合（保持串行版的 all_rules 顺序）
+    all_rules = []
+    for ci, chapter in enumerate(chapters):
+        if ci not in by_chapter:
+            continue
+        print(f"[{ci + 1}/{len(chapters)}] {chapter['title']}")
+        for dim_name, issues in by_chapter[ci]:
+            print(f"  [{dim_name}] 发现 {len(issues)} 个问题")
+            all_rules.extend(issues)
+
+    return all_rules
 
 
 def apply_reviews(docx_path: str, output_path: str, rules: list[dict]) -> int:
@@ -221,17 +272,9 @@ def main():
     chapters = extract_chapters(args.input)
     print(f"共 {len(chapters)} 个章节\n")
 
-    # 逐章检查
-    all_rules = []
-    for i, chapter in enumerate(chapters):
-        print(f"[{i + 1}/{len(chapters)}] {chapter['title']}")
-        if len(chapter["text"].strip()) < 50:
-            print("  (内容过短，跳过)")
-            continue
-        issues = review_chapter(chapter, dimensions, doc_name,
-                                target_dims=args.dim, model=args.model)
-        all_rules.extend(issues)
-        print()
+    # 章 × 维度笛卡尔积一次性并发检查（保序聚合）
+    all_rules = review_all(chapters, dimensions, doc_name,
+                           target_dims=args.dim, model=args.model)
 
     # 汇总
     print(f"{'=' * 50}")

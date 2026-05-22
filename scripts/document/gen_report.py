@@ -28,7 +28,7 @@ import yaml
 # ── 路径设置 ──
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / "lib"))
-from llm_client import chat
+from llm_client import chat, chat_many
 
 # 规则目录
 RULES_DIR = Path.home() / "Dev" / "cc-harness" / "rules" / "gen-report"
@@ -322,30 +322,39 @@ def generate_chapter_segmented(chapter_config: dict, ref_content: str,
         sections = [{"title": title, "text": ref_content}]
 
     print(f"  分 {len(sections)} 段生成")
-    results = []
 
-    for i, section in enumerate(sections):
-        sec_title = section["title"] or f"段落{i}"
-        print(f"    [{i+1}/{len(sections)}] {sec_title[:40]}", end=" ", flush=True)
+    # section 之间相互独立（共享 data_context / generated_chapters 在本次调用内固定）
+    # → 一次性 chat_many 并发；外层 chapter 的 depends_on 顺序依赖由 generate_all 保证。
+    sec_titles = [section["title"] or f"段落{i}" for i, section in enumerate(sections)]
+    sec_config = {**chapter_config, "strategy": "rewrite"}
 
-        # 为每段构建 prompt（复用 rewrite 策略）
-        sec_config = {**chapter_config, "strategy": "rewrite"}
+    if dry_run:
+        for i, section in enumerate(sections):
+            print(f"    [{i+1}/{len(sections)}] {sec_titles[i][:40]} "
+                  f"[DRY RUN] ({len(section['text'])} 字)")
+        return None
+
+    # 构建保序 task 列表
+    tasks = []
+    for section in sections:
         system, user = build_prompt(
             sec_config, section["text"], data_context,
             config, generated_chapters
         )
+        tasks.append({"system": system, "message": user, "model": model})
 
-        if dry_run:
-            print(f"[DRY RUN] ({len(section['text'])} 字)")
-            continue
+    print(f"    并发生成 {len(tasks)} 段（max_workers=8）...")
+    raw_results = chat_many(tasks, max_workers=8)
 
-        try:
-            result = chat(system=system, message=user, model=model)
-            print(f"完成 ({len(result)} 字)")
-            results.append(result)
-        except Exception as e:
-            print(f"失败: {e}")
-            results.append(f"[生成失败: {sec_title}]\n\n")
+    # 保序消费：失败项隔离为占位（与原串行语义一致）
+    results = []
+    for i, r in enumerate(raw_results):
+        if isinstance(r, Exception):
+            print(f"    [{i+1}/{len(sections)}] {sec_titles[i][:40]} 失败: {r}")
+            results.append(f"[生成失败: {sec_titles[i]}]\n\n")
+        else:
+            print(f"    [{i+1}/{len(sections)}] {sec_titles[i][:40]} 完成 ({len(r)} 字)")
+            results.append(r)
 
     return "\n\n".join(results) if results else None
 
