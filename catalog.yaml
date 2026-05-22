@@ -1,0 +1,10 @@
+# catalog.yaml — 模块 SSOT(认知单位,仿 Backstage catalog-info.yaml)
+name: doctools
+domain: dev-infra
+function: 让我读、改、审阅、修订 docx/md/有声书文档(含批注/编号/模板/质检),并配 Raycast 一键调用
+public_api: doctools CLI
+key_scripts: [docx_tools.py, md_docx_template.py, report_quality_check.py]
+depends_on: [dev-corelib, dockit, mailroom, llm-client, photo-app, mactools]
+tier: CORE
+owner: tianli
+docs: ./README.md
