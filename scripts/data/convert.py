@@ -14,15 +14,35 @@
   xlsx-to-txt     XLSX → TXT（支持多工作表）
   encode-duplicates  为 Excel 中重复企业编码生成唯一用户编码
 
-版本: 3.0.0
+并行批量 API（W5 P1 · 2026-05-23）:
+  --batch FILE      JSONL 批量文件，每行一个转换任务
+  --workers N       并行 worker 数（默认 min(cpu, 8)）
+  --phases LIST     执行阶段过滤（默认 all；逗号分隔：convert,verify）
+
+JSONL 行格式（每行一个 JSON 对象）:
+  {"input": "/path/to/a.csv", "output": "/path/to/a.xlsx", "format": "xlsx-from-csv",
+   "options": {"sheet": null, "all_sheets": true}}
+
+  必需字段: input, format
+  可选字段: output (默认推断), options (子命令特有参数)
+
+批量示例:
+  echo '{"input":"a.csv","format":"xlsx-from-csv"}' > batch.jsonl
+  echo '{"input":"b.txt","format":"csv-from-txt"}' >> batch.jsonl
+  python3 convert.py --batch batch.jsonl --workers 8
+
+版本: 3.1.0
 作者: tianli
 """
 
 import argparse
 import csv
+import json
+import os
 import re
 import sys
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
@@ -38,9 +58,12 @@ from file_ops import (
 from finder import get_finder_current_dir, get_input_files
 from progress import ProgressTracker
 
-SCRIPT_VERSION = "3.0.0"
+SCRIPT_VERSION = "3.1.0"
 SCRIPT_AUTHOR = "tianli"
-SCRIPT_UPDATED = "2026-03-25"
+SCRIPT_UPDATED = "2026-05-23"
+
+DEFAULT_WORKERS = min(os.cpu_count() or 4, 8)
+VALID_PHASES = ("convert", "verify")
 
 
 # ── 转换函数 ──────────────────────────────────────────────────

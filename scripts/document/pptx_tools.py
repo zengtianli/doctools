@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PPTX 文档标准化工具集 v3.0.0
+PPTX 文档标准化工具集 v3.1.0
 
 将 4 个独立 PPTX 脚本合并为一个多子命令工具，直接函数调用，不再依赖 subprocess。
 
@@ -10,23 +10,46 @@ PPTX 文档标准化工具集 v3.0.0
     table   - 表格样式设置（标题行、镶边行、首列）
     all     - 一键标准化：依次执行 format -> font -> table
 
-用法:
+单文件用法（向后兼容）:
     python3 pptx_tools.py <subcommand> [file...]
     python3 pptx_tools.py font presentation.pptx
     python3 pptx_tools.py format file1.pptx file2.pptx
-    python3 pptx_tools.py table presentation.pptx
     python3 pptx_tools.py all presentation.pptx
 
+批量并行用法（v3.1+）:
+    # --batch FILE : JSONL 每行一个任务（file/subcommand/options）
+    python3 pptx_tools.py --batch tasks.jsonl --workers 8
+    # JSONL 例子（tasks.jsonl）:
+    #   {"file":"/a/x.pptx","subcommand":"font","options":{"do_backup":true}}
+    #   {"file":"/a/y.pptx","subcommand":"all","options":{}}
+    #   {"file":"/a/z.pptx","subcommand":"all","options":{"phases":"format,font"}}
+
+    # --workers N : ThreadPool 并发度（默认 min(cpu,8)；0=串行）
+    python3 pptx_tools.py all *.pptx --workers 4
+
+    # --phases LIST / --defer PHASE : 只对 `all` 子命令有效，控制内部步骤
+    python3 pptx_tools.py all x.pptx --phases format,font
+    python3 pptx_tools.py all x.pptx --defer table   # 跳过 table 阶段
+    # phase 名: format | font | table
+
+    # --fanout-evidence FILE : 写入 PID/线程/任务清单（铁律 #1 真并行 evidence）
+    python3 pptx_tools.py all *.pptx --workers 8 \
+        --fanout-evidence /tmp/pptx-fanout-evidence.txt
+
 作者: tianli
-版本: 3.0.0
-日期: 2026-03-25
+版本: 3.1.0
+日期: 2026-05-23
 """
 
 import argparse
+import json
 import os
 import shutil
 import sys
+import threading
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ── lib 路径 ──────────────────────────────────────────────────────────
