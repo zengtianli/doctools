@@ -31,7 +31,7 @@ JSONL 行格式（每行一个 JSON 对象）:
   echo '{"input":"b.txt","format":"csv-from-txt"}' >> batch.jsonl
   python3 convert.py --batch batch.jsonl --workers 8
 
-版本: 3.1.0
+版本: 3.1.0 (W5 parallel API)
 作者: tianli
 """
 
