@@ -902,29 +902,71 @@ def run_batch(tasks, workers, fanout_evidence=None):
 #  CLI 入口
 # =====================================================================
 
+def _default_workers():
+    """ThreadPool 默认并发度: min(cpu_count, 8)"""
+    try:
+        n = os.cpu_count() or 4
+    except Exception:
+        n = 4
+    return min(n, 8)
+
+
 def build_parser():
     """构建 argparse 解析器"""
     parser = argparse.ArgumentParser(
         prog="pptx_tools",
-        description="PPTX 文档标准化工具集",
+        description="PPTX 文档标准化工具集（v3.1+ 支持 --batch / --workers / --phases / --defer）",
         epilog=(
             "子命令说明:\n"
             "  font    字体统一为微软雅黑\n"
             "  format  文本格式修复（引号、标点、单位）\n"
             "  table   表格样式（标题行、镶边行、首列）\n"
             "  all     一键标准化: format -> font -> table\n"
+            "\n"
+            "批处理 JSONL 行格式:\n"
+            '  {"file":"/a/x.pptx","subcommand":"font","options":{"do_backup":true}}\n'
+            '  {"file":"/a/y.pptx","subcommand":"all","options":{"phases":"format,font"}}\n'
+            '  {"file":"/a/z.pptx","subcommand":"all","options":{"defer":"table"}}\n'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "subcommand",
+        nargs="?",
         choices=["font", "format", "table", "all"],
-        help="子命令: font | format | table | all",
+        help="子命令: font | format | table | all（使用 --batch 时可省略）",
     )
     parser.add_argument(
         "files",
         nargs="*",
         help="PPTX 文件路径（可多个；不提供则从 Finder 选中获取）",
+    )
+    # 并行 / 批量 API
+    parser.add_argument(
+        "--batch",
+        metavar="FILE",
+        help="JSONL 任务清单（每行 {file, subcommand, options}），与 subcommand/files 互斥",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=f"ThreadPool 并发度（默认 min(cpu,8)={_default_workers()}；0=串行）",
+    )
+    parser.add_argument(
+        "--phases",
+        metavar="LIST",
+        help="`all` 子命令的 phase 白名单，逗号分隔（可选: format,font,table）",
+    )
+    parser.add_argument(
+        "--defer",
+        metavar="PHASE",
+        help="`all` 子命令要跳过的 phase，逗号分隔",
+    )
+    parser.add_argument(
+        "--fanout-evidence",
+        metavar="FILE",
+        help="写入 fan-out evidence（PID/线程/任务清单），用于铁律 #1 真并行 audit",
     )
     return parser
 
@@ -938,46 +980,78 @@ def main():
         sys.exit(1)
 
     args = parser.parse_args()
+    workers = args.workers if args.workers is not None else _default_workers()
 
-    # 获取输入文件
+    # ── 模式 1: --batch JSONL ────────────────────────────────────────
+    if args.batch:
+        if args.subcommand or args.files:
+            show_message("warning", "--batch 模式下忽略命令行 subcommand/files")
+        try:
+            tasks = load_batch_jsonl(args.batch)
+        except (FileNotFoundError, ValueError) as e:
+            show_message("error", str(e))
+            sys.exit(2)
+        if not tasks:
+            show_message("error", "--batch 文件无有效任务")
+            sys.exit(2)
+        show_message("info", f"批处理: {len(tasks)} 个任务, workers={workers}")
+        results = run_batch(tasks, workers, fanout_evidence=args.fanout_evidence)
+        fail_n = sum(1 for r in results if not r.get("ok"))
+        sys.exit(0 if fail_n == 0 else 1)
+
+    # ── 模式 2: 传统单/多文件（向后兼容） ────────────────────────────
+    if not args.subcommand:
+        parser.error("缺少 subcommand（或使用 --batch FILE）")
+
     files = get_input_files(args.files, expected_ext="pptx")
 
     if not files:
         show_message("error", "未找到 .pptx 文件")
         print("\n用法: python3 pptx_tools.py <subcommand> [file...]")
+        print("  或: python3 pptx_tools.py --batch tasks.jsonl --workers 8")
         print("  或在 Finder 中选择 .pptx 文件后运行")
         sys.exit(1)
 
-    # 分发子命令
-    dispatch = {
-        "font": font_process_presentation,
-        "format": format_process_presentation,
-        "table": table_process_presentation,
-        "all": all_process_presentation,
-    }
+    # 把 CLI 参数翻译成 batch tasks → 复用统一调度（顺带启用并行）
+    options = {}
+    if args.subcommand == "all":
+        if args.phases:
+            options["phases"] = args.phases
+        if args.defer:
+            options["defer"] = args.defer
+    else:
+        options["do_backup"] = True
 
-    handler = dispatch[args.subcommand]
-    tracker = ProgressTracker()
+    tasks = [
+        {"file": str(fp), "subcommand": args.subcommand, "options": options}
+        for fp in files
+    ]
 
-    for file_path in files:
+    # 单文件走串行（与旧版输出一致）；多文件按 workers 并行
+    effective_workers = 0 if len(tasks) == 1 else workers
+
+    if effective_workers == 0:
+        # 保留旧版 ProgressTracker 输出格式
+        tracker = ProgressTracker()
+        for t in tasks:
+            print(f"\n{'=' * 50}")
+            print(f"处理文件: {Path(t['file']).name}")
+            print("=" * 50)
+            r = _dispatch_one(t["file"], t["subcommand"], t["options"])
+            if r.get("ok"):
+                tracker.add_success()
+            else:
+                tracker.add_error()
         print(f"\n{'=' * 50}")
-        print(f"处理文件: {Path(file_path).name}")
-        print("=" * 50)
+        tracker.show_summary("文件处理")
+        fail_n = sum(1 for t in tasks if False)  # tracker 已统计；保留兼容
+        # 退出码由 tracker 行为主导（保持旧行为：不强制 exit code）
+        return
 
-        file_str = str(file_path)
-
-        if args.subcommand == "all":
-            success = handler(file_str)
-        else:
-            success = handler(file_str, do_backup=True)
-
-        if success:
-            tracker.add_success()
-        else:
-            tracker.add_error()
-
-    print(f"\n{'=' * 50}")
-    tracker.show_summary("文件处理")
+    # 多文件并行
+    results = run_batch(tasks, effective_workers, fanout_evidence=args.fanout_evidence)
+    fail_n = sum(1 for r in results if not r.get("ok"))
+    sys.exit(0 if fail_n == 0 else 1)
 
 
 if __name__ == "__main__":
