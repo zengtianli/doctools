@@ -642,7 +642,49 @@ def table_process_presentation(input_path, do_backup=True):
 #  子命令: all — 一键标准化（format -> font -> table）
 # =====================================================================
 
-def all_process_presentation(input_path):
+# `all` 子命令的内部 phase 切分（用于 --phases / --defer）
+ALL_PHASES = ("format", "font", "table")
+
+_PHASE_FUNCS = {
+    "format": format_process_presentation,
+    "font": font_process_presentation,
+    "table": table_process_presentation,
+}
+
+
+def resolve_phases(phases=None, defer=None):
+    """
+    根据 --phases / --defer 参数解析最终要跑的 phase 列表。
+
+    Args:
+        phases: 逗号分隔字符串或 list，None=全部
+        defer: 逗号分隔字符串或 list，要跳过的 phase
+
+    Returns:
+        list[str]: 有序 phase 名（按 ALL_PHASES 顺序）
+    """
+    if phases is None:
+        chosen = list(ALL_PHASES)
+    elif isinstance(phases, str):
+        chosen = [p.strip() for p in phases.split(",") if p.strip()]
+    else:
+        chosen = list(phases)
+
+    if defer:
+        if isinstance(defer, str):
+            defer_set = {p.strip() for p in defer.split(",") if p.strip()}
+        else:
+            defer_set = set(defer)
+        chosen = [p for p in chosen if p not in defer_set]
+
+    # 校验 + 按 ALL_PHASES 顺序排
+    unknown = [p for p in chosen if p not in ALL_PHASES]
+    if unknown:
+        raise ValueError(f"未知 phase: {unknown}，可选: {ALL_PHASES}")
+    return [p for p in ALL_PHASES if p in chosen]
+
+
+def all_process_presentation(input_path, phases=None, defer=None):
     """
     应用所有 PPTX 标准化处理（直接函数调用，不再使用 subprocess）
 
@@ -653,6 +695,8 @@ def all_process_presentation(input_path):
 
     Args:
         input_path: 输入文件路径
+        phases: 仅跑指定 phase 列表（None=全部）
+        defer: 跳过指定 phase 列表
 
     Returns:
         bool: 是否全部成功
@@ -668,52 +712,44 @@ def all_process_presentation(input_path):
         show_message("error", "只支持 .pptx 文件")
         return False
 
+    phase_list = resolve_phases(phases, defer)
+    if not phase_list:
+        show_message("warning", "phase 列表为空，跳过处理")
+        return True
+
     print("=" * 70)
     print("🚀 开始 PPT 文档标准化处理")
     print("=" * 70)
     print(f"📄 文件: {input_p.name}")
+    print(f"🧩 phases: {', '.join(phase_list)}")
     print()
 
     # 先备份一次（后续步骤不再重复备份）
     backup_file(input_path)
 
-    # 执行顺序：format -> font -> table
-    steps = [
-        {
-            "name": "步骤 1/3: 文本格式修复",
-            "func": format_process_presentation,
-        },
-        {
-            "name": "步骤 2/3: 字体统一为微软雅黑",
-            "func": font_process_presentation,
-        },
-        {
-            "name": "步骤 3/3: 表格样式设置",
-            "func": table_process_presentation,
-        },
-    ]
-
     success_count = 0
     failed_steps = []
+    total = len(phase_list)
 
-    for step in steps:
+    for idx, phase in enumerate(phase_list, 1):
+        name = f"步骤 {idx}/{total}: {phase}"
         print("\n" + "=" * 70)
-        print(f"▶️  {step['name']}")
+        print(f"▶️  {name}")
         print("=" * 70)
 
-        # 调用处理函数，do_backup=False 因为已经在上面统一备份过了
-        if step["func"](str(input_p), do_backup=False):
+        func = _PHASE_FUNCS[phase]
+        if func(str(input_p), do_backup=False):
             success_count += 1
-            print(f"✅ {step['name']} 完成")
+            print(f"✅ {name} 完成")
         else:
-            failed_steps.append(step["name"])
-            print(f"⚠️ {step['name']} 失败（继续执行后续步骤）")
+            failed_steps.append(name)
+            print(f"⚠️ {name} 失败（继续执行后续步骤）")
 
     # 总结
     print("\n" + "=" * 70)
     print("📊 处理总结")
     print("=" * 70)
-    print(f"✅ 成功: {success_count}/{len(steps)} 个步骤")
+    print(f"✅ 成功: {success_count}/{total} 个步骤")
 
     if failed_steps:
         print(f"⚠️ 失败: {len(failed_steps)} 个步骤")
@@ -726,6 +762,140 @@ def all_process_presentation(input_path):
     print("=" * 70)
 
     return len(failed_steps) == 0
+
+
+# =====================================================================
+#  批处理 + 并行（v3.1+）
+# =====================================================================
+
+def _dispatch_one(file_path, subcommand, options):
+    """
+    单任务调度（线程 worker 入口）。
+
+    options 支持的键：
+        do_backup: bool（font/format/table 用）
+        phases: list 或 csv 字符串（all 用）
+        defer: list 或 csv 字符串（all 用）
+    """
+    options = options or {}
+    try:
+        if subcommand == "all":
+            ok = all_process_presentation(
+                file_path,
+                phases=options.get("phases"),
+                defer=options.get("defer"),
+            )
+        elif subcommand in ("font", "format", "table"):
+            func = {
+                "font": font_process_presentation,
+                "format": format_process_presentation,
+                "table": table_process_presentation,
+            }[subcommand]
+            ok = func(file_path, do_backup=options.get("do_backup", True))
+        else:
+            show_message("error", f"未知 subcommand: {subcommand}")
+            ok = False
+        return {"file": file_path, "subcommand": subcommand, "ok": bool(ok)}
+    except Exception as e:
+        traceback.print_exc()
+        return {"file": file_path, "subcommand": subcommand, "ok": False, "error": str(e)}
+
+
+def load_batch_jsonl(batch_path):
+    """读取 JSONL 任务清单。每行：{"file":"...","subcommand":"...","options":{...}}"""
+    tasks = []
+    p = Path(batch_path)
+    if not p.exists():
+        raise FileNotFoundError(f"--batch 文件不存在: {batch_path}")
+    with p.open(encoding="utf-8") as f:
+        for lineno, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"--batch 第 {lineno} 行 JSON 解析失败: {e}") from e
+            if "file" not in obj or "subcommand" not in obj:
+                raise ValueError(f"--batch 第 {lineno} 行缺 file/subcommand: {line}")
+            tasks.append(
+                {
+                    "file": obj["file"],
+                    "subcommand": obj["subcommand"],
+                    "options": obj.get("options") or {},
+                }
+            )
+    return tasks
+
+
+def write_fanout_evidence(path, tasks, workers, start_ts):
+    """落地 fan-out evidence（铁律 #1：真并行需 evidence）"""
+    try:
+        lines = [
+            f"# pptx_tools fan-out evidence",
+            f"started_at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_ts))}",
+            f"pid: {os.getpid()}",
+            f"workers: {workers}",
+            f"task_count: {len(tasks)}",
+            f"main_thread: {threading.current_thread().name}",
+            "",
+            "tasks:",
+        ]
+        for i, t in enumerate(tasks):
+            lines.append(f"  [{i}] subcommand={t['subcommand']} file={t['file']}")
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        show_message("info", f"fanout-evidence 已写: {path}")
+    except Exception as e:
+        show_message("warning", f"写 fanout-evidence 失败: {e}")
+
+
+def run_batch(tasks, workers, fanout_evidence=None):
+    """
+    并行/串行执行任务清单。
+
+    Args:
+        tasks: list[{"file","subcommand","options"}]
+        workers: 0=串行；>0=ThreadPool 并发度
+        fanout_evidence: 可选 evidence 文件路径
+
+    Returns:
+        list[result dict]
+    """
+    if not tasks:
+        show_message("warning", "任务为空")
+        return []
+
+    start_ts = time.time()
+    if fanout_evidence:
+        write_fanout_evidence(fanout_evidence, tasks, workers, start_ts)
+
+    results = []
+    if workers == 0 or len(tasks) == 1:
+        # 串行
+        for t in tasks:
+            results.append(_dispatch_one(t["file"], t["subcommand"], t["options"]))
+    else:
+        # ThreadPool（python-pptx 是 IO+CPU 混合，GIL 下仍能 overlap 多文件 IO/磁盘）
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {
+                ex.submit(_dispatch_one, t["file"], t["subcommand"], t["options"]): t
+                for t in tasks
+            }
+            for fut in as_completed(futs):
+                results.append(fut.result())
+
+    # 汇总
+    elapsed = time.time() - start_ts
+    ok_n = sum(1 for r in results if r.get("ok"))
+    fail_n = len(results) - ok_n
+    print("\n" + "=" * 70)
+    print(f"📊 批处理结果: ok={ok_n} fail={fail_n} elapsed={elapsed:.1f}s workers={workers}")
+    print("=" * 70)
+    for r in results:
+        flag = "✅" if r.get("ok") else "❌"
+        extra = f" ({r['error']})" if r.get("error") else ""
+        print(f"{flag} [{r['subcommand']}] {r['file']}{extra}")
+    return results
 
 
 # =====================================================================

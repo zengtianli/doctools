@@ -307,6 +307,103 @@ CONVERTERS = {
 }
 
 
+# ── 批量并行 API (W5 P1) ─────────────────────────────────────
+
+
+def _run_single_task(task: dict) -> dict:
+    """执行单个批量任务，返回 {input, output, format, ok, error}"""
+    result = {"input": task.get("input"), "output": task.get("output"),
+              "format": task.get("format"), "ok": False, "error": None}
+    try:
+        fmt = task.get("format")
+        if not fmt or fmt not in CONVERTERS:
+            result["error"] = f"unknown format: {fmt}"
+            return result
+        conv = CONVERTERS[fmt]
+        in_path = Path(task["input"])
+        out_path = Path(task["output"]) if task.get("output") else None
+        opts = task.get("options") or {}
+
+        # csv-merge-txt 是目录输入
+        if conv.get("special"):
+            ok = conv["fn"](in_path, out_path, **opts)
+        else:
+            ok = conv["fn"](in_path, out_path, **opts)
+        result["ok"] = bool(ok)
+        if not ok and result["error"] is None:
+            result["error"] = "converter returned False"
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"
+    return result
+
+
+def _load_batch(batch_file: Path) -> list[dict]:
+    """读 JSONL 批量文件，宽容空行/注释行"""
+    tasks = []
+    with open(batch_file, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            try:
+                tasks.append(json.loads(s))
+            except json.JSONDecodeError as e:
+                show_warning(f"跳过第 {lineno} 行（JSON 解析失败）: {e}")
+    return tasks
+
+
+def _run_batch(batch_file: Path, workers: int, phases: list[str]) -> int:
+    """并行批量执行；ThreadPool（IO/pandoc bound）。返回退出码"""
+    if not batch_file.exists():
+        show_error(f"批量文件不存在: {batch_file}")
+        return 1
+
+    tasks = _load_batch(batch_file)
+    if not tasks:
+        show_warning("批量文件为空")
+        return 1
+
+    show_info(f"批量任务: {len(tasks)} 个 · workers={workers} · phases={','.join(phases)}")
+
+    if "convert" not in phases:
+        show_info("phase 'convert' 已 defer，跳过转换")
+        return 0
+
+    # 依赖预检（去重）
+    needed_deps = set()
+    for t in tasks:
+        fmt = t.get("format")
+        if fmt in CONVERTERS:
+            needed_deps.update(CONVERTERS[fmt].get("deps", []))
+    if needed_deps and not check_python_packages(*sorted(needed_deps)):
+        return 1
+
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_run_single_task, t): t for t in tasks}
+        for i, fut in enumerate(as_completed(futures), 1):
+            r = fut.result()
+            results.append(r)
+            tag = "✓" if r["ok"] else "✗"
+            show_processing(f"[{i}/{len(tasks)}] {tag} {r['input']} ({r['format']})")
+            if not r["ok"]:
+                show_error(f"  └─ {r['error']}")
+
+    ok_n = sum(1 for r in results if r["ok"])
+    fail_n = len(results) - ok_n
+    show_info(f"批量完成: 成功 {ok_n}/{len(results)}, 失败 {fail_n}")
+
+    if "verify" in phases:
+        # 简单 verify：output 存在且非空
+        missing = [r for r in results if r["ok"] and r.get("output")
+                   and not (Path(r["output"]).exists() and Path(r["output"]).stat().st_size > 0)]
+        if missing:
+            show_warning(f"verify: {len(missing)} 个 output 缺失/为空")
+            fail_n += len(missing)
+
+    return 0 if fail_n == 0 else 2
+
+
 # ── 主入口 ───────────────────────────────────────────────────
 
 
@@ -320,6 +417,14 @@ def main():
     parser.add_argument("-r", "--recursive", action="store_true", help="递归处理子目录")
     parser.add_argument("-s", "--sheet", help="指定工作表名称 (xlsx-to-csv)")
     parser.add_argument("-d", "--default-sheet", action="store_true", help="仅转换默认工作表 (xlsx-to-csv)")
+    # W5 P1: 并行批量 API
+    parser.add_argument("--batch", metavar="FILE", help="JSONL 批量文件（每行一个任务）")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                        help=f"并行 worker 数（默认 {DEFAULT_WORKERS}，min(cpu, 8)）")
+    parser.add_argument("--phases", default="convert,verify",
+                        help="执行阶段过滤，逗号分隔（默认 convert,verify）")
+    parser.add_argument("--defer", metavar="PHASE",
+                        help="延迟执行的阶段（从 --phases 中排除）")
     parser.add_argument("-h", "--help", action="store_true", help="显示帮助信息")
     parser.add_argument("--version", action="store_true", help="显示版本信息")
     args, unknown = parser.parse_known_args()
@@ -328,9 +433,21 @@ def main():
         show_version_info(SCRIPT_VERSION, SCRIPT_AUTHOR, SCRIPT_UPDATED)
         return
 
-    if args.help or not args.command:
+    if args.help or (not args.command and not args.batch):
         print(__doc__)
         return
+
+    # ── 批量并行分支 ────────────────────────────────────────
+    if args.batch:
+        phases = [p.strip() for p in args.phases.split(",") if p.strip()]
+        if args.defer:
+            phases = [p for p in phases if p != args.defer.strip()]
+        invalid = [p for p in phases if p not in VALID_PHASES]
+        if invalid:
+            show_error(f"未知 phase: {invalid}（合法: {VALID_PHASES}）")
+            sys.exit(1)
+        workers = max(1, args.workers)
+        sys.exit(_run_batch(Path(args.batch), workers, phases))
 
     cmd = args.command
     if cmd not in CONVERTERS:

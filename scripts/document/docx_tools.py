@@ -1271,6 +1271,195 @@ def cmd_track_changes(args):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Batch / 并行 API
+# ══════════════════════════════════════════════════════════════════════
+#
+# JSONL 行格式：
+#   {"file": "/path/a.docx", "subcommand": "extract", "options": {"json": true}}
+#   {"file": "/path/b.docx", "subcommand": "check", "options": {"check_command": "snapshot", "md": true}}
+#   {"file": "/path/c.docx", "subcommand": "track-changes", "options": {"tc_command": "read", "format": "json"}}
+#   {"file": "/path/d.docx", "subcommand": "snapshot", "options": {"md": true}}                  # alias: check snapshot
+#   {"file": "/path/d.docx", "subcommand": "compare", "options": {"after": "/path/e.docx"}}      # alias: check compare
+#
+# 阶段（phase）：
+#   extract / snapshot / track-changes-read  → IO 重，可高并发
+#   check-compare / track-changes-review     → 较重，但仍 IO bound
+#   --defer PHASE 跳过指定阶段；--phases 仅运行指定阶段（逗号分隔）。
+
+
+class _BatchArgs:
+    """轻量 Namespace，把 JSONL row 的 options 字典套进 cmd_* 期望的 args 形态。"""
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def __getattr__(self, name):
+        return None
+
+
+_PHASE_MAP = {
+    "extract": "extract",
+    "check-snapshot": "snapshot",
+    "snapshot": "snapshot",
+    "check-compare": "compare",
+    "compare": "compare",
+    "track-changes-read": "tc-read",
+    "track-changes-review": "tc-review",
+}
+
+
+def _row_phase(subcommand: str, options: dict) -> str:
+    if subcommand == "extract":
+        return "extract"
+    if subcommand == "check":
+        return options.get("check_command", "snapshot")
+    if subcommand == "snapshot":
+        return "snapshot"
+    if subcommand == "compare":
+        return "compare"
+    if subcommand == "track-changes":
+        tc = options.get("tc_command", "read")
+        return f"tc-{tc}"
+    return subcommand
+
+
+def _run_one(row: dict) -> dict:
+    """执行单条 batch row，返回 {file, subcommand, ok, error, stdout_lines}."""
+    import io
+    from contextlib import redirect_stdout
+
+    file_path = row.get("file") or row.get("input")
+    subcommand = row["subcommand"]
+    options = dict(row.get("options") or {})
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            if subcommand == "extract":
+                args = _BatchArgs(
+                    input=file_path,
+                    output=options.get("output"),
+                    split_chapters=options.get("split_chapters", False),
+                    info=options.get("info", False),
+                    json=options.get("json", False),
+                )
+                cmd_extract(args)
+            elif subcommand in ("snapshot", "compare"):
+                # 顶层 alias → check.<subcmd>
+                args = _BatchArgs(
+                    check_command=subcommand,
+                    input=file_path,
+                    before=options.get("before", file_path),
+                    after=options.get("after"),
+                    output=options.get("output"),
+                    md=options.get("md", False),
+                )
+                cmd_check(args)
+            elif subcommand == "check":
+                args = _BatchArgs(
+                    check_command=options.get("check_command", "snapshot"),
+                    input=file_path,
+                    before=options.get("before", file_path),
+                    after=options.get("after"),
+                    output=options.get("output"),
+                    md=options.get("md", False),
+                )
+                cmd_check(args)
+            elif subcommand == "track-changes":
+                args = _BatchArgs(
+                    tc_command=options.get("tc_command", "read"),
+                    input=file_path,
+                    format=options.get("format", "md"),
+                    output=options.get("output"),
+                    rules=options.get("rules"),
+                    author=options.get("author", "CC审阅"),
+                )
+                cmd_track_changes(args)
+            else:
+                raise ValueError(f"未知 subcommand: {subcommand}")
+        return {
+            "file": file_path,
+            "subcommand": subcommand,
+            "phase": _row_phase(subcommand, options),
+            "ok": True,
+            "stdout": buf.getvalue(),
+        }
+    except SystemExit as e:
+        return {
+            "file": file_path,
+            "subcommand": subcommand,
+            "phase": _row_phase(subcommand, options),
+            "ok": (e.code in (0, None)),
+            "error": None if e.code in (0, None) else f"SystemExit({e.code})",
+            "stdout": buf.getvalue(),
+        }
+    except Exception as e:
+        return {
+            "file": file_path,
+            "subcommand": subcommand,
+            "phase": _row_phase(subcommand, options),
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "stdout": buf.getvalue(),
+        }
+
+
+def run_batch(jsonl_path: str, workers: int | None = None,
+              defer: list[str] | None = None, phases: list[str] | None = None) -> dict:
+    """并行执行 JSONL batch。
+
+    ThreadPoolExecutor（python-docx / zipfile / lxml 均为 IO 重 + Python C 扩展，
+    GIL 期间释放，线程并行有效）。
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if workers is None or workers <= 0:
+        workers = min(os.cpu_count() or 4, 8)
+
+    defer_set = set(defer or [])
+    phases_set = set(phases or [])
+
+    rows = []
+    skipped = []
+    with open(jsonl_path, encoding="utf-8") as f:
+        for ln, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                skipped.append({"line": ln, "error": f"JSON 解析失败: {e}"})
+                continue
+            ph = _row_phase(row.get("subcommand", ""), row.get("options") or {})
+            if defer_set and ph in defer_set:
+                skipped.append({"line": ln, "phase": ph, "reason": "defer"})
+                continue
+            if phases_set and ph not in phases_set:
+                skipped.append({"line": ln, "phase": ph, "reason": "not-in-phases"})
+                continue
+            rows.append(row)
+
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_run_one, r): r for r in rows}
+        for fut in as_completed(futs):
+            results.append(fut.result())
+
+    summary = {
+        "total": len(rows),
+        "ok": sum(1 for r in results if r["ok"]),
+        "failed": sum(1 for r in results if not r["ok"]),
+        "skipped": len(skipped),
+        "workers": workers,
+        "results": results,
+        "skipped_detail": skipped,
+    }
+    return summary
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  CLI 入口
 # ══════════════════════════════════════════════════════════════════════
 
@@ -1281,6 +1470,37 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+
+    # ── 批处理 / 并行 API（顶层 flag，优先于 subcommand）──
+    parser.add_argument(
+        "--batch",
+        metavar="FILE",
+        help="JSONL 批处理文件，每行 {file, subcommand, options} 并行调度",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="并发 worker 数（默认 min(cpu, 8)；仅 --batch 模式生效）",
+    )
+    parser.add_argument(
+        "--defer",
+        action="append",
+        default=[],
+        metavar="PHASE",
+        help="跳过指定阶段（extract/snapshot/compare/tc-read/tc-review），可重复",
+    )
+    parser.add_argument(
+        "--phases",
+        default="",
+        help="仅运行指定阶段（逗号分隔，e.g. 'extract,snapshot'）",
+    )
+    parser.add_argument(
+        "--batch-json",
+        action="store_true",
+        help="--batch 完成后输出 JSON 汇总到 stdout（默认人类可读）",
+    )
+
     sub = parser.add_subparsers(dest="command", help="子命令")
 
     # ── extract ──
@@ -1326,6 +1546,29 @@ def main():
     tcp.add_argument("--output", "-o", required=True, help="输出 .docx")
 
     args = parser.parse_args()
+
+    # ── 批处理优先 ──
+    if args.batch:
+        phases = [p.strip() for p in args.phases.split(",") if p.strip()] if args.phases else None
+        summary = run_batch(
+            args.batch,
+            workers=args.workers or None,
+            defer=args.defer or None,
+            phases=phases,
+        )
+        if args.batch_json:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"[batch] total={summary['total']} ok={summary['ok']} "
+                f"failed={summary['failed']} skipped={summary['skipped']} "
+                f"workers={summary['workers']}"
+            )
+            for r in summary["results"]:
+                tag = "OK" if r["ok"] else "FAIL"
+                err = f" :: {r.get('error')}" if not r["ok"] else ""
+                print(f"  [{tag}] {r['phase']:<10} {r['file']}{err}")
+        sys.exit(0 if summary["failed"] == 0 else 1)
 
     if args.command == "extract":
         cmd_extract(args)
