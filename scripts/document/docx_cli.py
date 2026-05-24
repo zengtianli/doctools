@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""docx.py — 文档处理统一 CLI (Phase 1 colocate · script-consolidation GOAL)
+"""docx_cli.py — 文档处理统一 CLI (Phase 1 colocate · script-consolidation GOAL)
 
 合并 12 个旧 docx/md 处理脚本为单一 multi-subcommand 入口。dispatcher 模式：
 每个子命令构造 argv 并调用旧脚本 `main()`，不复刻代码。
@@ -47,47 +47,11 @@ if str(_LIB) not in sys.path:
 try:
     from parallel_contract import add_parallel_args, run_batch, parse_batch_jsonl  # type: ignore
 except ImportError as e:  # pragma: no cover
-    print(f"[docx.py] FATAL: cannot import parallel_contract from {_LIB}: {e}", file=sys.stderr)
+    print(f"[docx_cli.py] FATAL: cannot import parallel_contract from {_LIB}: {e}", file=sys.stderr)
     sys.exit(2)
 
 # ─── 旧脚本同目录定位 ────────────────────────────────────────────────────
-# ⚠ 不能 sys.path.insert(0, _HERE) — 否则 `from docx import Document`
-# (python-docx 库) 会解析到本文件 docx.py。改用 spec_from_file_location 直接
-# 按文件路径载入旧脚本 module，且故意用别名注册到 sys.modules 防遮蔽。
 _HERE = Path(__file__).resolve().parent
-
-
-def _preload_real_docx() -> None:
-    """主动把真 python-docx 注册到 sys.modules['docx']，防本文件遮蔽。
-
-    本文件名 `docx.py`，作为 `__main__` 运行时其所在目录会进 sys.path[0]，
-    导致旧脚本 `from docx import Document` 撞回本文件。先把 python-docx 装好。
-    """
-    if "docx" in sys.modules and hasattr(sys.modules["docx"], "Document"):
-        return  # 已是真 docx
-    # 强制从非本目录的 sys.path 找
-    saved_path = sys.path[:]
-    sys.path = [p for p in sys.path if str(_HERE) not in p and p not in ("", ".")]
-    sys.modules.pop("docx", None)
-    try:
-        import docx as real_docx  # noqa: WPS433
-        if not hasattr(real_docx, "Document"):
-            raise ImportError("real python-docx not found (no Document attr)")
-        sys.modules["docx"] = real_docx
-        # 子模块也预热（避免按 from docx.X import Y 时再走 finder）
-        for sub in ("oxml", "opc", "text", "shared", "enum", "table", "document"):
-            try:
-                importlib.import_module(f"docx.{sub}")
-            except Exception:
-                pass
-    except ImportError as e:  # pragma: no cover
-        print(f"[docx.py] WARN: python-docx 未安装或冲突，旧脚本可能失败: {e}",
-              file=sys.stderr)
-    finally:
-        sys.path = saved_path
-
-
-_preload_real_docx()
 
 
 # ALL_DOCX_CMDS — for batch-all 编排（外部消费者读此常量）
@@ -143,7 +107,7 @@ def _exec_script(filename_stem: str, argv: list[str]) -> int:
             # 加载时旧脚本顶层就退出（罕见；视为 1）
             return int(se.code) if isinstance(se.code, int) else 1
         except Exception as e:
-            print(f"[docx.py] load error {filename}: {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"[docx_cli.py] load error {filename}: {type(e).__name__}: {e}", file=sys.stderr)
             return 2
         try:
             if hasattr(mod, "main"):
@@ -160,7 +124,7 @@ def _exec_script(filename_stem: str, argv: list[str]) -> int:
         except SystemExit as se:
             return int(se.code) if isinstance(se.code, int) else (0 if se.code is None else 1)
         except Exception as e:
-            print(f"[docx.py] exec error in {filename}: {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"[docx_cli.py] exec error in {filename}: {type(e).__name__}: {e}", file=sys.stderr)
             return 1
     finally:
         sys.argv = saved_argv
@@ -260,12 +224,12 @@ def _handle_batch(args: argparse.Namespace, sub_cmd: str, base_rest: list[str]) 
     """
     tasks = parse_batch_jsonl(args.batch)
     if not tasks:
-        print("[docx.py] batch jsonl empty", file=sys.stderr)
+        print("[docx_cli.py] batch jsonl empty", file=sys.stderr)
         return 0
 
     sub_fn = CMD_TABLE.get(sub_cmd)
     if sub_fn is None:
-        print(f"[docx.py] unknown subcommand for batch: {sub_cmd}", file=sys.stderr)
+        print(f"[docx_cli.py] unknown subcommand for batch: {sub_cmd}", file=sys.stderr)
         return 2
 
     def handler(task: dict) -> dict:
@@ -287,14 +251,14 @@ def _handle_batch(args: argparse.Namespace, sub_cmd: str, base_rest: list[str]) 
         progress=True,
     )
     ok = sum(1 for r in results if r.get("ok"))
-    print(f"[docx.py] batch done: {ok}/{len(results)} ok (rc={rc})", file=sys.stderr)
+    print(f"[docx_cli.py] batch done: {ok}/{len(results)} ok (rc={rc})", file=sys.stderr)
     return rc
 
 
 # ─── 顶层 CLI ──────────────────────────────────────────────────────────
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="docx",
+        prog="docx_cli",
         description=(
             "doctools 文档处理统一 CLI (15+ subcommands)\n"
             "合并 docx_tools / md_tools / bullet_to_paragraph / docx_apply_* /\n"
@@ -304,10 +268,10 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
-            "  docx.py extract input.docx -o out.md\n"
-            "  docx.py check snapshot a.docx\n"
-            "  docx.py md format -i x.md\n"
-            "  docx.py --batch tasks.jsonl --workers 8 extract\n"
+            "  docx_cli.py extract input.docx -o out.md\n"
+            "  docx_cli.py check snapshot a.docx\n"
+            "  docx_cli.py md format -i x.md\n"
+            "  docx_cli.py --batch tasks.jsonl --workers 8 extract\n"
             "\n详见 GOAL: ~/Dev/tools/cc-home/goals/script-consolidation/GOAL.md"
         ),
     )
@@ -377,7 +341,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     sub_fn = CMD_TABLE.get(sub_cmd)
     if sub_fn is None:
-        print(f"[docx.py] unknown subcommand: {sub_cmd}", file=sys.stderr)
+        print(f"[docx_cli.py] unknown subcommand: {sub_cmd}", file=sys.stderr)
         return 2
     args.command = sub_cmd
 

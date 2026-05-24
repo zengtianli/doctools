@@ -13,11 +13,11 @@ PPTX 文档工具集统一入口 v1.0.0
     chart   - 数据驱动图表生成 JSON -> PNG（取代 chart.py）
 
 用法:
-    python3 pptx.py <subcommand> [args...]
-    python3 pptx.py font presentation.pptx
-    python3 pptx.py all *.pptx --workers 8
-    python3 pptx.py to-md slides.pptx
-    python3 pptx.py chart bar config.json -o out.png
+    python3 pptx_cli.py <subcommand> [args...]
+    python3 pptx_cli.py font presentation.pptx
+    python3 pptx_cli.py all *.pptx --workers 8
+    python3 pptx_cli.py to-md slides.pptx
+    python3 pptx_cli.py chart bar config.json -o out.png
 
 向后兼容:
     旧脚本 pptx_tools.py / pptx_to_md.py / chart.py 仍保留，不删除。
@@ -37,39 +37,12 @@ from pathlib import Path
 SCRIPT_VERSION = "1.0.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# 把 lib 加入 sys.path（与 pptx_tools.py / pptx_to_md.py / chart.py 一致）
-# 注意：**不把 SCRIPT_DIR 加入 sys.path** — 本文件名为 `pptx.py`，会和
-# 第三方 `python-pptx` 包的 `pptx` 顶级模块冲突，导致 sibling 脚本里
-# `from pptx import Presentation` 拿到我们这个文件而不是 python-pptx。
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))
 
 
-def _purge_script_dir_from_path():
-    """从 sys.path 删除「本脚本所在目录」+ sys.modules 删除可能误注的 `pptx`。
-
-    原因：Python 启动时把 `__main__` 脚本的目录自动塞进 sys.path[0]。
-    本脚本叫 `pptx.py`，会作为顶级模块 `pptx` 命中 sibling 脚本里
-    `from pptx import Presentation`，把 python-pptx 包整个屏蔽。
-    因此在加载 sibling 之前先清掉这个目录 + 强制让 `pptx` 重新解析为 python-pptx。
-    """
-    script_dir = str(SCRIPT_DIR)
-    sys.path[:] = [p for p in sys.path if Path(p).resolve() != SCRIPT_DIR and p != script_dir and p != ""]
-    # 把可能被误加载的 `pptx` 顶级模块踢出 sys.modules，强制下次 import 从 site-packages 走
-    for name in list(sys.modules.keys()):
-        if name == "pptx" or name.startswith("pptx."):
-            mod = sys.modules[name]
-            mod_file = getattr(mod, "__file__", "") or ""
-            if str(SCRIPT_DIR) in mod_file:
-                del sys.modules[name]
-
-
 def _load_sibling(module_alias: str, filename: str):
-    """用 importlib 按绝对路径加载同目录脚本，避免和 python-pptx 包名冲突。
-
-    module_alias 必须避开 `pptx` 顶级名 — 用 `_pptx_tools_sibling` 这种别名。
-    """
-    _purge_script_dir_from_path()
+    """用 importlib 按绝对路径加载同目录脚本（保留别名 import 避免污染顶级 namespace）。"""
     path = SCRIPT_DIR / filename
     spec = importlib.util.spec_from_file_location(module_alias, path)
     if spec is None or spec.loader is None:
@@ -124,14 +97,14 @@ SUBCOMMANDS = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pptx.py",
+        prog="pptx_cli",
         description="PPTX 文档工具集统一入口 v%s（6 子命令：font/format/table/all/to-md/chart）"
         % SCRIPT_VERSION,
         epilog=(
             "子命令说明:\n"
             + "\n".join(f"  {k:<8}{v}" for k, v in SUBCOMMANDS.items())
             + "\n\n"
-            "各子命令完整 --help: python3 pptx.py <subcommand> --help"
+            "各子命令完整 --help: python3 pptx_cli.py <subcommand> --help"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True,
