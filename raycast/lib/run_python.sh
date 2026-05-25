@@ -7,6 +7,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../lib/common.sh"
 
 run_python() {
     local script_name="$1"; shift
+    # 注入 ~/Dev/tools/dev/lib 到 PYTHONPATH (doctools 多文件依赖 file_ops/display 等 canonical 模块)
+    export PYTHONPATH="$HOME/Dev/tools/dev/lib${PYTHONPATH:+:$PYTHONPATH}"
     exec uv run --project "$PROJECT_ROOT" python3 "$SCRIPTS_DIR/$script_name" "$@"
 }
 
