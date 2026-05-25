@@ -138,13 +138,6 @@ def cmd_apply(args):
         print(f"❌ 文件不存在: {args.input}")
         sys.exit(1)
 
-    # 模板
-    template = args.template or DEFAULT_TEMPLATE
-    if not os.path.exists(template):
-        print(f"❌ 模板不存在: {template}")
-        print("   请指定模板: -t template.docx")
-        sys.exit(1)
-
     # 输出路径
     if args.output:
         output_path = args.output
@@ -152,11 +145,25 @@ def cmd_apply(args):
         base, ext = os.path.splitext(args.input)
         output_path = f"{base}_styled{ext}"
 
-    # 提取模板样式 → 注入目标 docx
-    with tempfile.TemporaryDirectory() as tmpdir:
-        print(f"📋 模板: {os.path.basename(template)}")
-        styles_path, config = extract_styles_xml(template, tmpdir)
-        apply_styles_to_docx(args.input, styles_path, output_path)
+    # 模板：优先用指定模板，缺失则降级到已提取样式（与 md_docx_template.py 行为一致）
+    template = args.template or DEFAULT_TEMPLATE
+    if os.path.exists(template):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            print(f"📋 模板: {os.path.basename(template)}")
+            styles_path, _config = extract_styles_xml(template, tmpdir)
+            apply_styles_to_docx(args.input, styles_path, output_path)
+    else:
+        # 降级：使用同目录缓存的 heading_styles.xml
+        fallback_styles = getattr(args, "styles", None) or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "heading_styles.xml"
+        )
+        if not os.path.exists(fallback_styles):
+            print(f"❌ 模板不存在: {template}")
+            print(f"❌ 缓存样式也不存在: {fallback_styles}")
+            print("   请指定模板: -t 模板.docx")
+            sys.exit(1)
+        print(f"📋 模板缺失，使用缓存样式: {os.path.basename(fallback_styles)}")
+        apply_styles_to_docx(args.input, fallback_styles, output_path)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
