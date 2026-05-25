@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 from lxml import etree
 
 from docx_xml import R_NS, REL_COMMENTS, W, qn
+from file_ops import clear_quarantine
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1234,6 +1235,7 @@ class DocxReviewer:
                 for fn in files:
                     abs_path = os.path.join(root, fn)
                     zf.write(abs_path, os.path.relpath(abs_path, self.tmpdir))
+        clear_quarantine(output_path)
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def cleanup(self):

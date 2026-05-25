@@ -322,10 +322,13 @@ def scan_files_parallel(
     whitelist: set[str] | None = None,
     *,
     quiet: bool = False,
-) -> list[dict]:
+) -> tuple[list[dict], int, int]:
     """并发扫描全部文件的全部块：把所有 (file, chunk) 的 LLM 调用一次性 chat_many。
 
     保序回填到各自文件后，对每个文件做 verify_findings（幻觉/白名单过滤）。
+
+    返回 (verified_findings, none_chunks, total_chunks)。
+    none_chunks = LLM 返回 None / 解析失败的块数（用于检测全失败场景，避免虚假成功）。
     """
     from llm_client import chat_many
 
@@ -340,10 +343,12 @@ def scan_files_parallel(
         all_tasks.extend(tasks)
 
     if not all_tasks:
-        return []
+        return [], 0, 0
+
+    total_chunks = len(all_tasks)
 
     if not quiet:
-        show_processing(f"并发分析 {len(all_tasks)} 个块（{len(file_contents)} 个文件，max_workers=8）...")
+        show_processing(f"并发分析 {total_chunks} 个块（{len(file_contents)} 个文件，max_workers=8）...")
 
     # 2) 一次性并发（仅传 system/message；保序返回）
     results = chat_many(
@@ -351,15 +356,18 @@ def scan_files_parallel(
         max_workers=8,
     )
 
-    # 3) 保序回填：按文件聚合 findings
+    # 3) 保序回填：按文件聚合 findings，同时统计 None 块数
     per_file: dict[str, list[dict]] = {fp: [] for fp in file_contents}
+    none_chunks = 0
     for task, result in zip(all_tasks, results):
         findings = _consume_response(result)
-        if findings:
-            fp = task["_file"]
-            for f in findings:
-                f["file"] = fp
-            per_file[fp].extend(findings)
+        if findings is None:
+            none_chunks += 1
+            continue
+        fp = task["_file"]
+        for f in findings:
+            f["file"] = fp
+        per_file[fp].extend(findings)
 
     # 4) 逐文件验证（保持原 verify_findings 语义）
     all_verified: list[dict] = []
@@ -371,7 +379,7 @@ def scan_files_parallel(
             show_warning(f"  {Path(fp).name}: 过滤 {diff} 个幻觉词条（文件中不存在）")
         all_verified.extend(verified)
 
-    return all_verified
+    return all_verified, none_chunks, total_chunks
 
 
 # === 去重与过滤 ===
@@ -577,9 +585,18 @@ def main():
     create_client()
 
     # 全文件 × 全块一次性并发扫描（保序回填 + 逐文件验证）
-    all_findings = scan_files_parallel(
+    all_findings, none_chunks, total_chunks = scan_files_parallel(
         md_files, existing_words, whitelist, quiet=args.json
     )
+
+    # 检测 LLM 调用大规模失败：>50% 块返回 None 视为扫描失败
+    if total_chunks > 0 and none_chunks * 2 > total_chunks:
+        print(f"⚠️ 扫描可能失败：{none_chunks}/{total_chunks} 块未获 LLM 响应", file=sys.stderr)
+        print("💡 请检查：", file=sys.stderr)
+        print("   1. claude CLI 在 PATH 中: command -v claude", file=sys.stderr)
+        print("   2. 网络可达 Anthropic API", file=sys.stderr)
+        print("   3. 或设置 ANTHROPIC_API_KEY 环境变量", file=sys.stderr)
+        sys.exit(2)
 
     # 去重
     unique_findings = deduplicate_findings(all_findings, existing_words, whitelist)

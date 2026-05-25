@@ -25,6 +25,7 @@ from docx.oxml.ns import qn
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
+from file_ops import clear_quarantine
 from finder import get_input_files
 from progress import ProgressTracker
 
@@ -278,6 +279,7 @@ def apply_image_caption_style(input_file, style_name="ZDWP图名"):
     # 保存文档
     try:
         doc.save(str(input_path))
+        clear_quarantine(str(input_path))
         print("✅ 样式应用完成!")
         print(f"   - 图片段落: {image_count} 个")
         print(f"   - 图名段落: {caption_count} 个")

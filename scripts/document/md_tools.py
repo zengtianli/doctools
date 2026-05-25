@@ -415,8 +415,8 @@ def cmd_strip(args):
 #  to-docx - Markdown 转 Docx（Pandoc 版）
 # ════════════════════════════════════════════════════════════════════
 
-# 默认模板路径
-DOCX_DEFAULT_TEMPLATE = str(Path.home() / "Downloads/归档/其他文档/template.docx")
+# 默认模板路径（对齐 md_docx_template.py:696 — doctools SoT）
+DOCX_DEFAULT_TEMPLATE = str(Path(__file__).parent.parent.parent / "templates" / "template.docx")
 
 
 def docx_get_finder_selection():
@@ -457,11 +457,13 @@ def docx_convert(md_path, output_path=None, template_path=None):
         "docx",
     ]
 
-    # 使用模板（reference-doc）
+    # 使用模板（reference-doc）— 不存在则降级裸 pandoc
     tpl = template_path or DOCX_DEFAULT_TEMPLATE
     if tpl and Path(tpl).exists():
         cmd += ["--reference-doc", str(tpl)]
         show_info(f"模板: {Path(tpl).name}")
+    else:
+        show_info(f"模板不存在，降级裸 pandoc: {tpl}")
 
     show_processing(f"输入: {md_path.name}")
 

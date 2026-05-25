@@ -44,6 +44,7 @@ from docx.oxml.ns import qn
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
+from file_ops import clear_quarantine
 from finder import get_input_files
 from progress import ProgressTracker
 from dockit.text import fix_punctuation, fix_quotes, fix_units
@@ -256,7 +257,16 @@ def process_docx(input_file):
 
         # 保存文件
         print("💾 正在保存文件...")
-        doc.save(output_path)
+        try:
+            doc.save(output_path)
+            clear_quarantine(output_path)
+        except (PermissionError, OSError) as e:
+            fallback = Path.home() / "Downloads" / Path(output_path).name
+            print(f"⚠️ 源目录不可写: {e}")
+            print(f"   降级到: {fallback}")
+            doc.save(fallback)
+            clear_quarantine(fallback)
+            output_path = fallback
 
         print("✅ 处理完成！")
         print(f"   - 共替换了 {stats['quotes']} 个引号")

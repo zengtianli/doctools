@@ -51,6 +51,7 @@ except ImportError:
 import contextlib
 
 from docx_xml import NSMAP
+from file_ops import clear_quarantine
 
 # 需要提取的样式 ID
 TARGET_STYLES = {
@@ -262,6 +263,8 @@ def create_docx_with_styles(styles_xml_path, output_path):
                     file_path = os.path.join(root_dir, file)
                     arcname = os.path.relpath(file_path, tmpdir)
                     zf.write(file_path, arcname)
+
+    clear_quarantine(output_path)
 
     # 清理临时文件
     os.unlink(tmp_path)
@@ -671,6 +674,7 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
 
     # 保存
     doc.save(output_path)
+    clear_quarantine(output_path)
     print(f"✅ 输出: {output_path}")
 
     return output_path
@@ -724,12 +728,17 @@ def main():
     # 无参数时从 Finder 获取选中的 .md 文件
     if not args.input:
         finder_file = get_finder_selection()
-        if finder_file and finder_file.endswith(".md"):
-            args.input = finder_file
-            print(f"📄 从 Finder 获取: {os.path.basename(finder_file)}")
-        else:
-            print("❌ 请在 Finder 中选择一个 .md 文件")
+        if not finder_file:
+            print("❌ Finder 中未选中任何文件")
+            print("   💡 在 Finder 选中一个 .md 文件后重新运行")
             sys.exit(1)
+        if not finder_file.endswith(".md"):
+            ext = os.path.splitext(finder_file)[1] or "(无扩展名)"
+            print(f"❌ 需要 .md 文件，但选中的是: {ext}")
+            print(f"   选中: {os.path.basename(finder_file)}")
+            sys.exit(1)
+        args.input = finder_file
+        print(f"📄 从 Finder 获取: {os.path.basename(finder_file)}")
 
     # 命令: extract
     if args.input == "extract":

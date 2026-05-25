@@ -36,6 +36,7 @@ except ImportError:
     sys.exit(1)
 
 from docx_xml import NSMAP
+from file_ops import clear_quarantine
 
 # 复用 md_docx_template 的样式提取
 from md_docx_template import DEFAULT_TEMPLATE, extract_styles_xml
@@ -104,6 +105,7 @@ def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
                     arcname = os.path.relpath(file_path, tmpdir)
                     zf.write(file_path, arcname)
 
+    clear_quarantine(output_path)
     print(f"✅ 输出: {output_path}")
     return output_path
 
@@ -127,12 +129,17 @@ def cmd_apply(args):
     # 无参数时从 Finder 获取选中的 .docx 文件
     if not args.input:
         finder_file = get_finder_selection()
-        if finder_file and finder_file.endswith(".docx"):
-            args.input = finder_file
-            print(f"📄 从 Finder 获取: {os.path.basename(finder_file)}")
-        else:
-            print("❌ 请在 Finder 中选择一个 .docx 文件")
+        if not finder_file:
+            print("❌ Finder 中未选中任何文件")
+            print("   💡 在 Finder 选中一个 .docx 文件后重新运行")
             sys.exit(1)
+        if not finder_file.endswith(".docx"):
+            ext = os.path.splitext(finder_file)[1] or "(无扩展名)"
+            print(f"❌ 需要 .docx 文件，但选中的是: {ext}")
+            print(f"   选中: {os.path.basename(finder_file)}")
+            sys.exit(1)
+        args.input = finder_file
+        print(f"📄 从 Finder 获取: {os.path.basename(finder_file)}")
 
     if not os.path.exists(args.input):
         print(f"❌ 文件不存在: {args.input}")
@@ -194,6 +201,7 @@ def save_docx(files: dict, styles_tree, doc_tree, output_path: str):
             zf.writestr(name, data)
     with open(output_path, "wb") as f:
         f.write(buf.getvalue())
+    clear_quarantine(output_path)
 
 
 def get_style_map(styles_tree) -> dict:
@@ -384,40 +392,62 @@ def cmd_cleanup(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Word 文档样式工具（套模板 + 清理）",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    subparsers = parser.add_subparsers(dest="command")
+    # 预扫描 argv：第一个非 flag 参数若是已知子命令则走 subparser，否则手工分流到 apply
+    # （argparse subparsers 在第一个 positional 不是已知子命令时会 exit 2，故先 sniff）
+    known_subcommands = {"apply", "cleanup"}
+    raw_args = sys.argv[1:]
+    first_positional = next((a for a in raw_args if not a.startswith("-")), None)
 
-    # ── apply 子命令 ──
-    apply_parser = subparsers.add_parser("apply", help="给普通 docx 套上模板样式")
-    apply_parser.add_argument("input", nargs="?", help="目标 docx 文件")
-    apply_parser.add_argument("-t", "--template", help="模板 docx 文件")
-    apply_parser.add_argument("-o", "--output", help="输出文件")
+    if first_positional in known_subcommands:
+        # 显式子命令：走 subparsers
+        parser = argparse.ArgumentParser(
+            description="Word 文档样式工具（套模板 + 清理）",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ── cleanup 子命令 ──
-    cleanup_parser = subparsers.add_parser("cleanup", help="样式清理：重命名、合并、删除未使用")
-    cleanup_parser.add_argument("input", help="输入 .docx 文件")
-    cleanup_parser.add_argument("-o", "--output", help="输出 .docx 文件")
-    cleanup_parser.add_argument("--config", help="清理规则 JSON 文件")
-    cleanup_parser.add_argument("--preview", action="store_true", help="只预览，不实际修改")
+        apply_parser = subparsers.add_parser("apply", help="给普通 docx 套上模板样式")
+        apply_parser.add_argument("input", nargs="?", help="目标 docx 文件")
+        apply_parser.add_argument("-t", "--template", help="模板 docx 文件")
+        apply_parser.add_argument("-o", "--output", help="输出文件")
 
-    args = parser.parse_args()
+        cleanup_parser = subparsers.add_parser("cleanup", help="样式清理：重命名、合并、删除未使用")
+        cleanup_parser.add_argument("input", help="输入 .docx 文件")
+        cleanup_parser.add_argument("-o", "--output", help="输出 .docx 文件")
+        cleanup_parser.add_argument("--config", help="清理规则 JSON 文件")
+        cleanup_parser.add_argument("--preview", action="store_true", help="只预览，不实际修改")
 
-    # 默认行为：无子命令时当作 apply（兼容旧调用方式）
-    if args.command is None:
-        # 重新解析，把所有参数当 apply 处理
-        apply_parser_compat = argparse.ArgumentParser(description="给普通 docx 套上模板样式")
-        apply_parser_compat.add_argument("input", nargs="?", help="目标 docx 文件")
-        apply_parser_compat.add_argument("-t", "--template", help="模板 docx 文件")
-        apply_parser_compat.add_argument("-o", "--output", help="输出文件")
-        args = apply_parser_compat.parse_args()
+        args = parser.parse_args()
+        if args.command == "cleanup":
+            cmd_cleanup(args)
+        else:
+            cmd_apply(args)
+    else:
+        # 无子命令（兼容旧调用：直接传路径 / Raycast 无参）→ 默认 apply
+        # 顶层支持 --help / -h 列出子命令信息
+        if any(a in ("-h", "--help") for a in raw_args):
+            top = argparse.ArgumentParser(
+                description="Word 文档样式工具（套模板 + 清理）",
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                epilog=(
+                    "子命令：\n"
+                    "  apply   给普通 docx 套上模板样式（默认）\n"
+                    "  cleanup 样式清理：重命名、合并、删除未使用样式\n"
+                ),
+            )
+            top.add_argument("input", nargs="?", help="目标 docx 文件（默认 apply 模式）")
+            top.add_argument("-t", "--template", help="模板 docx 文件")
+            top.add_argument("-o", "--output", help="输出文件")
+            top.parse_args()  # exits with help
+            return
+
+        apply_compat = argparse.ArgumentParser(description="给普通 docx 套上模板样式")
+        apply_compat.add_argument("input", nargs="?", help="目标 docx 文件")
+        apply_compat.add_argument("-t", "--template", help="模板 docx 文件")
+        apply_compat.add_argument("-o", "--output", help="输出文件")
+        args = apply_compat.parse_args(raw_args)
+        args.command = "apply"
         cmd_apply(args)
-    elif args.command == "apply":
-        cmd_apply(args)
-    elif args.command == "cleanup":
-        cmd_cleanup(args)
 
 
 if __name__ == "__main__":

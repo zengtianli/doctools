@@ -45,6 +45,7 @@ from file_ops import (  # noqa: F401
     check_file_exists,
     check_file_extension,
     check_python_packages,
+    clear_quarantine,
     create_folder,
     ensure_directory,
     fatal_error,
