@@ -199,6 +199,181 @@ def _style_name_id_of(p) -> tuple[Optional[str], Optional[str]]:
     return (name, sid)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CAPTION-RISK GUARD (CRITICAL FIX 2026-05-26 W10 灾难补丁):
+# profile.{BODY,TITLE,H1,H2,H3}_TARGET_STYLE_ID 在 docx 里若漂移指向 caption 样式
+# (style.name 含 "图名" / "表名" / "Caption" 等, 或 style XML 含 <w:numPr> / SEQ),
+# style body 会把 Normal 段全套成 caption 自动编号样式 → 整本文档报废
+# ("图6.1-1 → 磐安县小型水库..." 这类前缀)。
+# 防御: 跑主循环之前先 inspect profile 的所有 NON-CAPTION 目标 styleId, 解析其 docx
+# 内实际 style 节点 (name + XML), 命中下列条件之一即 refuse:
+#   - style.name 含 caption-style 关键字 (中英都覆盖)
+#   - style XML <w:pPr><w:numPr> 存在 (paragraph 进入自动编号 list)
+#   - style XML 任何 <w:instrText> 含 SEQ (字段计数器)
+#   - style XML 任何 <w:fldChar> 存在 (field begin/separate/end)
+# --force 旁路 (打 4 行 WARNING)。
+# ──────────────────────────────────────────────────────────────────────────────
+
+_CAPTION_TARGET_NAME_PATTERNS: list[re.Pattern] = [
+    re.compile(r"图\s*名"),
+    re.compile(r"表\s*名"),
+    re.compile(r"图名称"),
+    re.compile(r"表名称"),
+    re.compile(r"表格标题"),
+    re.compile(r"图\s*注"),
+    re.compile(r"表\s*注"),
+    re.compile(r"题\s*注"),
+    re.compile(r"题\s*名"),
+    re.compile(r"^caption$", re.I),
+    re.compile(r"image\s*caption", re.I),
+    re.compile(r"table\s*caption", re.I),
+    re.compile(r"figure\s*caption", re.I),
+    re.compile(r"^figure$", re.I),
+    re.compile(r"^table$", re.I),
+]
+
+# profile field 名 → 该 target 是否允许 caption-like 名字
+# (TABLE_CAPTION_TARGET 本身就是 caption, 名字 OK; 但仍不许 w:numPr / SEQ)
+_NON_CAPTION_TARGET_FIELDS = (
+    "BODY_TARGET_STYLE_ID",
+    "TITLE_TARGET_STYLE_ID",
+    "H1_TARGET_STYLE_ID",
+    "H2_TARGET_STYLE_ID",
+    "H3_TARGET_STYLE_ID",
+)
+_ALL_TARGET_FIELDS = _NON_CAPTION_TARGET_FIELDS + ("TABLE_CAPTION_TARGET_STYLE_ID",)
+
+# 哪些 target 允许带 <w:numPr> (Word 标准 heading 自带列表编号是正常的)。
+# Body / Title / Caption 带 numPr = 灾难 (正文/标题/题注被自动编号)。
+_NUMPR_ALLOWED_TARGET_FIELDS = frozenset({
+    "H1_TARGET_STYLE_ID",
+    "H2_TARGET_STYLE_ID",
+    "H3_TARGET_STYLE_ID",
+})
+
+
+def _style_element_by_id(doc, style_id: str):
+    """Return lxml <w:style> element matching styleId, or None."""
+    try:
+        s = doc.styles.get_by_id(style_id, 1)  # 1 = WD_STYLE_TYPE.PARAGRAPH
+    except Exception:
+        for st in doc.styles:
+            if getattr(st, "style_id", None) == style_id:
+                s = st
+                break
+        else:
+            return None, None
+    name = getattr(s, "name", None) or None
+    el = getattr(s, "element", None)
+    return name, el
+
+
+def _inspect_style_xml_for_auto_numbering(el, allow_numpr: bool = False) -> list[str]:
+    """Return list of reason strings for auto-numbering risk in this style XML.
+
+    allow_numpr=True for H1/H2/H3 targets (heading numPr is by design).
+    """
+    reasons: list[str] = []
+    if el is None:
+        return reasons
+    # <w:pPr><w:numPr> → list / numbered auto-prefix (灾难 for body/title/caption)
+    if not allow_numpr:
+        numpr_nodes = el.findall(".//" + qn("w:numPr"))
+        if numpr_nodes:
+            nums = []
+            for np in numpr_nodes:
+                nid = np.find(qn("w:numId"))
+                if nid is not None:
+                    nums.append(nid.get(qn("w:val")) or "?")
+            reasons.append(f"<w:numPr> present (numId={nums or ['?']}) — 自动列表编号")
+    # <w:instrText> containing SEQ field
+    for it in el.findall(".//" + qn("w:instrText")):
+        txt = (it.text or "").strip()
+        if "SEQ" in txt.upper():
+            reasons.append(f"<w:instrText> contains SEQ field: {txt!r}")
+            break
+    # any <w:fldChar>
+    if el.findall(".//" + qn("w:fldChar")):
+        reasons.append("<w:fldChar> present in style — field auto-prefix")
+    return reasons
+
+
+def _inspect_caption_risk(doc, profile: StylesProfile) -> dict:
+    """Inspect every target styleId in profile; return dict of refusal info.
+
+    Returns:
+        {
+            "refused": bool,
+            "risks": [
+                {"field": "BODY_TARGET_STYLE_ID", "style_id": "ZDWP",
+                 "style_name": "ZDWP 图名", "reasons": ["name matches /图\\s*名/", ...]},
+                ...
+            ],
+        }
+    """
+    risks: list[dict] = []
+    for field in _ALL_TARGET_FIELDS:
+        sid = getattr(profile, field, None)
+        if not sid:
+            continue
+        style_name, el = _style_element_by_id(doc, sid)
+        local_reasons: list[str] = []
+        # Layer A: name pattern (only for non-caption targets — caption targets
+        # legitimately have caption-like names)
+        if field in _NON_CAPTION_TARGET_FIELDS and style_name:
+            for pat in _CAPTION_TARGET_NAME_PATTERNS:
+                if pat.search(style_name):
+                    local_reasons.append(
+                        f"style.name={style_name!r} matches caption pattern /{pat.pattern}/"
+                    )
+                    break
+        # Layer B: auto-numbering / SEQ field in style XML
+        allow_numpr = field in _NUMPR_ALLOWED_TARGET_FIELDS
+        local_reasons.extend(
+            _inspect_style_xml_for_auto_numbering(el, allow_numpr=allow_numpr)
+        )
+        if local_reasons:
+            risks.append({
+                "field": field,
+                "style_id": sid,
+                "style_name": style_name,
+                "reasons": local_reasons,
+            })
+    return {"refused": bool(risks), "risks": risks}
+
+
+def _format_caption_risk_message(profile_name: str, info: dict) -> str:
+    lines = [
+        "",
+        "\033[1;31m" + "=" * 78 + "\033[0m",
+        f"\033[1;31m[REFUSED] style body — profile {profile_name!r} 目标样式存在 caption / 自动编号风险\033[0m",
+        "\033[1;31m" + "=" * 78 + "\033[0m",
+        "",
+    ]
+    for r in info["risks"]:
+        lines.append(
+            f"  · profile.{r['field']} = {r['style_id']!r} → "
+            f"docx 内 style.name = {r['style_name']!r}"
+        )
+        for reason in r["reasons"]:
+            lines.append(f"      - {reason}")
+        lines.append("")
+    lines += [
+        "  跑下去会把 Normal 段套成 caption / 自动编号样式,",
+        "  正文将被 Word 自动插入 \"图X-Y\" / \"表X-Y\" / SEQ 编号前缀,文档报废。",
+        "",
+        "  常见根因: yaml profile 与本 docx 实际 styleId 漂移 (此 styleId 在本 docx",
+        "  被命名为 caption 样式或含 w:numPr / SEQ 字段)。",
+        "",
+        "  修复路径:",
+        "    A. 用 `style rename` 把当前 styleId 改名为正文样式 (推荐)",
+        "    B. 修 profile.*_TARGET_STYLE_ID 指向真正的正文 styleId",
+        "    C. --force 跳过此检查 (不推荐;若 profile/docx 真匹配错则文档会被毁)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _is_protected_paragraph(style_name: Optional[str], style_id: Optional[str], profile: StylesProfile) -> bool:
     """True 表示这段是 heading/title/toc/caption,style body 不许碰."""
     # 1. profile 自身的语义判定 (基于 yaml *_STYLES 集合)
@@ -348,6 +523,35 @@ def cmd_body(args) -> int:
     profile = load_profile(args.profile)
     src = _common_setup(args)
     doc = Document(str(src))
+
+    # ── CAPTION-RISK GUARD (CRITICAL FIX 2026-05-26 W10) ──────────────────────
+    # 跑主循环前先查 profile.*_TARGET_STYLE_ID 在本 docx 里是不是漂移指向 caption /
+    # 自动编号样式; 命中 → exit 2 (除非 --force).
+    risk_info = _inspect_caption_risk(doc, profile)
+    profile_name = getattr(profile, "_name", args.profile)
+    if risk_info["refused"]:
+        msg = _format_caption_risk_message(profile_name or "<?>", risk_info)
+        if not getattr(args, "force", False):
+            sys.stderr.write(msg)
+            sys.stderr.flush()
+            # also emit machine-readable report if --report given
+            if getattr(args, "report", None):
+                _emit_report({
+                    "subcommand": "style body",
+                    "docx": str(src),
+                    "profile": profile_name,
+                    "refused": True,
+                    "caption_risk": risk_info["risks"],
+                }, args)
+            return 2
+        # --force bypass
+        sys.stderr.write(msg)
+        sys.stderr.write("\033[1;33m" + "!" * 78 + "\033[0m\n")
+        sys.stderr.write("\033[1;33m!! --force 已绕过 caption-risk guard\033[0m\n")
+        sys.stderr.write("\033[1;33m!! 文档可能被毁; 你最好知道自己在干什么\033[0m\n")
+        sys.stderr.write("\033[1;33m" + "!" * 78 + "\033[0m\n\n")
+        sys.stderr.flush()
+
     stats = _apply_body_impl(doc, profile, args.dry_run)
 
     next_status = "(dry-run skip)"
@@ -1080,6 +1284,11 @@ def register(subparsers):
     if "body" not in existing_s:
         body_p = style_sub.add_parser("body", help="启发式套 H1/H2/H3/Title/正文 样式")
         _add_common_args(body_p)
+        body_p.add_argument(
+            "--force",
+            action="store_true",
+            help="绕过 caption-risk guard (不推荐: profile/docx 漂移时会把正文套成 caption 自动编号)",
+        )
         body_p.set_defaults(func=cmd_body)
 
     if "table" not in existing_s:
