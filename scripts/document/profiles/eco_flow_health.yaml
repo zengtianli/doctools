@@ -1,14 +1,17 @@
 # eco_flow_health.yaml — eco-flow 项目标准样式集 (docx-health-v2 styleset profile)
-# 景宁 0313 成品为样板,主 ZDWP 系列 + Word 内置标题。
-# 阈值经景宁/磐安实测调:景宁全 5 audit 0 fail,磐安 ≥ 3 fail。
+# 磐安 v3 为样板 (2026-05-26 切换),主 ZDWP 系列 + Word 内置标题。
+# 阈值经景宁/磐安 v3 实测调:两份 docx 均 ≥ 3 pass,无 fail (磐安 4 pass + 1 warn / 景宁 3 pass + 2 warn)。
+# 历史样板 = 景宁 0313 成品 (legacy_anchor_docx,保留参与回归测试)。
 name: eco_flow_health
 description: 浙江省 eco-flow 项目 (各县市生态流量核定与保障实施方案) 标准样式集
-anchor_docx: ~/Work/projects/eco-flow/lishui-景宁/deliverables/景宁县小型水库工程生态流量核定与保障实施方案0313成品.docx
+anchor_docx: ~/Work/projects/eco-flow/taizhou-天台/模板/磐安实施方案-health-v3-final-2026-05-26.docx
+# 历史交付样板,2026-05-26 切到磐安 v3 前的锚;仍参与 5 audit 回归测试,允许 warn 不允许 fail。
+legacy_anchor_docx: ~/Work/projects/eco-flow/lishui-景宁/deliverables/景宁县小型水库工程生态流量核定与保障实施方案0313成品.docx
 
 # 7 必备角色 → [主样式, 备样式...]
 roles:
   body:
-    - ZDWP正文       # 主 (景宁 97 段 nonempty)
+    - ZDWP正文       # 主 (磐安 v3 196 段 nonempty / 景宁 97 段 nonempty)
     - Normal Indent  # 备
   title:
     # 封面 5 件套 (磐安 v3 实测后 distill 2026-05-26):
@@ -25,12 +28,12 @@ roles:
     - Heading 3
     - Heading 4
   caption-figure:
-    - ZDWP图名       # 主 (景宁 14 段 nonempty)
-    - 0 图名称        # 院模板备
+    - ZDWP图名       # 主 (磐安 v3 15 段 nonempty / 景宁 14 段 nonempty)
+    - 0 图名称        # 院模板备 (景宁有定义未用,作院模板备样式保留)
   caption-table:
-    - ZDWP 表名      # 主 (景宁 15 段 nonempty)
+    - ZDWP 表名      # 主 (磐安 v3 13 段 nonempty / 景宁 15 段 nonempty)
     - ZDWP附表
-    - 0 表格标题      # 院模板备
+    - 0 表格标题      # 院模板备 (景宁有定义未用,作院模板备样式保留)
   layout:
     - 居中
     - 页眉
@@ -52,23 +55,22 @@ tolerated_styles:
 
 # 主正文集中度阈值 (body-style-concentration 用)
 # 算法: (所有 body-role 样式在 nonempty 段的总和) / nonempty 段总数
-# 景宁: ZDWP正文 97 + Normal Indent 0 = 97/181 = 53.6% → 0.50 阈值过
-# 磐安: ZDWP正文 1 + Normal Indent 0 = 1/290 = 0.3% → fail
+# 磐安 v3: ZDWP正文 196 + Normal Indent 0 = 196/290 = 67.6% → pass (主锚)
+# 景宁:    ZDWP正文 97  + Normal Indent 0 = 97/181  = 53.6% → pass
 concentration_threshold: 0.50
 
 # style-coherence: 非空段使用 profile-外 + 非 tolerated 样式比例上限
-# 景宁: Normal 2/181 = 1.1% (Normal 被 tolerated 后实际 0%) → pass
-# 磐安: Normal 207 + 01正文 6 = 213/290 = 73% (Normal tolerated 后仍 6/290 = 2%)
-# 注意: Normal 被 tolerated 是为景宁的 2 段噪声;磐安 Normal 主导段会被
-#      body-style-concentration 抓 (主 body 集中度过低) — 双层防御
-# 磐安 fail 改由 style-coherence 检 "tolerated 但非空且占比 > unknown_nonempty_ratio_max" 的样式 ⇒ 即 Normal 主导
+# 磐安 v3: unknown 0/290 = 0.0% → pass (主锚)
+# 景宁:    unknown 8/181 = 4.4% (题目 4 + zdwp题目2 4) → pass
+# 注意: Normal 被 tolerated 是为景宁的 2 段噪声;若 Normal 主导段会被
+#      tolerated_dominance_max 抓 — 双层防御
 coherence_unknown_ratio_max: 0.10
 # 任一 tolerated 样式 (如 Normal) 在 nonempty 段的占比上限;超过 = 该样式被滥用 = fail
 tolerated_dominance_max: 0.30
 
 # style-pool-cleanliness 阈值 (定义但未用样式 / 总定义)
-# 景宁: 138/150 = 92.0% → warn (景宁亦超 85% 阈值,符合 warn 性质)
-# 磐安: 150/161 = 93.2% → warn
+# 磐安 v3: 70/84 = 83.3% → pass (主锚, 刚好低于 85% 阈值)
+# 景宁:    136/149 = 91.3% → warn (景宁院模板留了大量未用旧样式,符合 warn 性质)
 pool_unused_ratio_max: 0.85
 
 # style-pane-filter: stylePaneFormatFilter 必须设过 (warn 级)
