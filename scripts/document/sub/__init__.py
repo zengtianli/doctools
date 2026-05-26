@@ -38,12 +38,14 @@ Each underlying script also remains independently runnable:
 
 from . import (
     audit,
+    audit_styleset,
     blocks,
     caption,
     captions,
     chapter,
     compare,
     diff,
+    fix_styleset,
     freeze,
     header_footer,
     health,
@@ -62,12 +64,14 @@ from . import (
 
 __all__ = [
     "audit",
+    "audit_styleset",
     "blocks",
     "caption",
     "captions",
     "chapter",
     "compare",
     "diff",
+    "fix_styleset",
     "freeze",
     "header_footer",
     "health",
@@ -98,13 +102,14 @@ def register_all(subparsers) -> None:
     """
     # Order: unique-group first, then shared-group contributors
     for mod in (
-        audit, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        audit, audit_styleset, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
         diff, compare, revise_rules,                                             # distilled from bid-diff-and-revise
         health,                                                                  # health diagnose/fix/full
         pipeline,                                                                # pipeline driver
         section,                                                                 # section read/list (distilled from panan-rigid)
         md_merge,                                                                # md merge-into-docx (distilled from panan-rigid)
         table,                                                                   # table structural ops (delete-rows, W4 2026-05-26)
+        fix_styleset,                                                            # style-set fix family + shape_contract gate (W13 2026-05-26)
         chapter, renumber, caption, captions, styles,                           # shared
     ):
         mod.register(subparsers)

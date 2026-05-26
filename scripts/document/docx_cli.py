@@ -351,7 +351,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     i = 0
     # Distilled top-level groups (12+) — argparse handles their internals
     DISTILLED_GROUPS = {
-        "audit", "freeze", "strip", "header-footer", "chapter",
+        "audit", "audit-styleset", "styleset", "freeze", "strip", "header-footer", "chapter",
         "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
         "pipeline", "health",
         "section",    # section read/list (distilled from panan-rigid, 2026-05-26)

@@ -1,0 +1,71 @@
+# eco_flow_health.yaml — eco-flow 项目标准样式集 (docx-health-v2 styleset profile)
+# 景宁 0313 成品为样板,主 ZDWP 系列 + Word 内置标题。
+# 阈值经景宁/磐安实测调:景宁全 5 audit 0 fail,磐安 ≥ 3 fail。
+name: eco_flow_health
+description: 浙江省 eco-flow 项目 (各县市生态流量核定与保障实施方案) 标准样式集
+anchor_docx: ~/Work/projects/eco-flow/lishui-景宁/deliverables/景宁县小型水库工程生态流量核定与保障实施方案0313成品.docx
+
+# 7 必备角色 → [主样式, 备样式...]
+roles:
+  body:
+    - ZDWP正文       # 主 (景宁 97 段 nonempty)
+    - Normal Indent  # 备
+  title:
+    - Title
+    - zdwp题目0
+    - zdwp题目1
+    - zdwp作者
+  heading:
+    - Heading 1
+    - Heading 2
+    - Heading 3
+    - Heading 4
+  caption-figure:
+    - ZDWP图名       # 主 (景宁 14 段 nonempty)
+    - 0 图名称        # 院模板备
+  caption-table:
+    - ZDWP 表名      # 主 (景宁 15 段 nonempty)
+    - ZDWP附表
+    - 0 表格标题      # 院模板备
+  layout:
+    - 居中
+    - 页眉
+    - 页脚
+  toc:
+    - TOC 1
+    - TOC 2
+    - TOC 3
+  hyperlink:
+    - 超链接
+    - Hyperlink
+
+# 工具豁免样式 (出现在 docx 但不算"未知样式";Normal 是 Word 默认,常被空段/分页占位用)
+tolerated_styles:
+  - Normal              # Word 默认,景宁 nonempty 2 段噪声;不算违规
+  - Default Paragraph Font
+  - No List
+  - Table Normal
+
+# 主正文集中度阈值 (body-style-concentration 用)
+# 算法: (所有 body-role 样式在 nonempty 段的总和) / nonempty 段总数
+# 景宁: ZDWP正文 97 + Normal Indent 0 = 97/181 = 53.6% → 0.50 阈值过
+# 磐安: ZDWP正文 1 + Normal Indent 0 = 1/290 = 0.3% → fail
+concentration_threshold: 0.50
+
+# style-coherence: 非空段使用 profile-外 + 非 tolerated 样式比例上限
+# 景宁: Normal 2/181 = 1.1% (Normal 被 tolerated 后实际 0%) → pass
+# 磐安: Normal 207 + 01正文 6 = 213/290 = 73% (Normal tolerated 后仍 6/290 = 2%)
+# 注意: Normal 被 tolerated 是为景宁的 2 段噪声;磐安 Normal 主导段会被
+#      body-style-concentration 抓 (主 body 集中度过低) — 双层防御
+# 磐安 fail 改由 style-coherence 检 "tolerated 但非空且占比 > unknown_nonempty_ratio_max" 的样式 ⇒ 即 Normal 主导
+coherence_unknown_ratio_max: 0.10
+# 任一 tolerated 样式 (如 Normal) 在 nonempty 段的占比上限;超过 = 该样式被滥用 = fail
+tolerated_dominance_max: 0.30
+
+# style-pool-cleanliness 阈值 (定义但未用样式 / 总定义)
+# 景宁: 138/150 = 92.0% → warn (景宁亦超 85% 阈值,符合 warn 性质)
+# 磐安: 150/161 = 93.2% → warn
+pool_unused_ratio_max: 0.85
+
+# style-pane-filter: stylePaneFormatFilter 必须设过 (warn 级)
+require_stylepanefilter: true
