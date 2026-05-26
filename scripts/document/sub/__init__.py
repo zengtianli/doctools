@@ -39,6 +39,8 @@ from . import (
     caption,
     captions,
     chapter,
+    compare,
+    diff,
     freeze,
     header_footer,
     health,
@@ -47,6 +49,7 @@ from . import (
     outline,
     pipeline,
     renumber,
+    revise_rules,
     strip,
     styles,
 )
@@ -57,6 +60,8 @@ __all__ = [
     "caption",
     "captions",
     "chapter",
+    "compare",
+    "diff",
     "freeze",
     "header_footer",
     "health",
@@ -65,6 +70,7 @@ __all__ = [
     "outline",
     "pipeline",
     "renumber",
+    "revise_rules",
     "strip",
     "styles",
 ]
@@ -84,6 +90,7 @@ def register_all(subparsers) -> None:
     # Order: unique-group first, then shared-group contributors
     for mod in (
         audit, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        diff, compare, revise_rules,                                             # distilled from bid-diff-and-revise
         health,                                                                  # health diagnose/fix/full
         pipeline,                                                                # pipeline driver
         chapter, renumber, caption, captions, styles,                           # shared

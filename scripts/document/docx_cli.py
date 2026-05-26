@@ -262,12 +262,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="docx_cli",
         description=(
-            "doctools 文档处理统一 CLI (30+ subcommands · 2026-05-25 qual-supply distill)\n"
+            "doctools 文档处理统一 CLI (35+ subcommands · 2026-05-26 bid-diff distill)\n"
             "Legacy (16 旧族): extract / check / snapshot / compare / track / bullet /\n"
             "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
             "  quality-check / review / scan-sensitive / md\n"
-            "Distilled (12 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
-            "  chapter / renumber / caption / blocks / outline / style / image / legacy\n"
+            "Distilled (15 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
+            "  chapter / renumber / caption / blocks / outline / style / image / legacy /\n"
+            "  seqdiff / compare-ref / revise-rules\n"
             "Pipeline (新): pipeline run <docx>... --steps <step,...> [--parallel] [--step-dir]"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
