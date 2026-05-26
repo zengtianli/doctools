@@ -194,9 +194,11 @@ def cmd_md(args: argparse.Namespace, rest: list[str]) -> int:
 
 CMD_TABLE: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "extract": cmd_extract,
+    "read": cmd_extract,      # alias: skill 叫 read → cli extract
     "check": cmd_check,
     "snapshot": cmd_snapshot,
     "compare": cmd_compare,
+    "diff": cmd_compare,      # alias: skill 叫 diff → cli compare
     "track": cmd_track,
     "bullet": cmd_bullet,
     "image-caption": cmd_image_caption,
@@ -286,10 +288,17 @@ def _build_parser() -> argparse.ArgumentParser:
     add_parallel_args(p)
     sub = p.add_subparsers(dest="command", metavar="<subcommand>")
     # Legacy 16 旧族 — REMAINDER 透传到旧脚本
+    # alias map: skill 名 → cli 规范名（skill 叫 read/diff，cli 叫 extract/compare）
+    _CMD_ALIASES: dict[str, list[str]] = {
+        "extract": ["read"],
+        "compare": ["diff"],
+    }
     for name in ALL_DOCX_CMDS:
+        aliases = _CMD_ALIASES.get(name, [])
         sp = sub.add_parser(
             name,
-            help=f"→ 转发到旧脚本 ({name})",
+            aliases=aliases,
+            help=f"→ 转发到旧脚本 ({name})" + (f" [alias: {','.join(aliases)}]" if aliases else ""),
             add_help=False,  # 让旧脚本自己处理 -h（透传 rest）
         )
         sp.add_argument("rest", nargs=argparse.REMAINDER, help="透传到旧脚本")
