@@ -41,9 +41,11 @@ from . import (
     chapter,
     freeze,
     header_footer,
+    health,
     images,
     legacy,
     outline,
+    pipeline,
     renumber,
     strip,
     styles,
@@ -57,9 +59,11 @@ __all__ = [
     "chapter",
     "freeze",
     "header_footer",
+    "health",
     "images",
     "legacy",
     "outline",
+    "pipeline",
     "renumber",
     "strip",
     "styles",
@@ -80,6 +84,8 @@ def register_all(subparsers) -> None:
     # Order: unique-group first, then shared-group contributors
     for mod in (
         audit, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        health,                                                                  # health diagnose/fix/full
+        pipeline,                                                                # pipeline driver
         chapter, renumber, caption, captions, styles,                           # shared
     ):
         mod.register(subparsers)

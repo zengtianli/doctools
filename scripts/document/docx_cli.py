@@ -264,8 +264,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "Legacy (16 旧族): extract / check / snapshot / compare / track / bullet /\n"
             "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
             "  quality-check / review / scan-sensitive / md\n"
-            "Distilled (11 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
-            "  chapter / renumber / caption / blocks / outline / style / image / legacy"
+            "Distilled (12 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
+            "  chapter / renumber / caption / blocks / outline / style / image / legacy\n"
+            "Pipeline (新): pipeline run <docx>... --steps <step,...> [--parallel] [--step-dir]"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -338,10 +339,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub_cmd: Optional[str] = None
     rest: list[str] = []
     i = 0
-    # Distilled top-level groups (11) — argparse handles their internals
+    # Distilled top-level groups (12+) — argparse handles their internals
     DISTILLED_GROUPS = {
         "audit", "freeze", "strip", "header-footer", "chapter",
         "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
+        "pipeline", "health",
     }
     while i < len(raw):
         tok = raw[i]

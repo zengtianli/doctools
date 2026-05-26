@@ -1,0 +1,403 @@
+"""pipeline_lib.py — docx batch pipeline 基础设施 (distilled from qual-supply · 2026-05-26)
+
+原 qual-supply `scripts/_pipeline_lib.py`，上提到总部 doctools sub/ 后去掉前缀下划线。
+qual-supply 的 `_pipeline_lib.py` 已改为 thin shim (`from sub.pipeline_lib import *`)。
+
+设计目标
+--------
+- **不破坏「一脚本一功能」铁律**: 每脚本仍单功能、独立 CLI 仍能跑、main() 不动
+- **复用 parse + write + backup + lsof**: 23 脚本对同一 docx 串行调用时, Document 只 parse 1 次, 写 1 次, lsof 1 次, backup 1 次
+- **跨 docx 并行**: 用 ProcessPoolExecutor 满核扇出, 避开 GIL
+- **同 docx 内串行**: 写冲突避免, step 顺序由用户控制
+
+两类 step 接口
+--------------
+1. **doc-based step** — 脚本暴露 `apply(doc, args) -> dict`
+   - args 是 argparse.Namespace (或 dict-like with attribute access)
+   - apply 改 doc 内存对象, **不读不写文件**
+   - 返回 report dict (含 changed / issues / 任何 stats)
+   - 适用: 17 个改 doc.paragraphs / doc.tables / pStyle 的脚本
+
+2. **path-based step** — 脚本暴露 `apply_path(docx_path, args) -> dict`
+   - 必须直接操作 zip (改 word/styles.xml / numbering.xml / media/ 等)
+   - apply_path 自己负责读写 zip; pipeline 在 doc-based steps 写入磁盘后才调
+   - 返回 report dict
+   - 适用: 6 个 zip-write 脚本 (freeze_heading_numbers / freeze_all_fields /
+     strip_style_outlinelvl / audit_heading_numbers / audit_word_fields /
+     relink_images_from_source)
+
+pipeline 执行顺序
+-----------------
+1. lsof_check 1 次
+2. backup 1 次 (除非 backup_once=False)
+3. 把 steps 按声明顺序分两段: pre = 所有 doc-based, post = 所有 path-based
+   (若混合声明, 用户负责把 path-based 放后面; driver 不重排)
+4. 依次:
+   - Document(path) parse 1 次
+   - for step in doc-based: step.apply(doc, args)
+   - doc.save(path) 1 次
+   - for step in path-based: step.apply_path(path, args)
+5. 返回 {step_name: report, "_meta": {timing, backup, ...}}
+
+并行模式 (跨 docx)
+------------------
+ProcessPoolExecutor(max_workers=min(N_docx, cpu_count))
+每个 docx 一个 process 跑完整 pipeline
+
+step_dir 参数
+-------------
+load_step() 的 step_dir 参数指定从哪个目录动态加载脚本模块。
+默认 None = 从 cwd/scripts/ 找（qual-supply 兼容）。
+可传 --step-dir 指向任意项目的 scripts/ 目录。
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Any, Callable
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None  # type: ignore
+
+
+# ----------------- helpers -----------------
+
+def lsof_check(docx_path: Path) -> str | None:
+    """返回非 None 即被占用; None 表示空闲"""
+    try:
+        out = subprocess.run(
+            ["lsof", str(docx_path)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def make_backup_path(src: Path) -> Path:
+    """统一备份命名: <stem>.bak-N-YYYY-MM-DD<suffix>, N 自增"""
+    today = date.today().isoformat()
+    parent, stem, suffix = src.parent, src.stem, src.suffix
+    n = 1
+    while True:
+        cand = parent / f"{stem}.bak-{n}-{today}{suffix}"
+        if not cand.exists():
+            return cand
+        n += 1
+
+
+# ----------------- step loading -----------------
+
+@dataclass
+class LoadedStep:
+    name: str
+    kind: str  # "doc" or "path"
+    fn: Callable[..., dict]
+    module: Any
+
+    def call(self, *, doc=None, docx_path: Path | None = None, args=None) -> dict:
+        if self.kind == "doc":
+            return self.fn(doc, args)
+        return self.fn(docx_path, args)
+
+
+def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
+    """Load a step module by name.
+
+    name = 脚本名(无.py).
+    step_dir = 从哪个目录加载脚本。默认 None → cwd/scripts/（qual-supply 兼容）。
+    Dynamic import; 优先 apply(doc, args), 否则 apply_path(path, args).
+    """
+    # Determine search path
+    if step_dir is not None:
+        search_dirs = [Path(step_dir).resolve()]
+    else:
+        # Default: cwd/scripts/ (qual-supply compat) + cwd itself
+        cwd = Path.cwd()
+        search_dirs = [cwd / "scripts", cwd]
+
+    # Try loading from search_dirs via spec_from_file_location
+    for d in search_dirs:
+        candidate = d / f"{name}.py"
+        if candidate.is_file():
+            alias = f"_pipeline_step__{name}"
+            spec = importlib.util.spec_from_file_location(alias, str(candidate))
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                # Insert directory for relative sibling imports within step scripts
+                dir_str = str(d)
+                inserted = dir_str not in sys.path
+                if inserted:
+                    sys.path.insert(0, dir_str)
+                try:
+                    spec.loader.exec_module(mod)
+                finally:
+                    if inserted:
+                        try:
+                            sys.path.remove(dir_str)
+                        except ValueError:
+                            pass
+                if hasattr(mod, "apply"):
+                    return LoadedStep(name=name, kind="doc", fn=mod.apply, module=mod)
+                if hasattr(mod, "apply_path"):
+                    return LoadedStep(name=name, kind="path", fn=mod.apply_path, module=mod)
+                raise AttributeError(
+                    f"script '{name}' ({candidate}) has neither apply(doc,args) nor apply_path(path,args)"
+                )
+
+    # Fallback: importlib.import_module (original qual-supply behaviour)
+    try:
+        module = importlib.import_module(name)
+    except ImportError:
+        module = importlib.import_module(f"scripts.{name}")
+    if hasattr(module, "apply"):
+        return LoadedStep(name=name, kind="doc", fn=module.apply, module=module)
+    if hasattr(module, "apply_path"):
+        return LoadedStep(name=name, kind="path", fn=module.apply_path, module=module)
+    raise AttributeError(
+        f"script '{name}' has neither apply(doc,args) nor apply_path(path,args)"
+    )
+
+
+# ----------------- single docx pipeline -----------------
+
+def run_pipeline(
+    docx_path: Path | str,
+    step_names: list[str],
+    args: argparse.Namespace | None = None,
+    backup_once: bool = True,
+    lsof_once: bool = True,
+    dry_run: bool = False,
+    no_backup: bool = False,
+    step_dir: Path | str | None = None,
+) -> dict:
+    """对单个 docx 顺序执行 steps; parse/save/lsof/backup 各 1 次.
+
+    step_dir: 传给 load_step，指定 step 脚本目录。None = cwd/scripts/（qual-supply 兼容）。
+    """
+    docx_path = Path(docx_path).resolve()
+    if not docx_path.is_file():
+        raise FileNotFoundError(docx_path)
+
+    t0 = time.perf_counter()
+    report: dict[str, Any] = {"docx": str(docx_path), "steps": {}, "timing": {}}
+
+    # lsof
+    if lsof_once and not dry_run:
+        t_ls = time.perf_counter()
+        occ = lsof_check(docx_path)
+        report["timing"]["lsof"] = time.perf_counter() - t_ls
+        if occ:
+            raise RuntimeError(
+                f"docx 被占用 (Word/WPS): {docx_path}\n{occ}"
+            )
+
+    # load all steps first (fail fast)
+    t_load = time.perf_counter()
+    loaded = [load_step(n, step_dir=step_dir) for n in step_names]
+    report["timing"]["load_steps"] = time.perf_counter() - t_load
+
+    # backup
+    backup_path = None
+    if backup_once and not dry_run and not no_backup:
+        backup_path = make_backup_path(docx_path)
+        shutil.copy2(docx_path, backup_path)
+        report["backup"] = str(backup_path)
+
+    # default args
+    if args is None:
+        args = argparse.Namespace()
+    # inject standard fields if missing
+    if not hasattr(args, "docx"):
+        args.docx = docx_path
+    if not hasattr(args, "dry_run"):
+        args.dry_run = dry_run
+    if not hasattr(args, "no_backup"):
+        args.no_backup = True  # pipeline 已经备份过, step 内别再备
+    if not hasattr(args, "report"):
+        args.report = None
+
+    # split steps: doc-based first, path-based last
+    doc_steps = [s for s in loaded if s.kind == "doc"]
+    path_steps = [s for s in loaded if s.kind == "path"]
+    # warn if order interleaved
+    declared_kinds = [s.kind for s in loaded]
+    if declared_kinds != [s.kind for s in doc_steps + path_steps]:
+        report["warnings"] = [
+            "step 声明顺序混合 doc/path; pipeline 已自动重排为 doc-first, path-last"
+        ]
+
+    # doc-based pass
+    if doc_steps:
+        t_parse = time.perf_counter()
+        doc = Document(str(docx_path))
+        report["timing"]["parse"] = time.perf_counter() - t_parse
+        for s in doc_steps:
+            t_s = time.perf_counter()
+            try:
+                rep = s.call(doc=doc, args=args)
+            except Exception as exc:
+                rep = {"error": repr(exc)}
+            report["steps"][s.name] = rep
+            report["timing"][f"step:{s.name}"] = time.perf_counter() - t_s
+        if not dry_run:
+            t_w = time.perf_counter()
+            doc.save(str(docx_path))
+            report["timing"]["save"] = time.perf_counter() - t_w
+
+    # path-based pass (after save)
+    for s in path_steps:
+        t_s = time.perf_counter()
+        try:
+            rep = s.call(docx_path=docx_path, args=args)
+        except Exception as exc:
+            rep = {"error": repr(exc)}
+        report["steps"][s.name] = rep
+        report["timing"][f"step:{s.name}"] = time.perf_counter() - t_s
+
+    report["timing"]["total"] = time.perf_counter() - t0
+    return report
+
+
+# ----------------- parallel across docs -----------------
+
+def _worker(payload: dict) -> dict:
+    """ProcessPoolExecutor worker entry"""
+    return run_pipeline(
+        docx_path=payload["docx"],
+        step_names=payload["steps"],
+        args=None,
+        backup_once=payload.get("backup_once", True),
+        lsof_once=payload.get("lsof_once", True),
+        dry_run=payload.get("dry_run", False),
+        no_backup=payload.get("no_backup", False),
+        step_dir=payload.get("step_dir"),
+    )
+
+
+def run_pipeline_parallel(
+    docx_list: list[Path | str],
+    step_names: list[str],
+    max_workers: int | None = None,
+    dry_run: bool = False,
+    no_backup: bool = False,
+    step_dir: Path | str | None = None,
+) -> dict[str, dict]:
+    """对 N docx 并行执行 pipeline (跨 docx process-level 并行)"""
+    if not docx_list:
+        return {}
+    if max_workers is None:
+        max_workers = min(len(docx_list), os.cpu_count() or 4)
+    payloads = [
+        {
+            "docx": str(d),
+            "steps": step_names,
+            "dry_run": dry_run,
+            "no_backup": no_backup,
+            "step_dir": str(step_dir) if step_dir else None,
+        }
+        for d in docx_list
+    ]
+    results: dict[str, dict] = {}
+    if max_workers == 1 or len(docx_list) == 1:
+        for p in payloads:
+            try:
+                results[p["docx"]] = _worker(p)
+            except Exception as exc:
+                results[p["docx"]] = {"error": repr(exc)}
+        return results
+    with ProcessPoolExecutor(max_workers=max_workers) as ex:
+        fut_map = {ex.submit(_worker, p): p["docx"] for p in payloads}
+        for fut in as_completed(fut_map):
+            d = fut_map[fut]
+            try:
+                results[d] = fut.result()
+            except Exception as exc:
+                results[d] = {"error": repr(exc)}
+    return results
+
+
+# ----------------- pretty timing reporter -----------------
+
+def format_timing_table(results: dict[str, dict]) -> str:
+    """渲染墙钟统计表"""
+    lines = []
+    lines.append("=" * 78)
+    lines.append("PIPELINE TIMING REPORT")
+    lines.append("=" * 78)
+
+    # collect all step names
+    step_set: list[str] = []
+    seen = set()
+    for r in results.values():
+        if not isinstance(r, dict) or "steps" not in r:
+            continue
+        for k in r.get("steps", {}):
+            if k not in seen:
+                step_set.append(k)
+                seen.add(k)
+
+    # header
+    lines.append(f"{'docx':40s}  {'parse':>7s}  {'save':>7s}  {'total':>8s}")
+    lines.append("-" * 78)
+    total_wall = 0.0
+    for docx, r in results.items():
+        if not isinstance(r, dict) or "timing" not in r:
+            lines.append(f"{Path(docx).name[:40]:40s}  ERROR: {r}")
+            continue
+        t = r["timing"]
+        name = Path(docx).name[:40]
+        parse_t = t.get("parse", 0.0)
+        save_t = t.get("save", 0.0)
+        tot = t.get("total", 0.0)
+        total_wall = max(total_wall, tot)  # parallel: max
+        lines.append(
+            f"{name:40s}  {parse_t:7.3f}  {save_t:7.3f}  {tot:8.3f}"
+        )
+    lines.append("-" * 78)
+    # per-step timing (sum across docs)
+    if step_set:
+        lines.append("Per-step (sum across all docs):")
+        for step in step_set:
+            tot = 0.0
+            cnt = 0
+            for r in results.values():
+                if isinstance(r, dict) and "timing" in r:
+                    v = r["timing"].get(f"step:{step}")
+                    if v is not None:
+                        tot += v
+                        cnt += 1
+            lines.append(f"  {step:50s}  {tot:7.3f}s  ({cnt} docs)")
+    lines.append("-" * 78)
+    lines.append(
+        f"Max wall (parallel mode dominator): {total_wall:.3f}s "
+        f"over {len(results)} docs"
+    )
+    lines.append("=" * 78)
+    return "\n".join(lines)
+
+
+__all__ = [
+    "lsof_check",
+    "make_backup_path",
+    "load_step",
+    "run_pipeline",
+    "run_pipeline_parallel",
+    "format_timing_table",
+]
