@@ -1317,15 +1317,32 @@ def _add_first_line_indent_to_style(docx_path: Path, style_id: str,
     return stats
 
 
+# 允许被 cover-assign 改写的"前体"样式名集 — 避免误改 caption/heading
+# 的段 (e.g. 景宁 idx=18 原 ZDWP图名 不应被当 date 段改掉)
+_COVER_SOURCE_OK_STYLES = {
+    "Normal", "Default Paragraph Font", "正文", "01正文",
+    "Title", "Subtitle", "题目", "副标题",
+    "zdwp题目0", "zdwp题目1", "zdwp作者", "zdwp封面日期",
+    "ZDWP正文",  # already-rebranded body (cover 段可能此前已 normal 化)
+}
+# 最大段 idx 视为合法 cover 段（防 LLM/启发式抓到正文中段日期）
+_COVER_IDX_MAX = 30
+
+
 def _cover_assign_pstyle(docx_path: Path, role_to_styleid: dict) -> dict:
     """Open docx, for each non-None idx in role_to_styleid (using
     LLM-identified cover paragraph idxs), set pStyle to mapped styleId.
 
+    Guard: only assign if (a) idx <= _COVER_IDX_MAX AND
+                          (b) target paragraph's CURRENT style.name in
+                              _COVER_SOURCE_OK_STYLES (otherwise we'd
+                              corrupt caption/heading roles).
+
     role_to_styleid: e.g. {3: "zdwp题目0", 4: "zdwp题目1", 11: "zdwp作者", 20: "zdwp封面日期"}
-    Returns: {"assigned": int, "skipped_missing_idx": int}
+    Returns: stats dict
     """
     stats = {"assigned": 0, "skipped_missing_idx": 0, "skipped_missing_style": 0,
-             "details": []}
+             "skipped_role_protected": 0, "details": []}
     doc = Document(str(docx_path))
     available = {s.style_id for s in doc.styles}
     n_paras = len(doc.paragraphs)
@@ -1337,15 +1354,26 @@ def _cover_assign_pstyle(docx_path: Path, role_to_styleid: dict) -> dict:
             stats["skipped_missing_idx"] += 1
             stats["details"].append({"idx": idx, "issue": "out of range", "n_paras": n_paras})
             continue
+        if idx > _COVER_IDX_MAX:
+            stats["skipped_role_protected"] += 1
+            stats["details"].append({"idx": idx, "issue": f"idx > {_COVER_IDX_MAX} not cover"})
+            continue
         if sid not in available:
             stats["skipped_missing_style"] += 1
             stats["details"].append({"idx": idx, "issue": f"styleId {sid} missing"})
             continue
         p = doc.paragraphs[idx]
+        cur_name = (p.style.name if p.style else "") or ""
+        if cur_name not in _COVER_SOURCE_OK_STYLES:
+            stats["skipped_role_protected"] += 1
+            stats["details"].append({"idx": idx,
+                                     "issue": f"current style {cur_name!r} not cover-source-ok"})
+            continue
         _set_para_pStyle(p, sid)
         stats["assigned"] += 1
         stats["details"].append({"idx": idx, "set_styleId": sid,
-                                 "text_preview": (p.text or "")[:40]})
+                                 "text_preview": (p.text or "")[:40],
+                                 "was_style": cur_name})
     doc.save(str(docx_path))
     return stats
 
