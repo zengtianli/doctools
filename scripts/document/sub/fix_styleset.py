@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1174,6 +1175,674 @@ def register(subparsers) -> None:
                             choices=["paragraph", "character", "table", "numbering"],
                             help="新 style 类型 (default paragraph)")
         sp.set_defaults(func=fn)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# cmd_restore (W-restore 2026-05-26) — 9-step 综合 styleset 修复链
+#
+# eco-flow 项目专属配方; profile yaml = profiles/eco_flow_health.yaml
+# (与 fix_styleset 其它命令用的 styles_registry profile 不是同一个 SSOT)
+#
+# 9 step (每步过 shape_contract via 各 cmd_xxx 内置 gate):
+#   0  capture before (audit)
+#   1  rename × 3   : 0 图名称→ZDWP图名 / 0 表格标题→ZDWP 表名 / 0表格内容→ZDWP表格内容
+#   2  rebrand × 2  : Normal→ZDWP正文 / 01正文→ZDWP正文  (走 BODY_TARGET)
+#   3  create × 5   : ZDWP附表 / zdwp题目0 / zdwp题目1 / zdwp作者 / zdwp封面日期
+#   4  firstLine    : 给 ZDWP正文 样式定义加 firstLineChars=200 + firstLine=480
+#   5  clear-direct : --style "ZDWP正文" 清 inline pPr/rPr
+#   6  cover-assign : LLM 识别封面 4 idx → 设 pStyle
+#   7  pool-cleanup : 留 KEEP set
+#   8  final shape_contract verify (vs step-0 before)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# eco-flow 配方常量
+_ECO_FLOW_PROFILE_YAML = (
+    Path(__file__).resolve().parent.parent / "profiles" / "eco_flow_health.yaml"
+)
+
+_RECIPE_RENAME = [
+    # (style.name FROM, style.name TO)
+    ("0 图名称", "ZDWP图名"),
+    ("0 表格标题", "ZDWP 表名"),
+    ("0表格内容", "ZDWP表格内容"),
+]
+_RECIPE_REBRAND_FROM = ["Normal", "01正文"]
+_RECIPE_REBRAND_TO_ID = "ZDWP正文"
+
+_RECIPE_CREATE = [
+    # (base styleId/name, new_id, new_name, type)
+    ("ZDWP正文", "ZDWP附表", "ZDWP附表", "paragraph"),
+    ("Title",    "zdwp题目0", "zdwp题目0", "paragraph"),
+    ("Title",    "zdwp题目1", "zdwp题目1", "paragraph"),
+    ("ZDWP正文", "zdwp作者",  "zdwp作者",  "paragraph"),
+    ("ZDWP正文", "zdwp封面日期", "zdwp封面日期", "paragraph"),
+]
+
+# 兜底 KEEP (除 profile.roles 派生的样式之外, 防误删 Word built-in)
+_BUILTIN_KEEP = (
+    *(f"Heading {i}" for i in range(1, 10)),
+    "Normal", "Default Paragraph Font", "Title", "Subtitle",
+    "Caption", "Header", "Footer", "FootnoteText", "FootnoteReference",
+    "EndnoteText", "Hyperlink", "TOC 1", "TOC 2", "TOC 3", "TOC 4",
+    "TOC 5", "No List", "Table Normal", "页眉", "页脚", "超链接",
+)
+
+
+def _load_yaml_profile(yaml_path: Path) -> dict:
+    """Load eco_flow_health.yaml-style profile (separate from styles_registry)."""
+    import yaml as _yaml
+    p = Path(os.path.expanduser(str(yaml_path))).resolve() if False else Path(yaml_path).expanduser().resolve()
+    with open(p, "r", encoding="utf-8") as f:
+        return _yaml.safe_load(f) or {}
+
+
+def _derive_keep_set(yaml_profile: dict) -> set[str]:
+    """KEEP set = all role styles (派生自 profile.roles) + builtins.
+
+    Args:
+        yaml_profile: eco_flow_health.yaml loaded dict
+    Returns:
+        set of style names (matches by .name; styles.xml stores name + styleId)
+    """
+    keep: set[str] = set()
+    for role_styles in (yaml_profile.get("roles") or {}).values():
+        if role_styles:
+            keep.update(role_styles)
+    keep.update(yaml_profile.get("tolerated_styles") or [])
+    keep.update(_BUILTIN_KEEP)
+    return keep
+
+
+def _add_first_line_indent_to_style(docx_path: Path, style_id: str,
+                                    chars: int = 200, twips: int = 480) -> dict:
+    """Open docx via zipfile + lxml, add w:ind firstLineChars + firstLine to
+    the given styleId in word/styles.xml. Save back to docx_path.
+
+    Returns: {"found": bool, "modified": bool}
+    """
+    stats = {"found": False, "modified": False}
+    import zipfile as _zf
+    import tempfile
+
+    # read all parts → temp dir; modify styles.xml; rezip
+    src = Path(docx_path)
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        with _zf.ZipFile(str(src), "r") as zin:
+            zin.extractall(td_path)
+        styles_xml = td_path / "word" / "styles.xml"
+        if not styles_xml.exists():
+            return stats
+        tree = etree.parse(str(styles_xml))
+        root = tree.getroot()
+        ns = {"w": W_NS}
+        # find style by styleId OR by name
+        target_el = None
+        for st in root.findall(qn("w:style")):
+            sid = st.get(qn("w:styleId"))
+            if sid == style_id:
+                target_el = st
+                break
+            nm = st.find(qn("w:name"))
+            if nm is not None and nm.get(qn("w:val")) == style_id:
+                target_el = st
+                break
+        if target_el is None:
+            return stats
+        stats["found"] = True
+        pPr = target_el.find(qn("w:pPr"))
+        if pPr is None:
+            pPr = OxmlElement("w:pPr")
+            target_el.append(pPr)
+        ind = pPr.find(qn("w:ind"))
+        if ind is None:
+            ind = OxmlElement("w:ind")
+            pPr.append(ind)
+        ind.set(qn("w:firstLineChars"), str(chars))
+        ind.set(qn("w:firstLine"), str(twips))
+        stats["modified"] = True
+
+        # write styles.xml back
+        tree.write(str(styles_xml), xml_declaration=True,
+                   encoding="UTF-8", standalone=True)
+
+        # repackage zip
+        tmp_out = src.with_suffix(src.suffix + ".firstLine.tmp")
+        with _zf.ZipFile(str(tmp_out), "w", _zf.ZIP_DEFLATED) as zout:
+            for f in td_path.rglob("*"):
+                if f.is_file():
+                    arc = f.relative_to(td_path).as_posix()
+                    zout.write(str(f), arcname=arc)
+        shutil.move(str(tmp_out), str(src))
+    return stats
+
+
+def _cover_assign_pstyle(docx_path: Path, role_to_styleid: dict) -> dict:
+    """Open docx, for each non-None idx in role_to_styleid (using
+    LLM-identified cover paragraph idxs), set pStyle to mapped styleId.
+
+    role_to_styleid: e.g. {3: "zdwp题目0", 4: "zdwp题目1", 11: "zdwp作者", 20: "zdwp封面日期"}
+    Returns: {"assigned": int, "skipped_missing_idx": int}
+    """
+    stats = {"assigned": 0, "skipped_missing_idx": 0, "skipped_missing_style": 0,
+             "details": []}
+    doc = Document(str(docx_path))
+    available = {s.style_id for s in doc.styles}
+    n_paras = len(doc.paragraphs)
+    for idx, sid in role_to_styleid.items():
+        if idx is None:
+            stats["skipped_missing_idx"] += 1
+            continue
+        if idx < 0 or idx >= n_paras:
+            stats["skipped_missing_idx"] += 1
+            stats["details"].append({"idx": idx, "issue": "out of range", "n_paras": n_paras})
+            continue
+        if sid not in available:
+            stats["skipped_missing_style"] += 1
+            stats["details"].append({"idx": idx, "issue": f"styleId {sid} missing"})
+            continue
+        p = doc.paragraphs[idx]
+        _set_para_pStyle(p, sid)
+        stats["assigned"] += 1
+        stats["details"].append({"idx": idx, "set_styleId": sid,
+                                 "text_preview": (p.text or "")[:40]})
+    doc.save(str(docx_path))
+    return stats
+
+
+def _pool_cleanup_with_keep(docx_path: Path, keep_names: set[str]) -> dict:
+    """Delete styles whose .name is not in keep_names AND not actually used
+    by any paragraph/run/table reference AND not a system default.
+
+    Returns: {"deleted_count": N, "deleted": [...], "kept": N}
+    """
+    stats = {"deleted_count": 0, "deleted": [], "kept": 0, "skipped_in_use": 0}
+    doc = Document(str(docx_path))
+
+    used = _all_para_style_ids(doc) | _all_run_style_ids(doc) | _all_table_style_ids(doc)
+    link_refs: set[str] = set()
+    for s in doc.styles:
+        el = getattr(s, "element", None)
+        if el is None:
+            continue
+        for tag in ("w:basedOn", "w:next", "w:link"):
+            for n in el.findall(qn(tag)):
+                v = n.get(qn("w:val"))
+                if v:
+                    link_refs.add(v)
+
+    for s in list(doc.styles):
+        sid = getattr(s, "style_id", "") or ""
+        name = getattr(s, "name", "") or ""
+        if not sid:
+            continue
+        if name in keep_names or sid in keep_names:
+            stats["kept"] += 1
+            continue
+        if sid in used or sid in link_refs:
+            stats["skipped_in_use"] += 1
+            stats["kept"] += 1
+            continue
+        if _is_system_default_style(s):
+            stats["kept"] += 1
+            continue
+        el = getattr(s, "element", None)
+        if el is not None and el.getparent() is not None:
+            el.getparent().remove(el)
+            stats["deleted_count"] += 1
+            stats["deleted"].append({"id": sid, "name": name})
+
+    doc.save(str(docx_path))
+    return stats
+
+
+def _resolve_styleid_by_name(docx_path: Path, name: str) -> Optional[str]:
+    """Lookup style.name -> style_id in docx. Used by cover-assign (need styleId not .name)."""
+    doc = Document(str(docx_path))
+    for s in doc.styles:
+        if getattr(s, "name", "") == name or getattr(s, "style_id", "") == name:
+            return getattr(s, "style_id", None)
+    return None
+
+
+def _make_subcmd_args(docx_path: Path, **kw):
+    """Build argparse.Namespace for invoking other cmd_xxx in-process."""
+    ns = argparse.Namespace()
+    ns.docx_path = docx_path
+    ns.dry_run = False
+    ns.inplace = True
+    ns.no_backup = True  # we manage backup at restore-level
+    ns.force = False
+    ns.report = None
+    ns.profile = kw.pop("profile", None)
+    for k, v in kw.items():
+        setattr(ns, k, v)
+    return ns
+
+
+def cmd_restore(args) -> int:
+    """eco-flow styleset 9-step 综合修复.
+
+    args attrs:
+      docx_path: Path
+      dry_run, inplace, no_backup, force, report
+      output: Path | None   — 输出位置 (--inplace 时忽略)
+      no_llm: bool          — 用启发式 fallback 替代 LLM
+      yaml_profile: Path | None — eco_flow_health.yaml 路径
+    """
+    src = _common_setup(args)
+    yaml_path = Path(getattr(args, "yaml_profile", None)
+                     or _ECO_FLOW_PROFILE_YAML).expanduser().resolve()
+    if not yaml_path.exists():
+        print(f"[ERR] profile yaml not found: {yaml_path}", file=sys.stderr)
+        return 2
+    yaml_profile = _load_yaml_profile(yaml_path)
+    keep_set = _derive_keep_set(yaml_profile)
+    dry_run = getattr(args, "dry_run", False)
+    inplace = getattr(args, "inplace", False)
+    output: Optional[Path] = getattr(args, "output", None)
+    no_llm: bool = getattr(args, "no_llm", False)
+
+    # decide staging path
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    staging = src.parent / f".{src.stem}.restore-staging-{ts}{src.suffix}"
+
+    step_log: list[dict] = []
+
+    def _log(step_id: str, label: str, stats: dict, ok: bool = True, note: str = ""):
+        step_log.append({"step": step_id, "label": label, "ok": ok,
+                         "stats": stats, "note": note})
+
+    # Step 0: capture before
+    try:
+        before = capture_structure(src)
+    except Exception as e:
+        print(f"[ERR] step0 capture failed: {e}", file=sys.stderr)
+        return 1
+    _log("0", "capture_before", {"paragraph_count": before.get("paragraph_count")})
+
+    if dry_run:
+        # dry-run: report plan only
+        report = {
+            "subcommand": "styleset restore",
+            "mode": "dry-run",
+            "docx": str(src),
+            "yaml_profile": str(yaml_path),
+            "no_llm": no_llm,
+            "plan": {
+                "step1_rename":  [{"from": f, "to": t} for f, t in _RECIPE_RENAME],
+                "step2_rebrand": [{"from": f, "to": _RECIPE_REBRAND_TO_ID} for f in _RECIPE_REBRAND_FROM],
+                "step3_create":  [{"base": b, "new_id": nid, "new_name": nname}
+                                  for b, nid, nname, _ in _RECIPE_CREATE],
+                "step4_firstLine": {"style_id": _RECIPE_REBRAND_TO_ID,
+                                    "chars": 200, "firstLine_twips": 480},
+                "step5_clear_direct": {"style_filter": _RECIPE_REBRAND_TO_ID},
+                "step6_cover_assign": {"method": "heuristic" if no_llm else "llm"},
+                "step7_pool_cleanup": {"keep_count": len(keep_set),
+                                       "keep_sample": sorted(keep_set)[:15]},
+                "step8_verify": "shape_contract diff vs before"
+            },
+        }
+        _emit_report(report, args)
+        print(f"[styleset restore] DRY-RUN docx={src.name} "
+              f"plan_steps=8 keep_count={len(keep_set)} no_llm={no_llm}")
+        return 0
+
+    # real run: pick backup, copy src → staging
+    bak: Optional[Path] = None
+    if not getattr(args, "no_backup", False):
+        bak = _pick_backup_path(src)
+        shutil.copy2(src, bak)
+    shutil.copy2(src, staging)
+
+    try:
+        # Step 1: rename × 3
+        for from_name, to_name in _RECIPE_RENAME:
+            ns = _make_subcmd_args(staging, from_style=from_name, to_style=to_name)
+            rc = cmd_style_rename(ns)
+            if rc != 0:
+                raise RuntimeError(f"step1 rename {from_name!r} → {to_name!r} rc={rc}")
+        _log("1", "rename×3", {"renames": [{"from": f, "to": t} for f, t in _RECIPE_RENAME]})
+
+        # Step 2: rebrand × 2 (Normal → ZDWP正文, 01正文 → ZDWP正文)
+        for from_match in _RECIPE_REBRAND_FROM:
+            ns = _make_subcmd_args(staging, from_style=from_match,
+                                   to_style=_RECIPE_REBRAND_TO_ID, role=None)
+            rc = cmd_style_rebrand(ns)
+            if rc != 0:
+                raise RuntimeError(f"step2 rebrand {from_match!r} → {_RECIPE_REBRAND_TO_ID!r} rc={rc}")
+        _log("2", "rebrand×2", {"from_list": _RECIPE_REBRAND_FROM, "to": _RECIPE_REBRAND_TO_ID})
+
+        # Step 3: create × 5 (skip if styleId already exists — cmd_style_create returns 2 on collision)
+        created, collided = [], []
+        for base, new_id, new_name, ntype in _RECIPE_CREATE:
+            ns = _make_subcmd_args(staging, base=base, new_id=new_id,
+                                   new_name=new_name, type=ntype)
+            rc = cmd_style_create(ns)
+            if rc == 0:
+                created.append(new_id)
+            elif rc == 2:
+                collided.append(new_id)  # OK: already exists, skip
+            else:
+                raise RuntimeError(f"step3 create {new_id!r} unexpected rc={rc}")
+        _log("3", "create×5", {"created": created, "skipped_existing": collided})
+
+        # Step 4: firstLineChars=200 + firstLine=480 on ZDWP正文 style
+        s4 = _add_first_line_indent_to_style(staging, _RECIPE_REBRAND_TO_ID, 200, 480)
+        if not s4.get("found"):
+            raise RuntimeError(f"step4 firstLine: style {_RECIPE_REBRAND_TO_ID!r} not found")
+        _log("4", "firstLine_indent", s4)
+
+        # Step 5: clear-direct-format --style ZDWP正文
+        ns = _make_subcmd_args(staging, style=_RECIPE_REBRAND_TO_ID)
+        rc = cmd_clear_direct_format(ns)
+        if rc != 0:
+            raise RuntimeError(f"step5 clear-direct rc={rc}")
+        _log("5", "clear_direct_format", {"style_filter": _RECIPE_REBRAND_TO_ID})
+
+        # Step 6: cover-assign via LLM/heuristic
+        from .cover_identifier import (
+            identify_cover_roles, identify_cover_roles_heuristic
+        )
+        try:
+            if no_llm:
+                cover = identify_cover_roles_heuristic(staging)
+                cover_method = "heuristic"
+            else:
+                try:
+                    cover = identify_cover_roles(staging)
+                    cover_method = "llm"
+                except (ImportError, RuntimeError, ValueError) as e:
+                    print(f"[WARN] LLM unavailable in step6, fallback: {e}", file=sys.stderr)
+                    cover = identify_cover_roles_heuristic(staging)
+                    cover_method = "heuristic-fallback"
+        except Exception as e:
+            raise RuntimeError(f"step6 cover-identify failed: {e}")
+
+        role_to_styleid = {
+            cover.get("primary_title_idx"): "zdwp题目0",
+            cover.get("subtitle_idx"):      "zdwp题目1",
+            cover.get("author_idx"):        "zdwp作者",
+            cover.get("date_idx"):          "zdwp封面日期",
+        }
+        s6 = _cover_assign_pstyle(staging, role_to_styleid)
+        _log("6", "cover_assign", {"method": cover_method, "cover_idx": cover, **s6})
+
+        # Step 7: pool-cleanup with KEEP set
+        s7 = _pool_cleanup_with_keep(staging, keep_set)
+        _log("7", "pool_cleanup",
+             {"deleted_count": s7["deleted_count"], "kept": s7["kept"],
+              "deleted_sample": s7["deleted"][:10]})
+
+        # Step 8: final shape_contract verify (full doc, vs before)
+        after = capture_structure(staging)
+        # default allowed_deltas: paragraph/table/heading/caption全0;
+        # styles 池减是允许的 (不在 shape_contract 指标里 — 它只看 body 结构)
+        violations = diff_structure(before, after, allowed_deltas={
+            "paragraph_count": 0,
+            "table_count": 0,
+            "section_count": 0,
+            "heading_counts": 0,
+            "caption_figure_count": 0,
+            "caption_table_count": 0,
+            "drawings_count": 0,
+        })
+        if violations and not getattr(args, "force", False):
+            _log("8", "shape_contract_verify", {"violations": violations}, ok=False)
+            raise RuntimeError(f"step8 shape_contract failed: {len(violations)} violation(s)")
+        if violations and getattr(args, "force", False):
+            _force_warning("styleset restore drift accepted")
+        _log("8", "shape_contract_verify",
+             {"violations": violations, "before_para": before.get("paragraph_count"),
+              "after_para": after.get("paragraph_count")})
+
+        # commit: where to?
+        if inplace:
+            shutil.move(str(staging), str(src))
+            final_path = src
+        elif output:
+            output = Path(output).expanduser()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staging), str(output))
+            final_path = output
+        else:
+            # neither --inplace nor --output: default = .restored.docx beside src
+            final_path = src.with_name(f"{src.stem}.restored{src.suffix}")
+            shutil.move(str(staging), str(final_path))
+
+        report = {
+            "subcommand": "styleset restore",
+            "mode": "applied",
+            "docx_src": str(src),
+            "docx_out": str(final_path),
+            "backup": str(bak) if bak else None,
+            "yaml_profile": str(yaml_path),
+            "no_llm": no_llm,
+            "keep_count": len(keep_set),
+            "shape_violations": violations,
+            "step_log": step_log,
+        }
+        _emit_report(report, args)
+        print(f"[styleset restore] OK src={src.name} out={final_path.name} "
+              f"steps=8/8 violations={len(violations)} bak={bak.name if bak else None}")
+        return 0
+
+    except Exception as e:
+        # rollback: keep src untouched, drop staging
+        if staging.exists():
+            try:
+                staging.unlink()
+            except FileNotFoundError:
+                pass
+        print(f"[styleset restore] FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+        report = {
+            "subcommand": "styleset restore",
+            "mode": "rolled_back",
+            "docx_src": str(src),
+            "backup": str(bak) if bak else None,
+            "error": f"{type(e).__name__}: {e}",
+            "step_log": step_log,
+        }
+        _emit_report(report, args)
+        return 1
+
+
+# ─── ProcessPool batch wrapper (top-level for pickling) ────────────────
+def _restore_worker(task: dict) -> dict:
+    """Worker entry for ProcessPoolExecutor. task = {docx, output_dir, dry_run, ...}"""
+    import time as _t
+    t0 = _t.perf_counter()
+    ns = argparse.Namespace()
+    ns.docx_path = Path(task["docx"])
+    ns.dry_run = task.get("dry_run", False)
+    ns.inplace = task.get("inplace", False)
+    ns.no_backup = task.get("no_backup", False)
+    ns.force = task.get("force", False)
+    ns.report = task.get("report")
+    ns.no_llm = task.get("no_llm", False)
+    ns.yaml_profile = task.get("yaml_profile")
+    # decide output for this docx
+    out_dir = task.get("output_dir")
+    output_explicit = task.get("output")
+    if out_dir and not ns.inplace and not ns.dry_run:
+        out_dir_p = Path(out_dir).expanduser()
+        out_dir_p.mkdir(parents=True, exist_ok=True)
+        ns.output = out_dir_p / Path(task["docx"]).name
+    elif output_explicit and not ns.inplace and not ns.dry_run:
+        ns.output = Path(output_explicit).expanduser()
+    else:
+        ns.output = None
+    try:
+        rc = cmd_restore(ns)
+        ok = (rc == 0)
+        err = None
+    except Exception as exc:
+        rc = 1
+        ok = False
+        err = f"{type(exc).__name__}: {exc}"
+    return {"docx": task["docx"], "ok": ok, "rc": rc, "error": err,
+            "duration": _t.perf_counter() - t0}
+
+
+def cmd_restore_batch(docx_paths: list[Path], output_dir: Optional[Path] = None,
+                      output_single: Optional[Path] = None,
+                      dry_run: bool = False, inplace: bool = False,
+                      no_backup: bool = False, no_llm: bool = False,
+                      force: bool = False, max_workers: Optional[int] = None,
+                      yaml_profile: Optional[Path] = None) -> int:
+    """Drive batch restore (N=1 serial, N≥2 ProcessPool)."""
+    import time as _t
+    n = len(docx_paths)
+    if n == 0:
+        print("[styleset restore] no docx given", file=sys.stderr)
+        return 2
+
+    if n == 1:
+        # serial path: invoke cmd_restore directly
+        ns = argparse.Namespace()
+        ns.docx_path = docx_paths[0]
+        ns.dry_run = dry_run
+        ns.inplace = inplace
+        ns.no_backup = no_backup
+        ns.force = force
+        ns.report = None
+        ns.no_llm = no_llm
+        ns.yaml_profile = yaml_profile
+        if output_dir and not inplace and not dry_run:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            ns.output = output_dir / docx_paths[0].name
+        elif output_single and not inplace and not dry_run:
+            ns.output = output_single
+        else:
+            ns.output = None
+        return cmd_restore(ns)
+
+    # parallel path
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    mw = max_workers if max_workers and max_workers > 0 else min(n, os.cpu_count() or 4)
+    print(f"[styleset restore] BATCH n={n} workers={mw} no_llm={no_llm} dry_run={dry_run}")
+    tasks = [
+        {
+            "docx": str(p),
+            "output_dir": str(output_dir) if output_dir else None,
+            "output": str(output_single) if (output_single and n == 1) else None,
+            "dry_run": dry_run,
+            "inplace": inplace,
+            "no_backup": no_backup,
+            "no_llm": no_llm,
+            "force": force,
+            "yaml_profile": str(yaml_profile) if yaml_profile else None,
+        }
+        for p in docx_paths
+    ]
+    t0 = _t.perf_counter()
+    results: list[dict] = []
+    with ProcessPoolExecutor(max_workers=mw) as ex:
+        futs = {ex.submit(_restore_worker, t): t for t in tasks}
+        for f in as_completed(futs):
+            try:
+                r = f.result()
+            except Exception as exc:
+                t = futs[f]
+                r = {"docx": t["docx"], "ok": False, "rc": 1,
+                     "error": f"{type(exc).__name__}: {exc}", "duration": 0}
+            results.append(r)
+            tag = "OK" if r["ok"] else "FAIL"
+            print(f"  [{tag}] {Path(r['docx']).name}  {r['duration']:.2f}s "
+                  + (f"err={r['error']}" if r.get("error") else ""))
+    wall = _t.perf_counter() - t0
+    ok = sum(1 for r in results if r["ok"])
+    ser_sum = sum(r.get("duration", 0) for r in results)
+    print(f"[styleset restore] BATCH done {ok}/{n} ok · wall={wall:.2f}s "
+          f"serial_sum={ser_sum:.2f}s speedup≈{ser_sum/wall:.2f}x")
+    return 0 if ok == n else 1
+
+
+# ─── Argparse registration for `audit-styleset restore` / `styleset restore` ──
+def _add_restore_args(p: argparse.ArgumentParser):
+    p.add_argument("docx_paths", nargs="+", type=Path,
+                   help="target docx path(s). N≥2 → ProcessPool auto-parallel")
+    p.add_argument("--dry-run", action="store_true", help="不写盘, 仅报告计划")
+    p.add_argument("--inplace", action="store_true",
+                   help="原地修改 (自动备份); 与 -o 互斥")
+    p.add_argument("--no-backup", action="store_true", help="跳过备份 (慎用)")
+    p.add_argument("--force", action="store_true",
+                   help="旁路 final shape_contract")
+    p.add_argument("--no-llm", action="store_true",
+                   help="用启发式 fallback 替代 LLM 封面识别 (CC agent 内推荐)")
+    p.add_argument("--yaml-profile", dest="yaml_profile", type=Path, default=None,
+                   help=f"eco_flow_health yaml (default: {_ECO_FLOW_PROFILE_YAML.name})")
+    p.add_argument("--max-workers", dest="max_workers", type=int, default=None,
+                   help="ProcessPool 并发数; N≥2 时生效, 默认 = min(N, cpu_count)")
+    p.add_argument("-o", "--output", type=Path, default=None,
+                   help="单文件输出路径 (N=1) 或多文件输出目录 (N≥2)")
+    p.add_argument("--report", type=Path, default=None,
+                   help="JSON report path (单文件模式)")
+
+
+def _restore_dispatch(args) -> int:
+    docx_paths = [Path(p).expanduser().resolve() for p in args.docx_paths]
+    missing = [p for p in docx_paths if not p.exists()]
+    if missing:
+        for m in missing:
+            print(f"[ERR] not found: {m}", file=sys.stderr)
+        return 2
+
+    output: Optional[Path] = getattr(args, "output", None)
+    output_dir: Optional[Path] = None
+    output_single: Optional[Path] = None
+    if output and len(docx_paths) >= 2:
+        output_dir = output  # treat as directory
+    elif output:
+        output_single = output
+
+    return cmd_restore_batch(
+        docx_paths,
+        output_dir=output_dir,
+        output_single=output_single,
+        dry_run=getattr(args, "dry_run", False),
+        inplace=getattr(args, "inplace", False),
+        no_backup=getattr(args, "no_backup", False),
+        no_llm=getattr(args, "no_llm", False),
+        force=getattr(args, "force", False),
+        max_workers=getattr(args, "max_workers", None),
+        yaml_profile=getattr(args, "yaml_profile", None),
+    )
+
+
+def register_restore(subparsers) -> None:
+    """Register `restore` as a new target under `audit-styleset` (alias `styleset`).
+
+    This is a separate registration entry from `register()` (which sets up
+    the `fix <subcmd>` group). Called from sub/__init__.py register_all
+    AFTER audit_styleset.register has set up the audit-styleset group.
+    """
+    from ._dispatch import get_or_add_group, get_or_add_subparsers
+
+    # 'audit-styleset' is the canonical name; 'styleset' is its alias.
+    # get_or_add_group looks up by name in choices map — alias should resolve.
+    grp = get_or_add_group(subparsers, "audit-styleset",
+                           "style-set health audits + restore (9-step)")
+    grp_sub = get_or_add_subparsers(grp, dest="styleset_target")
+
+    existing = getattr(grp_sub, "choices", {}) or {}
+    if "restore" in existing:
+        return
+    sp = grp_sub.add_parser(
+        "restore",
+        help="eco-flow styleset 9-step 综合修复 (rename×3 → rebrand → create×5 → firstLine → clear → cover → pool-cleanup)",
+    )
+    _add_restore_args(sp)
+    sp.set_defaults(func=_restore_dispatch)
+
+
+# ─── extend module-level register() to also wire register_restore() ────
+_orig_register = register
+
+
+def register(subparsers) -> None:  # type: ignore[no-redef]
+    _orig_register(subparsers)
+    register_restore(subparsers)
 
 
 def main(argv: list[str] | None = None) -> int:
