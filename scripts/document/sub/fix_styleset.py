@@ -1,12 +1,15 @@
-"""fix_styleset.py — group module: style-set fix family (4 subcommands · W13 2026-05-26)
+"""fix_styleset.py — group module: style-set fix family (7 subcommands · W13/W15 2026-05-26)
 
 shape_contract / 结构对账 / _verify_structure_invariants (GOAL I6 anchors)
 
 Subcommands:
-  fix style-rebrand      ← 批量段样式迁移 (Normal → 项目正文样式, 或按 --role 取 profile.roles 主样式)
-  fix style-pool-cleanup ← 删 docx 内"定义但段落未用且非系统 default"的样式
-  fix style-pane-filter  ← 设 word/settings.xml 的 stylePaneFormatFilter, 白名单 profile.roles 样式
-  fix role-fill          ← 检查 profile.roles 每角色; 缺则按模板克隆建对应样式
+  fix style-rebrand        ← 批量段样式迁移 (Normal → 项目正文样式, 或按 --role 取 profile.roles 主样式)
+  fix style-pool-cleanup   ← 删 docx 内"定义但段落未用且非系统 default"的样式
+  fix style-pane-filter    ← 设 word/settings.xml 的 stylePaneFormatFilter, 白名单 profile.roles 样式
+  fix role-fill            ← 检查 profile.roles 每角色; 缺则按模板克隆建对应样式
+  fix style-rename         ← (W15) 改样式 .name 字段, 不动 styleId, 不动段引用
+  fix clear-direct-format  ← (W15) 清段 inline 直接格式 (pPr/rPr 直接子元素), 只保留 pStyle/rStyle
+  fix style-create         ← (W15) 按 base style 克隆新空 style 定义到 styles.xml
 
 CLI 通用 args (per subcommand):
     <docx_path> [--dry-run] [--inplace] [--no-backup] [--force] [--report json]
@@ -805,17 +808,315 @@ def cmd_role_fill(args) -> int:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# subcommand 5: style-rename (W15)
+#   改样式 .name 字段, 不动 styleId, 段引用 (pStyle.val=styleId) 不需变 → 0 段修改
+# ═════════════════════════════════════════════════════════════════════════════
+def cmd_style_rename(args) -> int:
+    src = _common_setup(args)
+    from_name = args.from_style
+    to_name = args.to_style
+    if not from_name or not to_name:
+        print("[ERR] --from / --to 都必须给 (style .name 值)", file=sys.stderr)
+        return 2
+
+    stats_holder = {"matched_styles": [], "renamed": 0}
+
+    def _work(doc):
+        styles_el = doc.styles.element
+        for st in styles_el.findall(qn("w:style")):
+            nm = st.find(qn("w:name"))
+            if nm is None:
+                continue
+            cur = nm.get(qn("w:val"))
+            if cur == from_name:
+                sid = st.get(qn("w:styleId")) or ""
+                stats_holder["matched_styles"].append(
+                    {"styleId": sid, "from": cur, "to": to_name}
+                )
+                nm.set(qn("w:val"), to_name)
+                stats_holder["renamed"] += 1
+        return stats_holder
+
+    before, after, violations, refused = _shape_gate(
+        src, _work, args,
+        allowed_deltas={  # 改 styles.xml name 不影响 body 结构
+            "paragraph_count": 0,
+            "table_count": 0,
+            "section_count": 0,
+            "heading_counts": 0,
+            "caption_figure_count": 0,
+            "caption_table_count": 0,
+            "drawings_count": 0,
+        },
+        label="style-rename",
+    )
+
+    if refused:
+        sys.stderr.write(_refuse_msg(violations))
+
+    report = {
+        "subcommand": "fix style-rename",
+        "docx": str(src),
+        "from": from_name,
+        "to": to_name,
+        "dry_run": getattr(args, "dry_run", False),
+        "inplace": getattr(args, "inplace", False),
+        "renamed": stats_holder["renamed"],
+        "matched_styles": stats_holder["matched_styles"],
+        "shape_violations": violations,
+        "refused": refused,
+        "backup": getattr(args, "_actual_backup", None),
+    }
+    _emit_report(report, args)
+    print(f"[fix style-rename] from={from_name!r} to={to_name!r} "
+          f"renamed={stats_holder['renamed']} "
+          f"matched_ids={[m['styleId'] for m in stats_holder['matched_styles']]} "
+          f"violations={len(violations)} refused={refused}")
+    return 3 if refused else 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# subcommand 6: clear-direct-format (W15)
+#   清段 inline 直接格式 — pPr 只保留 pStyle; rPr 只保留 rStyle
+# ═════════════════════════════════════════════════════════════════════════════
+def cmd_clear_direct_format(args) -> int:
+    src = _common_setup(args)
+    style_filter = getattr(args, "style", None)  # None = 清所有段
+
+    stats_holder = {
+        "paragraphs_scanned": 0,
+        "paragraphs_matched": 0,
+        "pPr_children_removed": 0,
+        "rPr_children_removed": 0,
+        "runs_scanned": 0,
+    }
+
+    def _work(doc):
+        # 收集 styleId 与 style.name 双向映射: filter 可以是 style.name
+        name_to_id: dict[str, str] = {}
+        for s in doc.styles:
+            sid = getattr(s, "style_id", "") or ""
+            nm = getattr(s, "name", "") or ""
+            if sid and nm:
+                name_to_id[nm] = sid
+        target_id: Optional[str] = None
+        if style_filter:
+            if style_filter in name_to_id:
+                target_id = name_to_id[style_filter]
+            else:
+                # also accept styleId直接给
+                if style_filter in {v for v in name_to_id.values()}:
+                    target_id = style_filter
+                else:
+                    target_id = style_filter  # 让后续判断兜底
+
+        def _para_styleid(p_el) -> Optional[str]:
+            pPr = p_el.find(qn("w:pPr"))
+            if pPr is None:
+                return None
+            ps = pPr.find(qn("w:pStyle"))
+            if ps is None:
+                return None
+            return ps.get(qn("w:val"))
+
+        def _process_paragraph(p_el):
+            stats_holder["paragraphs_scanned"] += 1
+            if target_id is not None:
+                sid = _para_styleid(p_el)
+                if sid != target_id:
+                    return
+            stats_holder["paragraphs_matched"] += 1
+            # pPr: keep pStyle (style ref) + sectPr (section structural, not formatting)
+            # sectPr 是节边界标记, 删它会让 section_count 漂移; 严格说不是"直接格式"
+            pPr = p_el.find(qn("w:pPr"))
+            if pPr is not None:
+                _PPR_KEEP = {"pStyle", "sectPr"}
+                for child in list(pPr):
+                    tag = etree.QName(child.tag).localname
+                    if tag not in _PPR_KEEP:
+                        pPr.remove(child)
+                        stats_holder["pPr_children_removed"] += 1
+            # runs: rPr keep only rStyle
+            for r in p_el.findall(qn("w:r")):
+                stats_holder["runs_scanned"] += 1
+                rPr = r.find(qn("w:rPr"))
+                if rPr is None:
+                    continue
+                for child in list(rPr):
+                    tag = etree.QName(child.tag).localname
+                    if tag != "rStyle":
+                        rPr.remove(child)
+                        stats_holder["rPr_children_removed"] += 1
+
+        body = doc.element.body
+        # 顶层 paragraphs
+        for p_el in body.findall(".//" + qn("w:p")):
+            _process_paragraph(p_el)
+        return stats_holder
+
+    before, after, violations, refused = _shape_gate(
+        src, _work, args,
+        allowed_deltas={  # 清 inline 直接格式不动结构
+            "paragraph_count": 0,
+            "table_count": 0,
+            "section_count": 0,
+            "heading_counts": 0,
+            "caption_figure_count": 0,
+            "caption_table_count": 0,
+            "drawings_count": 0,
+        },
+        label="clear-direct-format",
+    )
+
+    if refused:
+        sys.stderr.write(_refuse_msg(violations))
+
+    report = {
+        "subcommand": "fix clear-direct-format",
+        "docx": str(src),
+        "style_filter": style_filter,
+        "dry_run": getattr(args, "dry_run", False),
+        "inplace": getattr(args, "inplace", False),
+        **stats_holder,
+        "shape_violations": violations,
+        "refused": refused,
+        "backup": getattr(args, "_actual_backup", None),
+    }
+    _emit_report(report, args)
+    print(f"[fix clear-direct-format] style_filter={style_filter!r} "
+          f"scanned={stats_holder['paragraphs_scanned']} "
+          f"matched={stats_holder['paragraphs_matched']} "
+          f"pPr_removed={stats_holder['pPr_children_removed']} "
+          f"rPr_removed={stats_holder['rPr_children_removed']} "
+          f"violations={len(violations)} refused={refused}")
+    return 3 if refused else 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# subcommand 7: style-create (W15)
+#   按 base style 克隆新空 style 定义到 styles.xml (改 styleId + name, 段不受影响)
+# ═════════════════════════════════════════════════════════════════════════════
+def cmd_style_create(args) -> int:
+    src = _common_setup(args)
+    base = args.base
+    new_id = args.new_id
+    new_name = args.new_name
+    new_type = getattr(args, "type", "paragraph") or "paragraph"
+    if not base or not new_id or not new_name:
+        print("[ERR] --base / --new-id / --new-name 都必须给", file=sys.stderr)
+        return 2
+
+    stats_holder = {
+        "base_found": False,
+        "base_styleId": None,
+        "created": False,
+        "collision": False,
+    }
+
+    def _work(doc):
+        styles_el = doc.styles.element
+        # 找 base: 优先 styleId, 再 name
+        base_el = None
+        for st in styles_el.findall(qn("w:style")):
+            if st.get(qn("w:styleId")) == base:
+                base_el = st
+                break
+        if base_el is None:
+            for st in styles_el.findall(qn("w:style")):
+                nm = st.find(qn("w:name"))
+                if nm is not None and nm.get(qn("w:val")) == base:
+                    base_el = st
+                    break
+        if base_el is None:
+            return stats_holder
+        stats_holder["base_found"] = True
+        stats_holder["base_styleId"] = base_el.get(qn("w:styleId"))
+
+        # collision check: new_id already exists?
+        for st in styles_el.findall(qn("w:style")):
+            if st.get(qn("w:styleId")) == new_id:
+                stats_holder["collision"] = True
+                return stats_holder
+
+        # deepcopy + 改 styleId + 改 name + 改 type
+        new_el = etree.fromstring(etree.tostring(base_el))
+        new_el.set(qn("w:styleId"), new_id)
+        if new_type:
+            new_el.set(qn("w:type"), new_type)
+        nm = new_el.find(qn("w:name"))
+        if nm is None:
+            nm = OxmlElement("w:name")
+            new_el.insert(0, nm)
+        nm.set(qn("w:val"), new_name)
+        # default="1" 不该跟着克隆 (避免和原 base 冲突 default 标记)
+        if new_el.get(qn("w:default")) == "1":
+            del new_el.attrib[qn("w:default")]
+        styles_el.append(new_el)
+        stats_holder["created"] = True
+        return stats_holder
+
+    before, after, violations, refused = _shape_gate(
+        src, _work, args,
+        allowed_deltas={  # 加一个空 style def 不动 body
+            "paragraph_count": 0,
+            "table_count": 0,
+            "section_count": 0,
+            "heading_counts": 0,
+            "caption_figure_count": 0,
+            "caption_table_count": 0,
+            "drawings_count": 0,
+        },
+        label="style-create",
+    )
+
+    if refused:
+        sys.stderr.write(_refuse_msg(violations))
+
+    report = {
+        "subcommand": "fix style-create",
+        "docx": str(src),
+        "base": base,
+        "new_id": new_id,
+        "new_name": new_name,
+        "new_type": new_type,
+        "dry_run": getattr(args, "dry_run", False),
+        "inplace": getattr(args, "inplace", False),
+        **stats_holder,
+        "shape_violations": violations,
+        "refused": refused,
+        "backup": getattr(args, "_actual_backup", None),
+    }
+    _emit_report(report, args)
+    print(f"[fix style-create] base={base!r} new_id={new_id!r} new_name={new_name!r} "
+          f"base_found={stats_holder['base_found']} "
+          f"collision={stats_holder['collision']} "
+          f"created={stats_holder['created']} "
+          f"violations={len(violations)} refused={refused}")
+    if stats_holder["collision"]:
+        return 2
+    if not stats_holder["base_found"]:
+        return 2
+    return 3 if refused else 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # argparse register
 # ═════════════════════════════════════════════════════════════════════════════
 _SUBCMDS = {
-    "style-rebrand":      (cmd_style_rebrand,
-                           "批量段样式迁移 (Normal → 项目正文样式)"),
-    "style-pool-cleanup": (cmd_style_pool_cleanup,
-                           "删 docx 内定义但未用的样式"),
-    "style-pane-filter":  (cmd_style_pane_filter,
-                           "设 stylePaneFormatFilter 白名单 profile.roles 样式"),
-    "role-fill":          (cmd_role_fill,
-                           "缺角色时按 profile 自动建样式 (从 Normal/Heading X 克隆)"),
+    "style-rebrand":       (cmd_style_rebrand,
+                            "批量段样式迁移 (Normal → 项目正文样式)"),
+    "style-pool-cleanup":  (cmd_style_pool_cleanup,
+                            "删 docx 内定义但未用的样式"),
+    "style-pane-filter":   (cmd_style_pane_filter,
+                            "设 stylePaneFormatFilter 白名单 profile.roles 样式"),
+    "role-fill":           (cmd_role_fill,
+                            "缺角色时按 profile 自动建样式 (从 Normal/Heading X 克隆)"),
+    "style-rename":        (cmd_style_rename,
+                            "改样式 .name 字段, 不动 styleId, 段引用 0 修改"),
+    "clear-direct-format": (cmd_clear_direct_format,
+                            "清段 inline 直接格式 (pPr/rPr 直接子元素), 保留 pStyle/rStyle"),
+    "style-create":        (cmd_style_create,
+                            "按 base style 克隆新空 style 定义到 styles.xml"),
 }
 
 
@@ -854,6 +1155,24 @@ def register(subparsers) -> None:
                             help="target styleId")
             sp.add_argument("--role", default=None,
                             help="alt to --to: 'body'/'h1'/.../ take profile.roles.<role> target")
+        elif name == "style-rename":
+            sp.add_argument("--from", dest="from_style", required=True,
+                            help="样式 .name 当前值 (e.g. '0 图名称')")
+            sp.add_argument("--to", dest="to_style", required=True,
+                            help="样式 .name 新值 (e.g. 'ZDWP图名')")
+        elif name == "clear-direct-format":
+            sp.add_argument("--style", dest="style", default=None,
+                            help="只清匹配该 style .name (或 styleId) 的段; 不给 = 清所有段")
+        elif name == "style-create":
+            sp.add_argument("--base", required=True,
+                            help="基样式 styleId 或 .name (e.g. 'Normal')")
+            sp.add_argument("--new-id", dest="new_id", required=True,
+                            help="新 styleId")
+            sp.add_argument("--new-name", dest="new_name", required=True,
+                            help="新 style .name")
+            sp.add_argument("--type", dest="type", default="paragraph",
+                            choices=["paragraph", "character", "table", "numbering"],
+                            help="新 style 类型 (default paragraph)")
         sp.set_defaults(func=fn)
 
 
