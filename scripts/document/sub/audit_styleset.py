@@ -174,7 +174,7 @@ def audit_role_coverage(docx_path: Path, prof: dict) -> dict:
     fail: 任一 mandatory role 在 docx nonempty 段一个都没出现。
     """
     doc = Document(str(docx_path))
-    _, c_ne, _, _ = _paragraphs_style_count(doc)
+    c_all, c_ne, _, _ = _paragraphs_style_count(doc)
     roles = prof.get("roles") or {}
     # mandatory roles (按 task GOAL): body / title / heading / caption-figure / caption-table
     #   layout / toc / hyperlink 是 optional warn 不 fail
@@ -187,7 +187,8 @@ def audit_role_coverage(docx_path: Path, prof: dict) -> dict:
 
     for role in mandatory + optional:
         candidates = roles.get(role) or []
-        found_styles = {s: c_ne.get(s, 0) for s in candidates if c_ne.get(s, 0) > 0}
+        # 算覆盖时用 c_all (含空段),允许 Title/Heading 段实际套上但文本空 (常见封面/分页占位)
+        found_styles = {s: c_all.get(s, 0) for s in candidates if c_all.get(s, 0) > 0}
         coverage[role] = {
             "candidates": candidates,
             "found_with_count": found_styles,
