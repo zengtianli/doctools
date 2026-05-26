@@ -357,6 +357,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "section",    # section read/list (distilled from panan-rigid, 2026-05-26)
         "md-merge",   # merge MD content into DOCX section (distilled from panan-rigid, 2026-05-26)
         "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
+        "split",      # split docx by-h1 (eco-flow/taizhou-天台 distill, W1 2026-05-26)
     }
     while i < len(raw):
         tok = raw[i]
