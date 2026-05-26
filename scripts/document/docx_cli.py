@@ -262,7 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="docx_cli",
         description=(
-            "doctools 文档处理统一 CLI (35+ subcommands · 2026-05-26 bid-diff distill)\n"
+            "doctools 文档处理统一 CLI (36+ subcommands · 2026-05-26 W4 table delete-rows)\n"
             "Legacy (16 旧族): extract / check / snapshot / compare / track / bullet /\n"
             "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
             "  quality-check / review / scan-sensitive / md\n"
@@ -356,6 +356,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "pipeline", "health",
         "section",    # section read/list (distilled from panan-rigid, 2026-05-26)
         "md-merge",   # merge MD content into DOCX section (distilled from panan-rigid, 2026-05-26)
+        "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
     }
     while i < len(raw):
         tok = raw[i]

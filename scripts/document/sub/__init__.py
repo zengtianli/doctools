@@ -26,9 +26,10 @@ Group modules (each exposes `register(subparsers)` for docx_cli.py dispatcher):
   image         — image ops (1 target): relink
   section       — section read/list ops (1 target): read (distilled from panan-rigid, 2026-05-26)
   md_merge      — merge MD into DOCX section (1 target): md merge-into-docx (distilled from panan-rigid, 2026-05-26)
+  table         — table structural ops (1 target): delete-rows (distilled from bid-diff-and-revise, 2026-05-26)
   legacy        — deprecated/spike (1 target): fix-heading-disorder
 
-Total: 13 group modules -> 32+ subcommands (group dedupe handled by
+Total: 14 group modules -> 33+ subcommands (group dedupe handled by
 _dispatch.get_or_add_group / get_or_add_subparsers).
 
 Each underlying script also remains independently runnable:
@@ -56,6 +57,7 @@ from . import (
     section,
     strip,
     styles,
+    table,
 )
 
 __all__ = [
@@ -79,6 +81,7 @@ __all__ = [
     "section",
     "strip",
     "styles",
+    "table",
 ]
 
 
@@ -101,6 +104,7 @@ def register_all(subparsers) -> None:
         pipeline,                                                                # pipeline driver
         section,                                                                 # section read/list (distilled from panan-rigid)
         md_merge,                                                                # md merge-into-docx (distilled from panan-rigid)
+        table,                                                                   # table structural ops (delete-rows, W4 2026-05-26)
         chapter, renumber, caption, captions, styles,                           # shared
     ):
         mod.register(subparsers)
