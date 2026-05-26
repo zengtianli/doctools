@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+"""health.py — docx health diagnose / fix / full 编排层
+
+8 病种诊断 (ThreadPoolExecutor 并发), 委托已有 sub/*.py 脚本，新增 2 个原生 check:
+  heading-level-skew  (新写 ~15 行)
+  heading-gap         (新写 ~20 行)
+其余 6 种委托现有 audit_* / strip_* / apply_body_styles / renumber_headings。
+
+CLI (via docx_cli.py health <subcommand>):
+  health diagnose <docx> [--checks all|<list>] [--report path.json] [--html] [--workers N]
+  health fix      <docx> [--auto <list>] [--plan report.json] [--dry-run] [--backup]
+  health full     <docx> [--html] [--dry-run]
+
+返回码: 0=全健康 / 1=有 warning / 2=有 error/High
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import zipfile
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any
+
+from ._dispatch import exec_script, get_or_add_group, get_or_add_subparsers
+
+# ─── 常量 ────────────────────────────────────────────────────────────────────
+
+SEVERITY = {
+    "heading-level-skew":       "High",
+    "heading-gap":              "Med",
+    "caption-outline-pollution":"Med",
+    "revision-tracking-residue":"High",
+    "field-not-frozen":         "Med",
+    "body-style-mess":          "Low",
+    "duplicate-figure-numbers": "High",
+    "heading-number-stale":     "Med",
+}
+
+SAFE_FIX = {
+    "caption-outline-pollution": True,
+    "revision-tracking-residue": True,
+    "field-not-frozen":          True,
+    "body-style-mess":           True,
+    "heading-number-stale":      True,
+    "heading-level-skew":        True,   # auto only when coverage >= 0.8
+    "heading-gap":               False,
+    "duplicate-figure-numbers":  False,
+}
+
+ALL_CHECKS = list(SEVERITY.keys())
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+# ─── 原生 check 函数 ──────────────────────────────────────────────────────────
+
+def check_heading_level_skew(doc_path: Path) -> dict:
+    """检出：Heading N 段/样式 outlineLvl 与 style 名隐含级别有系统性偏差（磐安症状）。
+
+    两层检测：
+      1. 段落层（paragraph-level pPr outlineLvl 覆盖样式值）
+      2. 样式层（styles.xml 中 Heading N 的 outlineLvl ≠ N-1）
+    任一层检出 coverage ≥ 0.8 && delta ≠ 0 → found=True。
+    """
+    def style_to_implied(style_name_or_id: str) -> int | None:
+        """'Heading 1' / 'heading 2' / '1' / 'Heading1' → 0-based implied level"""
+        s = style_name_or_id.strip()
+        m = re.search(r"[Hh]eading\s*(\d+)", s)
+        if m:
+            return int(m.group(1)) - 1
+        # bare "1"/"2"/"3"/"4"
+        if re.fullmatch(r"\d", s):
+            return int(s) - 1
+        return None
+
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            with z.open("word/document.xml") as f:
+                doc_xml = f.read().decode("utf-8")
+            with z.open("word/styles.xml") as f:
+                styles_xml = f.read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    # ── Layer 1: paragraph-level pPr outlineLvl overrides ──────────────────
+    para_deltas: list[int] = []
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+        if not sm:
+            continue
+        implied = style_to_implied(sm.group(1))
+        if implied is None:
+            continue
+        ppr_m = re.search(r"<w:pPr>(.*?)</w:pPr>", para_xml, re.DOTALL)
+        if not ppr_m:
+            continue
+        ol_m = re.search(r'<w:outlineLvl w:val="(\d+)"', ppr_m.group(1))
+        if not ol_m:
+            continue
+        actual = int(ol_m.group(1))
+        para_deltas.append(actual - implied)
+
+    if para_deltas:
+        counter = Counter(para_deltas)
+        dominant_delta, count = counter.most_common(1)[0]
+        coverage = count / len(para_deltas)
+        if coverage >= 0.8 and dominant_delta != 0:
+            direction = "demote" if dominant_delta > 0 else "promote"
+            return {
+                "found": True,
+                "layer": "paragraph",
+                "delta": dominant_delta,
+                "coverage": round(coverage, 3),
+                "affected_count": count,
+                "total_checked": len(para_deltas),
+                "fix_hint": f"整体 {direction} {abs(dominant_delta)} 级",
+                "safe_fix": True,
+            }
+
+    # ── Layer 2: style-level outlineLvl in styles.xml ──────────────────────
+    style_deltas: list[int] = []
+    for match in re.finditer(r'<w:style[^>]+>', styles_xml):
+        block_start = match.start()
+        block_end = styles_xml.find("</w:style>", block_start)
+        if block_end < 0:
+            continue
+        block = styles_xml[block_start:block_end]
+        name_m = re.search(r'<w:name w:val="([^"]+)"', block)
+        name = name_m.group(1) if name_m else ""
+        implied = style_to_implied(name)
+        if implied is None:
+            continue
+        ol_m = re.search(r'<w:outlineLvl w:val="(\d+)"', block)
+        if not ol_m:
+            continue
+        actual = int(ol_m.group(1))
+        style_deltas.append(actual - implied)
+
+    if style_deltas:
+        counter = Counter(style_deltas)
+        dominant_delta, count = counter.most_common(1)[0]
+        coverage = count / len(style_deltas)
+        if coverage >= 0.8 and dominant_delta != 0:
+            direction = "demote" if dominant_delta > 0 else "promote"
+            return {
+                "found": True,
+                "layer": "style",
+                "delta": dominant_delta,
+                "coverage": round(coverage, 3),
+                "affected_count": count,
+                "total_checked": len(style_deltas),
+                "fix_hint": f"整体 {direction} {abs(dominant_delta)} 级 (样式级偏移)",
+                "safe_fix": True,
+            }
+
+    reason = "no paragraph-level outlineLvl overrides" if not para_deltas else "delta=0 (no skew)"
+    return {"found": False, "reason": reason}
+
+
+def check_heading_gap(doc_path: Path) -> dict:
+    """检出：标题级别跳级（H1 → H3 无中间 H2，H2 → H4 无中间 H3 等）。"""
+    HEADING_RE = re.compile(r"[Hh]eading\s*(\d+)|^(\d)$")
+
+    paragraphs: list[int] = []
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            with z.open("word/document.xml") as f:
+                doc_xml = f.read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+        if not sm:
+            continue
+        m = HEADING_RE.search(sm.group(1))
+        if not m:
+            continue
+        lvl_str = m.group(1) or m.group(2)
+        if lvl_str:
+            paragraphs.append(int(lvl_str))
+
+    gaps: list[dict] = []
+    for i in range(1, len(paragraphs)):
+        prev, curr = paragraphs[i - 1], paragraphs[i]
+        if curr > prev + 1:
+            gaps.append({"para_idx": i, "from_level": prev, "to_level": curr, "skip": curr - prev - 1})
+
+    if gaps:
+        return {
+            "found": True,
+            "gap_count": len(gaps),
+            "gaps": gaps[:20],  # cap at 20 samples
+            "safe_fix": False,
+            "fix_hint": "需人工判断是压缩标题还是补中间级别",
+        }
+    return {"found": False}
+
+
+# ─── 委托 check 函数（调用现有 audit_* / strip_* sub scripts） ────────────────
+
+def _run_script_json(script_name: str, argv: list[str], report_path: Path) -> dict:
+    """执行 sub/<script_name>.py 并读回 JSON 报告。"""
+    rc = exec_script(script_name, argv + ["--report", str(report_path)])
+    if report_path.exists():
+        try:
+            return json.loads(report_path.read_text("utf-8"))
+        except Exception:
+            pass
+    return {"_rc": rc, "_script": script_name}
+
+
+def check_caption_outline(doc_path: Path, tmp_dir: Path) -> dict:
+    rpt = tmp_dir / "caption_outline.json"
+    data = _run_script_json("audit_caption_outline", [str(doc_path)], rpt)
+    polluted = data.get("polluted_count", data.get("total_polluted", 0))
+    if isinstance(polluted, int) and polluted > 0:
+        return {"found": True, "polluted_count": polluted, "safe_fix": True,
+                "fix_hint": "strip outlinelvl-captions"}
+    # also check via keys
+    if data.get("captions_with_outlinelvl") or data.get("found"):
+        return {"found": True, "detail": data, "safe_fix": True}
+    return {"found": False, "detail": data}
+
+
+def check_revision_tracking(doc_path: Path) -> dict:
+    """干跑 strip_revisions 检查残留 ins/del 数量。"""
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            with z.open("word/document.xml") as f:
+                doc_xml = f.read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+    ins_count = len(re.findall(r"<w:ins\b", doc_xml))
+    del_count = len(re.findall(r"<w:del\b", doc_xml))
+    total = ins_count + del_count
+    if total > 0:
+        return {"found": True, "ins_count": ins_count, "del_count": del_count,
+                "total": total, "safe_fix": True,
+                "fix_hint": "strip revisions"}
+    return {"found": False}
+
+
+def check_field_not_frozen(doc_path: Path, tmp_dir: Path) -> dict:
+    rpt = tmp_dir / "fields.json"
+    data = _run_script_json("audit_word_fields", [str(doc_path)], rpt)
+    field_count = data.get("total_complex_fields", 0) + data.get("total_simple_fields", 0)
+    unfrozen_types = data.get("field_type_counts", {})
+    # Any TOC/PAGEREF/SEQ/REF = likely unfrozen
+    hot_types = {k: v for k, v in unfrozen_types.items()
+                 if k in ("TOC", "PAGEREF", "SEQ", "REF", "STYLEREF", "HYPERLINK")}
+    if hot_types:
+        return {"found": True, "field_types": hot_types, "total_fields": field_count,
+                "safe_fix": True, "fix_hint": "freeze all-fields"}
+    return {"found": False, "total_fields": field_count}
+
+
+def check_body_style_mess(doc_path: Path) -> dict:
+    """扫正文段中非 Heading/Caption/Title 的杂乱样式。"""
+    NORMAL_NAMES = {"normal", "default paragraph font", "default", "body text",
+                    "正文", ""}
+    HEADING_PREFIX = "heading"
+    CAPTION_KW = ("caption", "表名", "图名", "0图", "0表")
+
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            with z.open("word/document.xml") as f:
+                doc_xml = f.read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    style_counter: Counter = Counter()
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+        style_id = sm.group(1).lower() if sm else ""
+        if style_id.startswith(HEADING_PREFIX):
+            continue
+        if any(kw in style_id for kw in CAPTION_KW):
+            continue
+        if style_id in NORMAL_NAMES or style_id == "":
+            style_counter["(normal/empty)"] += 1
+        else:
+            style_counter[style_id] += 1
+
+    mess_styles = {k: v for k, v in style_counter.items() if k != "(normal/empty)"}
+    if len(mess_styles) > 3:
+        return {"found": True, "mess_style_count": len(mess_styles),
+                "top_styles": dict(Counter(mess_styles).most_common(5)),
+                "safe_fix": True, "fix_hint": "style body"}
+    return {"found": False, "style_count": len(style_counter)}
+
+
+def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:
+    """扩展 audit_caption_outline 检测同章内图/表号重复。"""
+    rpt = tmp_dir / "captions_dup.json"
+    data = _run_script_json("audit_caption_outline", [str(doc_path)], rpt)
+    # look for duplicates in caption_list
+    captions = data.get("captions", data.get("caption_list", []))
+    if not captions:
+        return {"found": False, "reason": "no captions found by audit_caption_outline"}
+
+    seen: dict[str, list] = {}
+    for cap in captions:
+        label = cap.get("label", cap.get("text", "")) if isinstance(cap, dict) else str(cap)
+        key = re.sub(r"\s+", "", label)[:30]
+        seen.setdefault(key, []).append(cap)
+    dups = {k: v for k, v in seen.items() if len(v) > 1}
+    if dups:
+        return {"found": True, "duplicate_count": len(dups),
+                "examples": list(dups.keys())[:5], "safe_fix": False,
+                "fix_hint": "需人工确认正确序号后再修"}
+    return {"found": False}
+
+
+def check_heading_number_stale(doc_path: Path, tmp_dir: Path) -> dict:
+    rpt = tmp_dir / "heading_audit.json"
+    data = _run_script_json("audit_heading_numbers", [str(doc_path)], rpt)
+    no_prefix = data.get("h_without_prefix", 0)
+    with_prefix = data.get("h_with_prefix", 0)
+    total = no_prefix + with_prefix
+    if total == 0:
+        return {"found": False, "reason": "no headings"}
+    # If significant fraction lack prefix → stale numbering signal
+    if no_prefix > 0 and (with_prefix == 0 or no_prefix / total > 0.3):
+        return {"found": True, "no_prefix_count": no_prefix, "with_prefix_count": with_prefix,
+                "safe_fix": True, "fix_hint": "renumber headings"}
+    return {"found": False, "no_prefix_count": no_prefix, "with_prefix_count": with_prefix}
+
+
+# ─── HealthChecker ────────────────────────────────────────────────────────────
+
+class HealthChecker:
+    def __init__(self, doc_path: Path, workers: int = 8):
+        self.doc_path = doc_path
+        self.workers = workers
+        self._tmp_dir = Path("/tmp") / f"docx_health_{doc_path.stem[:20]}"
+        self._tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_all(self, checks: list[str] | None = None) -> dict[str, dict]:
+        checks = checks or ALL_CHECKS
+        results: dict[str, dict] = {}
+
+        def run_one(check_id: str) -> tuple[str, dict]:
+            try:
+                r = self._run_check(check_id)
+            except Exception as e:
+                r = {"found": False, "error": f"{type(e).__name__}: {e}"}
+            return check_id, r
+
+        with ThreadPoolExecutor(max_workers=self.workers) as ex:
+            futs = {ex.submit(run_one, c): c for c in checks}
+            for fut in as_completed(futs):
+                cid, res = fut.result()
+                results[cid] = res
+
+        return results
+
+    def _run_check(self, check_id: str) -> dict:
+        dp = self.doc_path
+        td = self._tmp_dir
+        if check_id == "heading-level-skew":
+            return check_heading_level_skew(dp)
+        if check_id == "heading-gap":
+            return check_heading_gap(dp)
+        if check_id == "caption-outline-pollution":
+            return check_caption_outline(dp, td)
+        if check_id == "revision-tracking-residue":
+            return check_revision_tracking(dp)
+        if check_id == "field-not-frozen":
+            return check_field_not_frozen(dp, td)
+        if check_id == "body-style-mess":
+            return check_body_style_mess(dp)
+        if check_id == "duplicate-figure-numbers":
+            return check_duplicate_figures(dp, td)
+        if check_id == "heading-number-stale":
+            return check_heading_number_stale(dp, td)
+        return {"found": False, "error": f"unknown check: {check_id}"}
+
+
+# ─── HealthFixer ─────────────────────────────────────────────────────────────
+
+SAFE_FIX_SCRIPTS: dict[str, list[str]] = {
+    "caption-outline-pollution": ["strip_outlinelvl_from_captions"],
+    "revision-tracking-residue": ["strip_revisions"],
+    "field-not-frozen":          ["freeze_all_fields"],
+    "heading-number-stale":      ["renumber_headings"],
+}
+
+
+class HealthFixer:
+    def __init__(self, doc_path: Path, dry_run: bool = False, backup: bool = True):
+        self.doc_path = doc_path
+        self.dry_run = dry_run
+        self.backup = backup
+
+    def fix_safe(self, diagnose_results: dict[str, dict], auto_list: list[str] | None = None) -> dict:
+        """串行执行 safe-fix 白名单中命中的病种修复。"""
+        if auto_list is None:
+            auto_list = [k for k, v in SAFE_FIX.items() if v]
+
+        applied: list[str] = []
+        skipped: list[str] = []
+        plan_required: list[str] = []
+
+        for check_id in auto_list:
+            result = diagnose_results.get(check_id, {})
+            if not result.get("found"):
+                continue
+
+            if not SAFE_FIX.get(check_id):
+                plan_required.append(check_id)
+                continue
+
+            # heading-level-skew: only auto if coverage >= 0.8
+            if check_id == "heading-level-skew":
+                delta = result.get("delta", 0)
+                coverage = result.get("coverage", 0)
+                if abs(delta) == 0 or coverage < 0.8:
+                    skipped.append(check_id)
+                    continue
+                sub = "promote-h1" if delta > 0 else "demote-h2"
+                argv = [str(self.doc_path)]
+                if self.dry_run:
+                    argv.append("--dry-run")
+                if not self.backup:
+                    argv.append("--no-backup")
+                rc = exec_script("outline", [sub] + argv)
+                applied.append(f"{check_id}(outline {sub}, rc={rc})")
+                continue
+
+            # body-style-mess → style body via styles.py (style subcommand)
+            if check_id == "body-style-mess":
+                argv = [str(self.doc_path)]
+                if self.dry_run:
+                    argv.append("--dry-run")
+                if not self.backup:
+                    argv.append("--no-backup")
+                rc = exec_script("styles", ["body"] + argv)
+                applied.append(f"{check_id}(styles body, rc={rc})")
+                continue
+
+            scripts = SAFE_FIX_SCRIPTS.get(check_id, [])
+            for script in scripts:
+                argv = [str(self.doc_path)]
+                if self.dry_run:
+                    argv.append("--dry-run")
+                if not self.backup:
+                    argv.append("--no-backup")
+                rc = exec_script(script, argv)
+                applied.append(f"{check_id}({script}, rc={rc})")
+
+        return {"applied": applied, "skipped": skipped, "plan_required": plan_required}
+
+
+# ─── CLI handlers ─────────────────────────────────────────────────────────────
+
+def _parse_checks(checks_str: str) -> list[str]:
+    if checks_str == "all":
+        return ALL_CHECKS
+    return [c.strip() for c in checks_str.split(",") if c.strip()]
+
+
+def _print_summary(results: dict[str, dict], doc_path: Path) -> int:
+    """Print summary table; return exit code (0/1/2)."""
+    max_rc = 0
+    lines = [
+        f"\n{'─'*70}",
+        f"  docx health diagnose: {doc_path.name}",
+        f"{'─'*70}",
+        f"  {'Check ID':<32} {'Found':<6} {'Sev':<5} {'AutoFix':<8} {'Detail'}",
+        f"  {'─'*32} {'─'*6} {'─'*5} {'─'*8} {'─'*20}",
+    ]
+    for cid in ALL_CHECKS:
+        res = results.get(cid, {"found": False})
+        found = res.get("found", False)
+        sev = SEVERITY.get(cid, "?")
+        safe = "✅" if SAFE_FIX.get(cid) else "❌ plan"
+        if found:
+            detail = res.get("fix_hint", res.get("error", ""))
+            if "delta" in res:
+                detail = f"delta={res['delta']:+d}, coverage={res.get('coverage', '?')}"
+            lines.append(f"  {'⚠ ' + cid:<34} {'YES':<6} {sev:<5} {safe:<10} {detail}")
+            if sev == "High":
+                max_rc = max(max_rc, 2)
+            elif sev in ("Med", "Low"):
+                max_rc = max(max_rc, 1)
+        else:
+            err = res.get("error", "")
+            detail = f"err: {err}" if err else "ok"
+            lines.append(f"  {'  ' + cid:<34} {'no':<6} {sev:<5} {safe:<10} {detail}")
+    lines.append(f"{'─'*70}")
+    lines.append(f"  exit_code={max_rc}  (0=healthy / 1=warning / 2=error)\n")
+    print("\n".join(lines))
+    return max_rc
+
+
+def cmd_diagnose(args) -> int:
+    doc_path = Path(args.docx_path)
+    if not doc_path.exists():
+        print(f"[health] ERROR: file not found: {doc_path}", file=sys.stderr)
+        return 2
+    checks = _parse_checks(getattr(args, "checks", "all") or "all")
+    workers = getattr(args, "workers", 8) or 8
+    checker = HealthChecker(doc_path, workers=workers)
+    results = checker.run_all(checks)
+
+    rc = _print_summary(results, doc_path)
+
+    report_path = getattr(args, "report", None)
+    if report_path:
+        rp = Path(report_path)
+        payload = {
+            "docx": str(doc_path),
+            "checks": results,
+            "exit_code": rc,
+        }
+        rp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[health] report saved → {rp}")
+
+    if getattr(args, "html", False):
+        _write_html_report(doc_path, results, rc)
+
+    return rc
+
+
+def cmd_fix(args) -> int:
+    doc_path = Path(args.docx_path)
+    if not doc_path.exists():
+        print(f"[health] ERROR: file not found: {doc_path}", file=sys.stderr)
+        return 2
+
+    plan_path = getattr(args, "plan", None)
+    if plan_path:
+        data = json.loads(Path(plan_path).read_text("utf-8"))
+        diagnose_results = data.get("checks", {})
+    else:
+        # Run diagnose first
+        checker = HealthChecker(doc_path)
+        diagnose_results = checker.run_all()
+
+    auto_str = getattr(args, "auto", None)
+    auto_list = _parse_checks(auto_str) if auto_str else None
+    dry_run = getattr(args, "dry_run", False)
+    backup = getattr(args, "backup", True)
+
+    fixer = HealthFixer(doc_path, dry_run=dry_run, backup=backup)
+    fix_result = fixer.fix_safe(diagnose_results, auto_list)
+
+    print(f"\n[health fix] applied: {fix_result['applied']}")
+    print(f"[health fix] skipped: {fix_result['skipped']}")
+    print(f"[health fix] plan_required: {fix_result['plan_required']}")
+    return 0
+
+
+def cmd_full(args) -> int:
+    """full = diagnose → fix safe → re-diagnose → print before/after."""
+    doc_path = Path(args.docx_path)
+    if not doc_path.exists():
+        print(f"[health] ERROR: file not found: {doc_path}", file=sys.stderr)
+        return 2
+    dry_run = getattr(args, "dry_run", False)
+
+    print("[health full] Phase 1: diagnose …")
+    checker = HealthChecker(doc_path)
+    before = checker.run_all()
+    rc_before = _print_summary(before, doc_path)
+
+    if not dry_run:
+        print("\n[health full] Phase 2: auto-fix safe checks …")
+        fixer = HealthFixer(doc_path, dry_run=False, backup=True)
+        fix_result = fixer.fix_safe(before)
+        print(f"  applied: {fix_result['applied']}")
+        print(f"  plan_required: {fix_result['plan_required']}")
+
+        print("\n[health full] Phase 3: re-diagnose …")
+        checker2 = HealthChecker(doc_path)
+        after = checker2.run_all()
+        rc_after = _print_summary(after, doc_path)
+
+        if getattr(args, "html", False):
+            _write_html_report(doc_path, after, rc_after, before=before)
+        return rc_after
+    else:
+        print("[health full] --dry-run: skipping fix phases")
+        if getattr(args, "html", False):
+            _write_html_report(doc_path, before, rc_before)
+        return rc_before
+
+
+# ─── HTML 报告 ────────────────────────────────────────────────────────────────
+
+def _write_html_report(doc_path: Path, results: dict, rc: int,
+                       before: dict | None = None) -> None:
+    sev_color = {"High": "#e74c3c", "Med": "#e67e22", "Low": "#f1c40f"}
+    rows = ""
+    for cid in ALL_CHECKS:
+        res = results.get(cid, {})
+        found = res.get("found", False)
+        sev = SEVERITY.get(cid, "?")
+        color = sev_color.get(sev, "#aaa")
+        badge = f'<span style="color:{color};font-weight:bold">{sev}</span>'
+        safe = "✅ auto" if SAFE_FIX.get(cid) else "❌ plan"
+        status = '<span style="color:#e74c3c">⚠ FOUND</span>' if found else '<span style="color:#27ae60">ok</span>'
+        detail = ""
+        if found:
+            detail = res.get("fix_hint", "")
+            if "delta" in res:
+                detail = f"delta={res['delta']:+d}, coverage={res.get('coverage','?')}"
+        before_status = ""
+        if before is not None:
+            b = before.get(cid, {})
+            before_status = f'<td>{"⚠ FOUND" if b.get("found") else "ok"}</td>'
+        rows += (
+            f"<tr><td><code>{cid}</code></td>{before_status}"
+            f"<td>{status}</td><td>{badge}</td><td>{safe}</td>"
+            f"<td style='font-size:0.85em;color:#555'>{detail}</td></tr>\n"
+        )
+
+    before_col = "<th>Before</th>" if before is not None else ""
+    html = f"""<!DOCTYPE html>
+<html lang="zh"><head><meta charset="UTF-8">
+<title>docx health: {doc_path.name}</title>
+<style>
+  body{{font-family:system-ui,sans-serif;max-width:900px;margin:2em auto;padding:1em;}}
+  table{{border-collapse:collapse;width:100%;}}
+  th,td{{border:1px solid #ddd;padding:6px 10px;text-align:left;}}
+  th{{background:#f5f5f5;}}
+  tr:nth-child(even){{background:#fafafa;}}
+  h2{{color:#2c3e50;}}
+</style>
+</head><body>
+<h2>docx health report</h2>
+<p><b>File:</b> {doc_path.name}<br>
+<b>Exit code:</b> {rc} (0=healthy / 1=warning / 2=error)</p>
+<table>
+<tr><th>Check</th>{before_col}<th>Status</th><th>Severity</th><th>AutoFix</th><th>Detail</th></tr>
+{rows}
+</table>
+<p style="font-size:0.8em;color:#aaa;margin-top:2em">Generated by doctools health.py</p>
+</body></html>"""
+
+    out = doc_path.parent / f"{doc_path.stem}_health_report.html"
+    out.write_text(html, encoding="utf-8")
+    print(f"[health] HTML report → {out}")
+
+
+# ─── register() for docx_cli.py ──────────────────────────────────────────────
+
+def register(subparsers) -> None:
+    """Register `health <subcommand>` onto docx_cli.py's top-level subparsers."""
+    p = get_or_add_group(
+        subparsers, "health",
+        help_text="docx health diagnose / fix / full (8 病种检查)",
+    )
+    sp = get_or_add_subparsers(p, dest="health_sub", metavar="<subcommand>")
+
+    # diagnose
+    diag = sp.add_parser("diagnose", help="诊断 8 病种，输出 summary + 可选 JSON/HTML 报告")
+    diag.add_argument("docx_path", help="target docx")
+    diag.add_argument("--checks", default="all",
+                      help="逗号分隔病种 ID 或 'all' (default: all)")
+    diag.add_argument("--report", help="输出 JSON 报告路径")
+    diag.add_argument("--html", action="store_true", help="输出 HTML 报告")
+    diag.add_argument("--workers", type=int, default=8, help="并发线程数 (default: 8)")
+    diag.set_defaults(func=cmd_diagnose)
+
+    # fix
+    fix = sp.add_parser("fix", help="执行 safe-fix 白名单修复")
+    fix.add_argument("docx_path", help="target docx")
+    fix.add_argument("--auto", help="逗号分隔 check ID，默认全 safe 白名单")
+    fix.add_argument("--plan", help="从 diagnose --report 输出的 JSON 读任务")
+    fix.add_argument("--dry-run", action="store_true", help="不写文件，只打印 diff")
+    fix.add_argument("--backup", action="store_true", default=True, help="自动备份 (default: on)")
+    fix.set_defaults(func=cmd_fix)
+
+    # full
+    full = sp.add_parser("full", help="diagnose → fix safe → re-diagnose → HTML 报告")
+    full.add_argument("docx_path", help="target docx")
+    full.add_argument("--html", action="store_true", help="输出 HTML 报告")
+    full.add_argument("--dry-run", action="store_true", help="不写文件")
+    full.set_defaults(func=cmd_full)
