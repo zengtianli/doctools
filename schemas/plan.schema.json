@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DOCX Block Relocation Plan",
+  "description": "Used by `blocks relocate <plan.json>` (ex qual-supply relocate_orphan_blocks.py) to move 'orphan' paragraph blocks (heading + downstream paragraphs/tables) from source_idx to target_idx with text anchoring for idx-drift resilience.",
+  "type": "object",
+  "required": ["version", "moves"],
+  "properties": {
+    "version": {"const": "1"},
+    "source_docx": {"type": "string", "description": "docx 路径 (可选, 校验用)"},
+    "moves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_idx", "target_idx"],
+        "properties": {
+          "source_idx": {"type": "integer", "description": "段块起始物理 idx"},
+          "source_end_idx": {"type": "integer", "description": "段块结束 idx (含, 默认=source_idx)"},
+          "target_idx": {"type": "integer", "description": "目标插入位置 idx"},
+          "text_anchor": {"type": "string", "description": "源段首文本片段, 二次锚定用"},
+          "target_anchor": {"type": "string", "description": "目标位置前段文本片段"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,113 @@
+# Styles registry · 项目无关样式族 SSOT
+# distilled from qual-supply/scripts/* (2026-05-25 W2)
+#
+# 子项目通过 --profile <name> 切换;无 profile 走 default。
+# Why: docx 操作脚本里硬编码 ZDWP 集团样式名族(如 "ZDWP 表名" / "ZDWP正文" / "10" 数字 styleId)
+#      让脚本只能给 ZDWP 项目用;eco-flow / risk-map / shoreline 写自己的 profile 就能复用同套脚本。
+#
+# 字段说明:
+#   *_STYLES         样式 name / styleId 候选集合(命中其一即视作该层级)
+#                    集合内既允许中文 Word UI name (如 "标题 1"),也允许 styleId (如 "10")
+#   CAPTION_NUMBER_FORMAT  表名/图名编号模板,占位符 {H1} {H2} {N}
+#   HEADING_NUMBER_FORMAT  H1-H4 编号模板,占位符 {n1} {n2} {n3} {n4}
+#   ZDWP_NEXT_FIELD  是否启用 ZDWP 样式 <w:next> 自指修复 (仅 ZDWP 模板需要)
+
+default: zdwp
+
+profiles:
+  zdwp:
+    description: 浙江省水利水电勘测设计院 ZDWP 集团命名样式族
+    H1_STYLES: ["Heading 1", "标题 1", "heading 1", "Heading1", "heading1", "10", "1.1.1.1 N级标题"]
+    H2_STYLES: ["Heading 2", "标题 2", "heading 2", "2"]
+    H3_STYLES: ["Heading 3", "标题 3", "heading 3", "3"]
+    H4_STYLES: ["Heading 4", "标题 4", "heading 4", "4"]
+    TITLE_STYLES: ["Title", "标题", "a4"]
+    BODY_STYLES: ["ZDWP正文", "ZDWP", "Normal", "Body Text"]
+    TABLE_CAPTION_STYLES: ["ZDWP 表名", "ZDWP0", "0 表名", "0表名", "zdwp表名", "zdwp1", "Caption", "caption", "表题", "表注"]
+    FIG_CAPTION_STYLES: ["ZDWP 图名", "0 图名称", "0图名称", "0图名", "0图", "03", "Image Caption", "image caption", "Caption", "图注"]
+    TABLE_CELL_STYLES: ["0 表格内容", "ZDWP表格内容", "ZDWP3"]
+    TABLE_CELL_STYLE_ID: "0"           # apply_table_styles 套到 cell 段的 styleId (默认)
+    H1_TARGET_STYLE_ID: "1"            # apply_body_styles 数字 styleId 目标 (集团模板用)
+    H2_TARGET_STYLE_ID: "2"
+    H3_TARGET_STYLE_ID: "3"
+    BODY_TARGET_STYLE_ID: "ZDWP"
+    TITLE_TARGET_STYLE_ID: "a4"
+    TABLE_CAPTION_TARGET_STYLE_ID: "zdwp1"
+    CAPTION_NUMBER_FORMAT:
+      table: "表 {H1}-{N}　"           # qual-supply number_captions_by_style 风格,中文全角空格
+      figure: "图 {H1}-{N}　"
+      table_h2: "表{H1}.{H2}-{N}  "    # renumber_h4_figures H1.H2-N 格式
+      figure_h2: "图{H1}.{H2}-{N}  "
+    HEADING_NUMBER_FORMAT:
+      h1: "{n1} "
+      h2: "{n1}.{n2} "
+      h3: "{n1}.{n2}.{n3} "
+      h4: "{n1}.{n2}.{n3}.{n4} "
+    ZDWP_NEXT_FIELD: true             # 修 ZDWP 样式 <w:next w:val="ZDWP"/> 自指
+    # caption 段套样式的优先级 (apply_caption_styles)
+    TABLE_STYLE_PRIORITY: ["ZDWP 表名", "Caption"]
+    FIGURE_STYLE_PRIORITY: ["ZDWP 图名", "Caption"]
+
+  eco-flow:
+    description: 浙江省河湖生态流量保障项目命名样式族 (占位 · 用户后续按实际模板填充)
+    H1_STYLES: ["Heading 1", "标题 1"]
+    H2_STYLES: ["Heading 2", "标题 2"]
+    H3_STYLES: ["Heading 3", "标题 3"]
+    H4_STYLES: ["Heading 4", "标题 4"]
+    TITLE_STYLES: ["Title", "标题"]
+    BODY_STYLES: ["Normal", "Body Text"]
+    TABLE_CAPTION_STYLES: ["Caption", "表题"]
+    FIG_CAPTION_STYLES: ["Caption", "图注"]
+    TABLE_CELL_STYLES: []
+    TABLE_CELL_STYLE_ID: null
+    H1_TARGET_STYLE_ID: null
+    H2_TARGET_STYLE_ID: null
+    H3_TARGET_STYLE_ID: null
+    BODY_TARGET_STYLE_ID: null
+    TITLE_TARGET_STYLE_ID: null
+    TABLE_CAPTION_TARGET_STYLE_ID: null
+    CAPTION_NUMBER_FORMAT:
+      table: "表 {H1}-{N} "
+      figure: "图 {H1}-{N} "
+      table_h2: "表{H1}.{H2}-{N} "
+      figure_h2: "图{H1}.{H2}-{N} "
+    HEADING_NUMBER_FORMAT:
+      h1: "{n1} "
+      h2: "{n1}.{n2} "
+      h3: "{n1}.{n2}.{n3} "
+      h4: "{n1}.{n2}.{n3}.{n4} "
+    ZDWP_NEXT_FIELD: false
+    TABLE_STYLE_PRIORITY: ["Caption"]
+    FIGURE_STYLE_PRIORITY: ["Caption"]
+
+  generic:
+    description: 仅走 Word 标准 Heading / Title 样式,任何项目兜底
+    H1_STYLES: ["Heading 1"]
+    H2_STYLES: ["Heading 2"]
+    H3_STYLES: ["Heading 3"]
+    H4_STYLES: ["Heading 4"]
+    TITLE_STYLES: ["Title"]
+    BODY_STYLES: ["Normal"]
+    TABLE_CAPTION_STYLES: ["Caption"]
+    FIG_CAPTION_STYLES: ["Caption"]
+    TABLE_CELL_STYLES: []
+    TABLE_CELL_STYLE_ID: null
+    H1_TARGET_STYLE_ID: null
+    H2_TARGET_STYLE_ID: null
+    H3_TARGET_STYLE_ID: null
+    BODY_TARGET_STYLE_ID: null
+    TITLE_TARGET_STYLE_ID: null
+    TABLE_CAPTION_TARGET_STYLE_ID: null
+    CAPTION_NUMBER_FORMAT:
+      table: "Table {H1}-{N} "
+      figure: "Figure {H1}-{N} "
+      table_h2: "Table {H1}.{H2}-{N} "
+      figure_h2: "Figure {H1}.{H2}-{N} "
+    HEADING_NUMBER_FORMAT:
+      h1: "{n1}. "
+      h2: "{n1}.{n2}. "
+      h3: "{n1}.{n2}.{n3}. "
+      h4: "{n1}.{n2}.{n3}.{n4}. "
+    ZDWP_NEXT_FIELD: false
+    TABLE_STYLE_PRIORITY: ["Caption"]
+    FIGURE_STYLE_PRIORITY: ["Caption"]

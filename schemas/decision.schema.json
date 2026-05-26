@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DOCX Caption-Table Pairing Decision",
+  "description": "Used by `caption pair <decision.json>` (ex qual-supply pair_table_captions.py) to apply human-reviewed op set on top of audit_table_pairing.py findings. Ops: delete-caption / rename-caption / rename-orphan-tbl / pair-caption-to-tbl / renumber-all-tables.",
+  "type": "object",
+  "required": ["version", "ops"],
+  "properties": {
+    "version": {"const": "1"},
+    "source_docx": {"type": "string"},
+    "ops": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["op", "caption_idx"],
+            "properties": {
+              "op": {"const": "delete-caption"},
+              "caption_idx": {"type": "integer"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["op", "caption_idx", "new_text"],
+            "properties": {
+              "op": {"const": "rename-caption"},
+              "caption_idx": {"type": "integer"},
+              "new_text": {"type": "string"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["op", "tbl_idx", "new_caption_text"],
+            "properties": {
+              "op": {"const": "rename-orphan-tbl"},
+              "tbl_idx": {"type": "integer"},
+              "new_caption_text": {"type": "string"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["op", "caption_idx", "tbl_idx"],
+            "properties": {
+              "op": {"const": "pair-caption-to-tbl"},
+              "caption_idx": {"type": "integer"},
+              "tbl_idx": {"type": "integer"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["op"],
+            "properties": {
+              "op": {"const": "renumber-all-tables"}
+            }
+          }
+        ]
+      }
+    }
+  }
+}
