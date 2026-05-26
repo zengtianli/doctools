@@ -11,10 +11,14 @@ roles:
     - ZDWP正文       # 主 (景宁 97 段 nonempty)
     - Normal Indent  # 备
   title:
+    # 封面 5 件套 (磐安 v3 实测后 distill 2026-05-26):
+    # Title (主标题占位) + zdwp题目0 (主标题) + zdwp题目1 (副标题"实施方案") +
+    # zdwp作者 (编制单位) + zdwp封面日期 (日期"二○二六年五月")
     - Title
     - zdwp题目0
     - zdwp题目1
     - zdwp作者
+    - zdwp封面日期
   heading:
     - Heading 1
     - Heading 2
