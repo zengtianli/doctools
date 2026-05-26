@@ -350,38 +350,127 @@ def check_field_not_frozen(doc_path: Path, tmp_dir: Path) -> dict:
 
 
 def check_body_style_mess(doc_path: Path) -> dict:
-    """扫正文段中非 Heading/Caption/Title 的杂乱样式。"""
-    NORMAL_NAMES = {"normal", "default paragraph font", "default", "body text",
-                    "正文", ""}
-    HEADING_PREFIX = "heading"
-    CAPTION_KW = ("caption", "表名", "图名", "0图", "0表")
+    """扫正文段中真正 BODY_LIKE (Normal/正文系) 段的直接 rPr/pPr 杂乱属性。
+
+    Bug 修复 (2026-05-26 · W-fix-body-detector):
+      原实现把 Heading 1-9 / Title / TOC* / 中文 N 级标题 / 图名 / 表格标题
+      等 protected 段也算 mess (因为它们 style_id != "normal" 又不 startswith
+      "heading")。结果跑 `style body` 修完(只动 Normal 段)detector 还报 14
+      mess —— 因为它扫的是 protected 段,与 fix 范围根本无关。
+
+      现实现:
+        1. 复用 styles.py 的 _is_protected_paragraph / _is_body_like_paragraph
+           (保证白名单与 `style body` 一致 —— 同源)
+        2. 只对 BODY_LIKE 段扫直接 rPr/pPr 属性 (rFonts/color/sz/highlight/
+           jc/ind/spacing 等非空 child)
+        3. 阈值: body_mess_count > 20 才 found (兼容偶发遗留直接格式)
+    """
+    try:
+        from docx import Document  # type: ignore
+        from .styles import (  # type: ignore
+            _is_protected_paragraph,
+            _is_body_like_paragraph,
+            _style_name_id_of,
+            load_profile,
+        )
+    except Exception as e:
+        return {"found": False, "error": f"import: {type(e).__name__}: {e}"}
 
     try:
-        with zipfile.ZipFile(doc_path) as z:
-            with z.open("word/document.xml") as f:
-                doc_xml = f.read().decode("utf-8")
+        profile = load_profile("zdwp")  # 与 style body 默认 profile 一致
     except Exception as e:
-        return {"found": False, "error": str(e)}
+        return {"found": False, "error": f"load_profile: {type(e).__name__}: {e}"}
 
-    style_counter: Counter = Counter()
-    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
-        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
-        style_id = sm.group(1).lower() if sm else ""
-        if style_id.startswith(HEADING_PREFIX):
-            continue
-        if any(kw in style_id for kw in CAPTION_KW):
-            continue
-        if style_id in NORMAL_NAMES or style_id == "":
-            style_counter["(normal/empty)"] += 1
-        else:
-            style_counter[style_id] += 1
+    try:
+        doc = Document(str(doc_path))
+    except Exception as e:
+        return {"found": False, "error": f"open: {type(e).__name__}: {e}"}
 
-    mess_styles = {k: v for k, v in style_counter.items() if k != "(normal/empty)"}
-    if len(mess_styles) > 3:
-        return {"found": True, "mess_style_count": len(mess_styles),
-                "top_styles": dict(Counter(mess_styles).most_common(5)),
-                "safe_fix": True, "fix_hint": "style body"}
-    return {"found": False, "style_count": len(style_counter)}
+    W_NS_LOCAL = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    # 视为"直接格式"的 pPr/rPr 子元素 (空 pPr/rPr 本身或仅含 pStyle/rStyle 不算)
+    PPR_MESS_TAGS = {"jc", "ind", "spacing", "shd", "pBdr", "numPr", "framePr",
+                     "outlineLvl", "tabs"}
+    RPR_MESS_TAGS = {"rFonts", "color", "sz", "szCs", "highlight", "b", "bCs",
+                     "i", "iCs", "u", "strike", "vertAlign", "shd"}
+
+    def _has_direct_ppr(p_el) -> bool:
+        pPr = p_el.find(f"{W_NS_LOCAL}pPr")
+        if pPr is None:
+            return False
+        for child in pPr:
+            tag = child.tag
+            if not tag.startswith(W_NS_LOCAL):
+                continue
+            local = tag[len(W_NS_LOCAL):]
+            if local in PPR_MESS_TAGS:
+                return True
+        return False
+
+    def _has_direct_rpr(p_el) -> bool:
+        for r in p_el.iter(f"{W_NS_LOCAL}r"):
+            rPr = r.find(f"{W_NS_LOCAL}rPr")
+            if rPr is None:
+                continue
+            for child in rPr:
+                tag = child.tag
+                if not tag.startswith(W_NS_LOCAL):
+                    continue
+                local = tag[len(W_NS_LOCAL):]
+                if local in RPR_MESS_TAGS:
+                    return True
+        return False
+
+    total = 0
+    protected_skipped = 0
+    unknown_skipped = 0
+    body_total = 0
+    body_mess_count = 0
+    mess_by_style: Counter = Counter()
+    mess_kind_counter: Counter = Counter()  # "rPr-only" / "pPr-only" / "both"
+
+    for p in doc.paragraphs:
+        total += 1
+        text = (p.text or "").strip()
+        if text == "":
+            continue
+        style_name, style_id = _style_name_id_of(p)
+        if _is_protected_paragraph(style_name, style_id, profile):
+            protected_skipped += 1
+            continue
+        if not _is_body_like_paragraph(style_name, style_id, profile):
+            unknown_skipped += 1
+            continue
+        body_total += 1
+        p_el = p._p
+        has_ppr = _has_direct_ppr(p_el)
+        has_rpr = _has_direct_rpr(p_el)
+        if has_ppr or has_rpr:
+            body_mess_count += 1
+            key = f"{style_name or '?'}|{style_id or '?'}"
+            mess_by_style[key] += 1
+            if has_ppr and has_rpr:
+                mess_kind_counter["both"] += 1
+            elif has_ppr:
+                mess_kind_counter["pPr-only"] += 1
+            else:
+                mess_kind_counter["rPr-only"] += 1
+
+    THRESHOLD = 20  # 容忍偶发,> 20 才报
+    base = {
+        "total_paragraphs": total,
+        "protected_skipped": protected_skipped,
+        "unknown_style_skipped": unknown_skipped,
+        "body_total": body_total,
+        "body_mess_count": body_mess_count,
+        "mess_kinds": dict(mess_kind_counter),
+        "top_mess_styles": dict(mess_by_style.most_common(5)),
+    }
+    if body_mess_count > THRESHOLD:
+        base.update({"found": True, "safe_fix": True, "fix_hint": "style body"})
+        return base
+    base["found"] = False
+    return base
 
 
 def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:

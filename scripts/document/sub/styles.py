@@ -135,9 +135,111 @@ RE_NUM_TITLE  = re.compile(r"^\d+\s+\S")
 RE_H3         = re.compile(r"^\d+\.\d+\.\d+\s+")
 RE_H2         = re.compile(r"^\d+\.\d+\s+")
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 白/黑名单 (CRITICAL FIX 2026-05-26):
+# style body 仅按文本形态判,缺现有 style 守门 → 把 Title/Heading 1-4/自定义"N级标题"
+# 误套成 caption。下面两个 PROTECTED / BODY-LIKE 集合在 _apply_body_impl 入口拦截:
+#   - PROTECTED: 命中即 skip,绝不修改 (heading/title/toc/caption/中文 N级标题/
+#                ZDWP H*/数字打头"N 级标题"等)
+#   - BODY_LIKE: 命中或样式为空/Normal 才允许 apply body 启发式
+# 反模式: 用 fnmatch/in 简单匹配,中文样式 ("1一级标题"/"1.1.1.1 N级标题") 必漏。
+# 这里用 regex 同时覆盖 styleId 与 style name 两条线 (docx 里 styleId 常是 "10"/"1"
+# 等数字, name 是 "Heading 1"/"标题 1"/"1一级标题")。
+# ──────────────────────────────────────────────────────────────────────────────
+
+# 保护类(命中绝不改)。两条线: style name 与 styleId 都过。
+_PROTECTED_NAME_PATTERNS = [
+    re.compile(r"^Heading\s*[1-9]$", re.I),
+    re.compile(r"^Title$", re.I),
+    re.compile(r"^Subtitle$", re.I),
+    re.compile(r"^TOC.*", re.I),
+    re.compile(r"^toc.*", re.I),
+    re.compile(r"^目录"),
+    re.compile(r"标题"),                              # 含"标题"二字 (含 Word 中文"标题 1" / "1一级标题" / "1.1.1.1 N级标题")
+    re.compile(r"题目"),
+    re.compile(r"^(一|二|三|四|五|六|七|八|九|十)级标题"),
+    re.compile(r"^\d+\s*(一|二|三|四|五|六|七|八|九|十)级"),  # "1一级" "2二级" 数字打头
+    re.compile(r"^ZDWP\s*H[1-9]", re.I),
+    re.compile(r"^ZDWP\s*标题", re.I),
+    # 已有 caption 样式 — 别重套
+    re.compile(r"图\s*名"),
+    re.compile(r"表\s*名"),
+    re.compile(r"图名称"),
+    re.compile(r"表格标题"),
+    re.compile(r"^caption", re.I),
+    re.compile(r"Image\s*Caption", re.I),
+    re.compile(r"图\s*注"),
+    re.compile(r"表\s*注"),
+    re.compile(r"表\s*题"),
+]
+
+# 正向白名单 — 可被 body 启发式套样式的段必须 style 命中以下之一(或为空/None)。
+_BODY_LIKE_NAME_PATTERNS = [
+    re.compile(r"^Normal$", re.I),
+    re.compile(r"^Normal\s+Indent$", re.I),
+    re.compile(r"^Body\s*Text\s*[123]?$", re.I),
+    re.compile(r"^正文"),                              # "正文" / "01正文" / "02正文"
+    re.compile(r"^\d+\s*正文"),
+    re.compile(r"ZDWP正文"),
+    re.compile(r"^ZDWP$"),                            # styleId
+    re.compile(r"^Default\s*Paragraph", re.I),
+]
+
+
+def _style_name_id_of(p) -> tuple[Optional[str], Optional[str]]:
+    """Return (style_name, style_id) of paragraph; (None, None) if no style."""
+    try:
+        s = p.style
+    except Exception:
+        return (None, None)
+    if s is None:
+        return (None, None)
+    name = getattr(s, "name", None) or None
+    sid = getattr(s, "style_id", None) or None
+    return (name, sid)
+
+
+def _is_protected_paragraph(style_name: Optional[str], style_id: Optional[str], profile: StylesProfile) -> bool:
+    """True 表示这段是 heading/title/toc/caption,style body 不许碰."""
+    # 1. profile 自身的语义判定 (基于 yaml *_STYLES 集合)
+    for predicate in (profile.is_h1, profile.is_h2, profile.is_h3, profile.is_h4,
+                      profile.is_title, profile.is_table_caption, profile.is_fig_caption):
+        if predicate(style_name) or predicate(style_id):
+            return True
+    # 2. 正则补充 — 防 profile 未覆盖的中文 / 数字打头自定义样式
+    for s in (style_name, style_id):
+        if not s:
+            continue
+        for pat in _PROTECTED_NAME_PATTERNS:
+            if pat.search(s):
+                return True
+    return False
+
+
+def _is_body_like_paragraph(style_name: Optional[str], style_id: Optional[str], profile: StylesProfile) -> bool:
+    """True 表示这段是 Normal / 正文系列 / 无名样式,允许 body 启发式套样式."""
+    # 无样式 / 空 → body-like
+    if not style_name and not style_id:
+        return True
+    # profile 自身 body 集合命中
+    if profile.is_body(style_name) or profile.is_body(style_id):
+        return True
+    # 正则白名单
+    for s in (style_name, style_id):
+        if not s:
+            continue
+        for pat in _BODY_LIKE_NAME_PATTERNS:
+            if pat.search(s):
+                return True
+    return False
+
 
 def _classify_body_paragraph(text: str, profile: StylesProfile) -> Optional[str]:
-    """返回目标 styleId; None = 跳过 (空段). styleId 从 profile 取."""
+    """返回目标 styleId; None = 跳过 (空段). styleId 从 profile 取.
+
+    NOTE: 仅按 text 形态判,不看 current style — 守门由 _apply_body_impl 入口的
+    _is_protected_paragraph / _is_body_like_paragraph 完成。
+    """
     s = (text or "").strip()
     if s == "":
         return None
@@ -171,7 +273,9 @@ def _fix_zdwp_next_field(doc, body_style_id: str) -> str:
     if nxt is None:
         nxt = OxmlElement("w:next")
         nxt.set(qn("w:val"), body_style_id)
-        anchor = target.find(qn("w:basedOn")) or target.find(qn("w:name"))
+        # FutureWarning fix: element truth-testing 已被 lxml deprecate,显式 is not None
+        _bo = target.find(qn("w:basedOn"))
+        anchor = _bo if _bo is not None else target.find(qn("w:name"))
         if anchor is not None:
             anchor.addnext(nxt)
         else:
@@ -190,22 +294,38 @@ def _apply_body_impl(doc, profile: StylesProfile, dry_run: bool) -> dict:
         "skipped_empty": 0,
         "skipped_already": Counter(),
         "skipped_no_target_in_profile": 0,
+        "skipped_protected": Counter(),       # heading/title/toc/caption etc.
+        "skipped_unknown_style": Counter(),   # 非 protected 也非 body-like — 不动
         "errors": [],
     }
     available_ids = {s.style_id for s in doc.styles}
     for idx, p in enumerate(doc.paragraphs):
         stats["total"] += 1
-        target = _classify_body_paragraph(p.text, profile)
-        if target is None:
+        text = p.text or ""
+        # 0. 空段直接 skip (与原逻辑一致)
+        if text.strip() == "":
             stats["skipped_empty"] += 1
             continue
+        style_name, style_id = _style_name_id_of(p)
+        # 1. PROTECTED — heading / title / toc / caption 等绝不改
+        if _is_protected_paragraph(style_name, style_id, profile):
+            key = f"{style_name or '?'}|{style_id or '?'}"
+            stats["skipped_protected"][key] += 1
+            continue
+        # 2. 非 body-like (例如 ZDWP 表名/0 表格内容 等已有专用样式) — 不主动 reset
+        if not _is_body_like_paragraph(style_name, style_id, profile):
+            key = f"{style_name or '?'}|{style_id or '?'}"
+            stats["skipped_unknown_style"][key] += 1
+            continue
+        # 3. 走启发式分类 → target styleId
+        target = _classify_body_paragraph(text, profile)
         if target is None or target == "":
             stats["skipped_no_target_in_profile"] += 1
             continue
         if target not in available_ids:
-            stats["errors"].append((idx, (p.text or "")[:60], f"styleId {target!r} not in styles.xml"))
+            stats["errors"].append((idx, text[:60], f"styleId {target!r} not in styles.xml"))
             continue
-        cur_id = p.style.style_id if p.style is not None else None
+        cur_id = style_id
         if cur_id == target:
             stats["skipped_already"][target] += 1
             continue
@@ -247,6 +367,8 @@ def cmd_body(args) -> int:
         "changed_by_style": dict(stats["changed"]),
         "skipped_already": dict(stats["skipped_already"]),
         "skipped_no_target_in_profile": stats["skipped_no_target_in_profile"],
+        "skipped_protected": dict(stats["skipped_protected"]),
+        "skipped_unknown_style": dict(stats["skipped_unknown_style"]),
         "zdwp_next_field": next_status,
         "errors": [{"idx": i, "text": t, "reason": r} for (i, t, r) in stats["errors"]],
     }
@@ -254,6 +376,8 @@ def cmd_body(args) -> int:
     print(f"[style body] file={src.name} total={stats['total']} "
           f"changed={sum(stats['changed'].values())} "
           f"skipped_already={sum(stats['skipped_already'].values())} "
+          f"skipped_protected={sum(stats['skipped_protected'].values())} "
+          f"skipped_unknown={sum(stats['skipped_unknown_style'].values())} "
           f"zdwp_next={next_status}")
     return 0
 

@@ -23,12 +23,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import zipfile
 from pathlib import Path
 
 from docx import Document
 from lxml import etree
+
+# rels 文件可能在 word/_rels/ 下任意 *.xml.rels (document / header* / footer* /
+# footnotes / endnotes / comments / numbering ...). 主 document 引用走
+# document.xml.rels, 但 header/footer/footnotes 等各自带 rels 文件且各自的
+# rId 命名空间独立 (rId1 在 document.xml.rels vs header1.xml.rels 可指不同 target).
+_RELS_RE = re.compile(r"^word/_rels/(.+)\.xml\.rels$")
+# 主 part XML (排除 _rels/ / theme/ / settings 等纯样式), 凡可能 embed image 的:
+_PART_XML_RE = re.compile(
+    r"^word/(document|header\d*|footer\d*|footnotes|endnotes|comments|numbering)\.xml$"
+)
 
 NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -62,7 +73,11 @@ def list_media(zf: zipfile.ZipFile) -> list[dict]:
 
 
 def parse_rels(zf: zipfile.ZipFile) -> dict[str, dict]:
-    """返回 rId -> {target, type}"""
+    """[legacy] 返回 document.xml.rels 的 rId -> {target, type} (向后兼容).
+
+    新代码应该用 parse_all_rels(), 该函数只覆盖主 document 的 rels, 不含
+    header/footer/footnotes 等 part 各自的 rels. 保留只为兼容已有调用者.
+    """
     try:
         data = zf.read("word/_rels/document.xml.rels")
     except KeyError:
@@ -75,6 +90,86 @@ def parse_rels(zf: zipfile.ZipFile) -> dict[str, dict]:
         rtype = rel.get("Type") or ""
         out[rid] = {"target": target, "type": rtype}
     return out
+
+
+def parse_all_rels(zf: zipfile.ZipFile) -> dict[str, dict[str, dict]]:
+    """扫所有 word/_rels/*.xml.rels, 返回 {part_name -> {rId -> {target, type}}}.
+
+    part_name = rels 所属的 part 的 stem, 例: 'document', 'header1', 'footer3'.
+    每个 part 的 rId 命名空间独立, 必须按 part 隔离查询.
+
+    复用 strip_orphan_media._collect_referenced_media 的扫法 (但保留 rId 维度).
+    """
+    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    out: dict[str, dict[str, dict]] = {}
+    for name in zf.namelist():
+        m = _RELS_RE.match(name)
+        if not m:
+            continue
+        part_name = m.group(1)  # 'document' / 'header1' / 'footer3' ...
+        try:
+            data = zf.read(name)
+            tree = etree.fromstring(data, parser=parser)
+        except (etree.XMLSyntaxError, KeyError):
+            continue
+        if tree is None:
+            continue
+        part_rels: dict[str, dict] = {}
+        for rel in tree.findall("rels:Relationship", NS):
+            rid = rel.get("Id")
+            target = rel.get("Target") or ""
+            rtype = rel.get("Type") or ""
+            part_rels[rid] = {"target": target, "type": rtype}
+        out[part_name] = part_rels
+    return out
+
+
+def collect_rid_refs_in_part(zf: zipfile.ZipFile, part_path: str) -> list[dict]:
+    """扫一个 part XML 的 body, 返回 [{rid, kind}] (kind=drawing/pict/chart/diagram).
+
+    drawing/pict 都查 r:embed / r:link / r:id 各种姿势.
+    用于扫 header*/footer*/footnotes/endnotes/comments 的 body, 把它们
+    引用的 rId 也算 referenced, 避免 audit-images 漏报这些 part 引用的 media.
+    """
+    refs: list[dict] = []
+    try:
+        data = zf.read(part_path)
+    except KeyError:
+        return refs
+    try:
+        root = etree.fromstring(data, parser=etree.XMLParser(recover=True))
+    except etree.XMLSyntaxError:
+        return refs
+    if root is None:
+        return refs
+    R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+    # DrawingML blip / chart / diagram
+    for blip in root.findall(".//a:blip", NS):
+        rid = blip.get(f"{R}embed") or blip.get(f"{R}link")
+        if rid:
+            refs.append({"rid": rid, "kind": "drawing"})
+    for chart in root.findall(
+        ".//{http://schemas.openxmlformats.org/drawingml/2006/chart}chart"
+    ):
+        rid = chart.get(f"{R}id")
+        if rid:
+            refs.append({"rid": rid, "kind": "chart"})
+    for dgm in root.findall(
+        ".//{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"
+    ):
+        rid = dgm.get(f"{R}dm")
+        if rid:
+            refs.append({"rid": rid, "kind": "diagram"})
+
+    # legacy VML pict / imagedata
+    for imgdata in root.findall(".//v:imagedata", NS):
+        rid = imgdata.get(f"{R}id") or imgdata.get(f"{R}href")
+        if rid:
+            refs.append({"rid": rid, "kind": "pict"})
+
+    # OLE object (oleObject r:id 也算引用, 走 embeddings 路径不算 media 但要登记)
+    return refs
 
 
 def snippet(text: str, n: int = 60) -> str:
@@ -212,7 +307,18 @@ def audit(docx_path: Path) -> dict:
     with zipfile.ZipFile(docx_path, "r") as zf:
         zip_names = set(zf.namelist())
         media = list_media(zf)
-        rels = parse_rels(zf)
+        rels = parse_rels(zf)  # legacy: 只 document.xml.rels
+        all_rels = parse_all_rels(zf)  # 全 part rels (含 header/footer/footnotes/...)
+        # 扫所有 part XML body 收集 rId 引用 (含 header/footer/footnotes/endnotes/comments/numbering)
+        # 这是修正旧版漏扫的关键: 旧版只标 document.xml body 的 drawing/pict rId,
+        # 导致 header/footer 里 imagedata 引用的 media 全被误判 orphan.
+        part_refs: dict[str, list[dict]] = {}  # part_name -> [{rid, kind}]
+        for zname in zf.namelist():
+            pm = _PART_XML_RE.match(zname)
+            if not pm:
+                continue
+            part_name = pm.group(1)
+            part_refs[part_name] = collect_rid_refs_in_part(zf, zname)
 
     doc = Document(str(docx_path))
     drawings, picts, paragraphs = scan_body(doc)
@@ -220,13 +326,19 @@ def audit(docx_path: Path) -> dict:
     media_by_name = {m["name"]: m for m in media}
 
     def annotate(items: list[dict]) -> None:
+        """标注 document.xml body 内 drawing/pict 的 status + 落 referenced_by.
+
+        rId 解析走 document part 的 rels (`all_rels['document']`),
+        与旧 `rels` 字典等价.
+        """
+        doc_rels = all_rels.get("document", rels)
         for it in items:
             rid = it.get("rid")
             if not rid:
                 it["status"] = "no-rid"
                 it["target"] = None
                 continue
-            rel = rels.get(rid)
+            rel = doc_rels.get(rid)
             if rel is None:
                 it["status"] = "dangling-no-rel"
                 it["target"] = None
@@ -237,14 +349,54 @@ def audit(docx_path: Path) -> dict:
             if full not in zip_names:
                 it["status"] = "dangling-target-missing"
                 continue
-            # mark media referenced
+            # mark media referenced (带来源标注: "document:rIdN")
             mname = os.path.basename(target)
             if mname in media_by_name:
-                media_by_name[mname]["referenced_by"].append(rid)
+                media_by_name[mname]["referenced_by"].append(f"document:{rid}")
             it["status"] = "ok"
 
     annotate(drawings)
     annotate(picts)
+
+    # 全 part 扫描: 把 header/footer/footnotes/... 引用的 media 也标 referenced.
+    # 这是消除磐安 .bak-1 47 个 .wmf 误报为 orphan 的核心修复.
+    for part_name, refs in part_refs.items():
+        if part_name == "document":
+            # document.xml body 已通过 annotate() 标过, 跳过避免重复 (但下面也兜底)
+            pass
+        part_rels = all_rels.get(part_name, {})
+        for ref in refs:
+            rid = ref["rid"]
+            rel = part_rels.get(rid)
+            if rel is None:
+                continue
+            target = rel["target"]
+            full = resolve_target(target)
+            if full not in zip_names:
+                continue
+            mname = os.path.basename(target)
+            if mname in media_by_name:
+                tag = f"{part_name}:{rid}"
+                if tag not in media_by_name[mname]["referenced_by"]:
+                    media_by_name[mname]["referenced_by"].append(tag)
+
+    # 兜底: 严谨算法对账 — 若 rels 里 Target 直接指向 word/media/<name>,
+    # 也算 referenced (与 strip_orphan_media.scan_orphans 语义对齐).
+    # 这覆盖某些非常规 part 引用 / 模板残留 rels 仍真指 media 的边界情况.
+    for part_name, part_rels in all_rels.items():
+        for rid, rel in part_rels.items():
+            target = (rel.get("target") or "").replace("\\", "/").lstrip("/")
+            if not target:
+                continue
+            if target.startswith("media/") or "/media/" in target:
+                mname = os.path.basename(target)
+                if mname in media_by_name:
+                    tag = f"rels[{part_name}]:{rid}"
+                    if not any(
+                        t.startswith(f"{part_name}:") or t == tag
+                        for t in media_by_name[mname]["referenced_by"]
+                    ):
+                        media_by_name[mname]["referenced_by"].append(tag)
 
     orphan_media = [m["name"] for m in media if not m["referenced_by"]]
     dangling_rids = [
@@ -292,6 +444,10 @@ def audit(docx_path: Path) -> dict:
         "dangling_rids_count": len(dangling_rids),
         "dangling_rids": dangling_rids,
         "issues_count": len(orphan_media) + len(dangling_rids),
+        # 修复 2026-05-26: 列出已扫的 rels parts (含 header/footer/footnotes/...),
+        # 验证 orphan_media_count 与 strip_orphan_media 对齐.
+        "rels_parts_scanned": sorted(all_rels.keys()),
+        "part_xmls_scanned": sorted(part_refs.keys()),
     }
 
     return {
