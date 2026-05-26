@@ -58,25 +58,61 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 # ─── 原生 check 函数 ──────────────────────────────────────────────────────────
 
-def check_heading_level_skew(doc_path: Path) -> dict:
-    """检出：Heading N 段/样式 outlineLvl 与 style 名隐含级别有系统性偏差（磐安症状）。
+_NUMBER_PREFIX = re.compile(r"^\s*(\d+(?:\.\d+)*)[\s\.、]")
 
-    两层检测：
-      1. 段落层（paragraph-level pPr outlineLvl 覆盖样式值）
-      2. 样式层（styles.xml 中 Heading N 的 outlineLvl ≠ N-1）
-    任一层检出 coverage ≥ 0.8 && delta ≠ 0 → found=True。
-    """
-    def style_to_implied(style_name_or_id: str) -> int | None:
-        """'Heading 1' / 'heading 2' / '1' / 'Heading1' → 0-based implied level"""
-        s = style_name_or_id.strip()
-        m = re.search(r"[Hh]eading\s*(\d+)", s)
-        if m:
-            return int(m.group(1)) - 1
-        # bare "1"/"2"/"3"/"4"
-        if re.fullmatch(r"\d", s):
-            return int(s) - 1
+
+def _text_prefix_depth(text: str) -> int | None:
+    """抓数字前缀深度: '1.2.2 xxx' → 3, '2 河湖...' → 1, 无前缀 → None."""
+    m = _NUMBER_PREFIX.match(text)
+    if not m:
         return None
+    return m.group(1).count(".") + 1
 
+
+def _style_to_level_1based(style_name_or_id: str) -> int | None:
+    """1-based level: 'Heading 4' → 4, 'heading 2' → 2, bare '4' → 4."""
+    s = style_name_or_id.strip()
+    m = re.search(r"[Hh]eading\s*(\d+)", s)
+    if m:
+        return int(m.group(1))
+    if re.fullmatch(r"\d", s):
+        return int(s)
+    return None
+
+
+def _para_text(para_xml: str) -> str:
+    return "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", para_xml))
+
+
+def _resolve_style_to_heading_level(styles_xml: str) -> dict[str, int]:
+    """构 styleId → heading level(1-based) map.
+
+    覆盖中文重命名（styleId='2' name='heading 2'）和原生 styleId='Heading1' 两种。
+    """
+    out: dict[str, int] = {}
+    for m in re.finditer(r'<w:style[^>]+w:styleId="([^"]+)"', styles_xml):
+        sid = m.group(1)
+        block_start = m.start()
+        block_end = styles_xml.find("</w:style>", block_start)
+        if block_end < 0:
+            continue
+        block = styles_xml[block_start:block_end]
+        name_m = re.search(r'<w:name w:val="([^"]+)"', block)
+        name = name_m.group(1) if name_m else ""
+        lvl = _style_to_level_1based(name) or _style_to_level_1based(sid)
+        if lvl is not None:
+            out[sid] = lvl
+    return out
+
+
+def check_heading_level_skew(doc_path: Path) -> dict:
+    """检出：标题段「文本数字前缀深度」与「样式隐含级别」系统性偏差（磐安症状）。
+
+    主算法：delta = style_level(1-based) − text_prefix_depth
+      磐安：'1.2.2'(depth=3) 挂 Heading 4 → delta=+1（style 偏高 1 级）
+      '2 河湖...'(depth=1) 挂 Heading 2 → delta=+1
+    无数字前缀的标题（前言/结论/附录）跳过不计入。
+    """
     try:
         with zipfile.ZipFile(doc_path) as z:
             with z.open("word/document.xml") as f:
@@ -86,13 +122,88 @@ def check_heading_level_skew(doc_path: Path) -> dict:
     except Exception as e:
         return {"found": False, "error": str(e)}
 
-    # ── Layer 1: paragraph-level pPr outlineLvl overrides ──────────────────
+    style_lvl_map = _resolve_style_to_heading_level(styles_xml)
+
+    deltas: list[int] = []
+    samples: list[dict] = []
+
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+        if not sm:
+            continue
+        sid = sm.group(1)
+        style_lvl = style_lvl_map.get(sid) or _style_to_level_1based(sid)
+        if style_lvl is None:
+            continue
+        text = _para_text(para_xml)
+        text_depth = _text_prefix_depth(text)
+        if text_depth is None:
+            continue
+        delta = style_lvl - text_depth
+        deltas.append(delta)
+        if len(samples) < 5:
+            samples.append({
+                "text": text[:30],
+                "style_lvl": style_lvl,
+                "text_depth": text_depth,
+                "delta": delta,
+            })
+
+    if not deltas:
+        return {"found": False, "reason": "no headings with numeric prefix"}
+
+    counter = Counter(deltas)
+    dominant_delta, count = counter.most_common(1)[0]
+    coverage = count / len(deltas)
+
+    # coverage ≥ 0.7 = 系统性偏差（容忍少数前言/结论/附录段 delta=0）
+    if coverage >= 0.7 and dominant_delta != 0:
+        direction = "promote" if dominant_delta > 0 else "demote"
+        # auto-fix 仍需 ≥ 0.8 严格阈值，0.7-0.8 段降为 plan-required
+        safe = coverage >= 0.8
+        return {
+            "found": True,
+            "delta": dominant_delta,
+            "coverage": round(coverage, 3),
+            "affected_count": count,
+            "total_checked": len(deltas),
+            "samples": samples,
+            "deltas_distribution": dict(counter),
+            "fix_hint": f"整体 {direction} {abs(dominant_delta)} 级 (style 比文本前缀{'高' if dominant_delta>0 else '低'} {abs(dominant_delta)})",
+            "safe_fix": safe,
+        }
+    return {
+        "found": False,
+        "dominant_delta": dominant_delta,
+        "coverage": round(coverage, 3),
+        "deltas_distribution": dict(counter),
+        "samples": samples,
+    }
+
+
+def check_outline_lvl_mismatch(doc_path: Path) -> dict:
+    """副 check：outlineLvl XML 属性 vs style 隐含级别对账（旧逻辑保留）。
+
+    两层任一命中即报：① paragraph 级 outlineLvl override；② styles.xml 级 outlineLvl 与 style 名不一致。
+    """
+    def style_to_implied_0based(s: str) -> int | None:
+        lvl = _style_to_level_1based(s)
+        return lvl - 1 if lvl is not None else None
+
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            doc_xml = z.open("word/document.xml").read().decode("utf-8")
+            styles_xml = z.open("word/styles.xml").read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    # Layer 1: paragraph-level
     para_deltas: list[int] = []
     for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
         sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
         if not sm:
             continue
-        implied = style_to_implied(sm.group(1))
+        implied = style_to_implied_0based(sm.group(1))
         if implied is None:
             continue
         ppr_m = re.search(r"<w:pPr>(.*?)</w:pPr>", para_xml, re.DOTALL)
@@ -101,64 +212,42 @@ def check_heading_level_skew(doc_path: Path) -> dict:
         ol_m = re.search(r'<w:outlineLvl w:val="(\d+)"', ppr_m.group(1))
         if not ol_m:
             continue
-        actual = int(ol_m.group(1))
-        para_deltas.append(actual - implied)
+        para_deltas.append(int(ol_m.group(1)) - implied)
 
     if para_deltas:
-        counter = Counter(para_deltas)
-        dominant_delta, count = counter.most_common(1)[0]
-        coverage = count / len(para_deltas)
-        if coverage >= 0.8 and dominant_delta != 0:
-            direction = "demote" if dominant_delta > 0 else "promote"
-            return {
-                "found": True,
-                "layer": "paragraph",
-                "delta": dominant_delta,
-                "coverage": round(coverage, 3),
-                "affected_count": count,
-                "total_checked": len(para_deltas),
-                "fix_hint": f"整体 {direction} {abs(dominant_delta)} 级",
-                "safe_fix": True,
-            }
+        c = Counter(para_deltas)
+        dd, cnt = c.most_common(1)[0]
+        cov = cnt / len(para_deltas)
+        if cov >= 0.8 and dd != 0:
+            return {"found": True, "layer": "paragraph", "delta": dd,
+                    "coverage": round(cov, 3), "affected_count": cnt}
 
-    # ── Layer 2: style-level outlineLvl in styles.xml ──────────────────────
+    # Layer 2: style-level
     style_deltas: list[int] = []
-    for match in re.finditer(r'<w:style[^>]+>', styles_xml):
-        block_start = match.start()
-        block_end = styles_xml.find("</w:style>", block_start)
-        if block_end < 0:
+    for m in re.finditer(r'<w:style[^>]+>', styles_xml):
+        bs = m.start()
+        be = styles_xml.find("</w:style>", bs)
+        if be < 0:
             continue
-        block = styles_xml[block_start:block_end]
+        block = styles_xml[bs:be]
         name_m = re.search(r'<w:name w:val="([^"]+)"', block)
-        name = name_m.group(1) if name_m else ""
-        implied = style_to_implied(name)
+        implied = style_to_implied_0based(name_m.group(1) if name_m else "")
         if implied is None:
             continue
         ol_m = re.search(r'<w:outlineLvl w:val="(\d+)"', block)
         if not ol_m:
             continue
-        actual = int(ol_m.group(1))
-        style_deltas.append(actual - implied)
+        style_deltas.append(int(ol_m.group(1)) - implied)
 
     if style_deltas:
-        counter = Counter(style_deltas)
-        dominant_delta, count = counter.most_common(1)[0]
-        coverage = count / len(style_deltas)
-        if coverage >= 0.8 and dominant_delta != 0:
-            direction = "demote" if dominant_delta > 0 else "promote"
-            return {
-                "found": True,
-                "layer": "style",
-                "delta": dominant_delta,
-                "coverage": round(coverage, 3),
-                "affected_count": count,
-                "total_checked": len(style_deltas),
-                "fix_hint": f"整体 {direction} {abs(dominant_delta)} 级 (样式级偏移)",
-                "safe_fix": True,
-            }
+        c = Counter(style_deltas)
+        dd, cnt = c.most_common(1)[0]
+        cov = cnt / len(style_deltas)
+        if cov >= 0.8 and dd != 0:
+            return {"found": True, "layer": "style", "delta": dd,
+                    "coverage": round(cov, 3), "affected_count": cnt}
 
-    reason = "no paragraph-level outlineLvl overrides" if not para_deltas else "delta=0 (no skew)"
-    return {"found": False, "reason": reason}
+    return {"found": False}
 
 
 def check_heading_gap(doc_path: Path) -> dict:
