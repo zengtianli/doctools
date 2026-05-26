@@ -354,6 +354,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "audit", "freeze", "strip", "header-footer", "chapter",
         "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
         "pipeline", "health",
+        "section",    # section read/list (distilled from panan-rigid, 2026-05-26)
+        "md-merge",   # merge MD content into DOCX section (distilled from panan-rigid, 2026-05-26)
     }
     while i < len(raw):
         tok = raw[i]
