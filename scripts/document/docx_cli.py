@@ -260,10 +260,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="docx_cli",
         description=(
-            "doctools 文档处理统一 CLI (15+ subcommands)\n"
-            "合并 docx_tools / md_tools / bullet_to_paragraph / docx_apply_* /\n"
-            "fix_superscript_refs / md_docx_template / report_quality_check /\n"
-            "review_deep / scan_sensitive_words 共 12 旧脚本"
+            "doctools 文档处理统一 CLI (30+ subcommands · 2026-05-25 qual-supply distill)\n"
+            "Legacy (16 旧族): extract / check / snapshot / compare / track / bullet /\n"
+            "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
+            "  quality-check / review / scan-sensitive / md\n"
+            "Distilled (11 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
+            "  chapter / renumber / caption / blocks / outline / style / image / legacy"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -271,21 +273,54 @@ def _build_parser() -> argparse.ArgumentParser:
             "  docx_cli.py extract input.docx -o out.md\n"
             "  docx_cli.py check snapshot a.docx\n"
             "  docx_cli.py md format -i x.md\n"
+            "  docx_cli.py audit headings X.docx --report /tmp/h.json\n"
+            "  docx_cli.py freeze headings X.docx\n"
+            "  docx_cli.py style body X.docx --profile zdwp\n"
+            "  docx_cli.py renumber h4-figures X.docx --profile eco-flow\n"
             "  docx_cli.py --batch tasks.jsonl --workers 8 extract\n"
-            "\n详见 GOAL: ~/Dev/tools/cc-home/goals/script-consolidation/GOAL.md"
+            "\n详见 GOAL: ~/Dev/tools/cc-home/goals/script-consolidation/GOAL.md\n"
+            "  hq_capabilities.yaml doctools.sub_capabilities (子命令清单)"
         ),
     )
     add_parallel_args(p)
     sub = p.add_subparsers(dest="command", metavar="<subcommand>")
+    # Legacy 16 旧族 — REMAINDER 透传到旧脚本
     for name in ALL_DOCX_CMDS:
         sp = sub.add_parser(
             name,
             help=f"→ 转发到旧脚本 ({name})",
             add_help=False,  # 让旧脚本自己处理 -h（透传 rest）
         )
-        # 收集 rest 透传
         sp.add_argument("rest", nargs=argparse.REMAINDER, help="透传到旧脚本")
+    # Distilled 11 新族 — sub/*.py 各自 register()
+    _register_distilled_subcommands(sub)
     return p
+
+
+def _register_distilled_subcommands(sub) -> None:
+    """Load sub/ package (sibling dir) and register all distilled group modules.
+
+    sub/ is `scripts/document/sub/__init__.py` — siblings of this file.
+    We add its parent (scripts/document/) to sys.path then `import sub`.
+    """
+    here_parent = str(_HERE)
+    inserted = False
+    if here_parent not in sys.path:
+        sys.path.insert(0, here_parent)
+        inserted = True
+    try:
+        import importlib
+        sub_pkg = importlib.import_module("sub")
+        sub_pkg.register_all(sub)
+    except Exception as e:  # pragma: no cover
+        print(f"[docx_cli.py] WARN: failed to register sub/* modules: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(here_parent)
+            except ValueError:
+                pass
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -303,6 +338,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub_cmd: Optional[str] = None
     rest: list[str] = []
     i = 0
+    # Distilled top-level groups (11) — argparse handles their internals
+    DISTILLED_GROUPS = {
+        "audit", "freeze", "strip", "header-footer", "chapter",
+        "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
+    }
     while i < len(raw):
         tok = raw[i]
         if sub_cmd is None:
@@ -315,7 +355,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     continue
                 i += 1
                 continue
-            if tok in CMD_TABLE:
+            if tok in CMD_TABLE or tok in DISTILLED_GROUPS:
                 sub_cmd = tok
                 i += 1
                 continue
@@ -339,17 +379,33 @@ def main(argv: Optional[list[str]] = None) -> int:
         parser.print_help()
         return 0
 
-    sub_fn = CMD_TABLE.get(sub_cmd)
-    if sub_fn is None:
-        print(f"[docx_cli.py] unknown subcommand: {sub_cmd}", file=sys.stderr)
-        return 2
-    args.command = sub_cmd
+    # Legacy (CMD_TABLE) — fast-path REMAINDER dispatch
+    if sub_cmd in CMD_TABLE:
+        sub_fn = CMD_TABLE[sub_cmd]
+        args.command = sub_cmd
+        if getattr(args, "batch", None):
+            return _handle_batch(args, sub_cmd, rest)
+        return sub_fn(args, rest)
 
-    # batch 模式（--batch 提供时多文件并发）
-    if getattr(args, "batch", None):
-        return _handle_batch(args, sub_cmd, rest)
+    # Distilled (sub/*.py) — full argparse path
+    if sub_cmd in DISTILLED_GROUPS:
+        try:
+            full = parser.parse_args([sub_cmd] + rest)
+        except SystemExit as se:
+            return int(se.code) if isinstance(se.code, int) else 2
+        func = getattr(full, "func", None)
+        if func is None:
+            print(f"[docx_cli.py] no handler for {sub_cmd} (incomplete subcommand?)",
+                  file=sys.stderr)
+            return 2
+        try:
+            rc = func(full)
+            return int(rc) if isinstance(rc, int) else (0 if rc is None else 1)
+        except SystemExit as se:
+            return int(se.code) if isinstance(se.code, int) else 0
 
-    return sub_fn(args, rest)
+    print(f"[docx_cli.py] unknown subcommand: {sub_cmd}", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
