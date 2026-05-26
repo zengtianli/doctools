@@ -39,3 +39,57 @@
 ```bash
 pip3 install -r requirements.txt
 ```
+
+## 2026-05-25 qual-supply docx 脚本族 distill 落地
+
+26+ qual-supply 项目脚本 distill 上提到本 package, 让 eco-flow / shoreline / reclaim 等水利项目用 CLI 直接调用,不重复造轮子。
+
+**总入口**: `python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py <subcommand>`
+
+子命令 11 子族 30+ 命令:
+
+- `audit` (6): headings / fields / captions / images / table-pairing / bookmarks  —— read-only 检查
+- `freeze` (2): headings / fields  —— 合稿前冻结自动编号/字段域
+- `strip` (5): outlinelvl / style-outlinelvl / bookmarks / revisions / doc-protection
+- `renumber` (2): headings / h4-figures
+- `style` (3): body / table / caption  —— 套对集团命名样式族
+- `outline` (3): promote-h1 / demote-h2 / normalize-arabic
+- `caption` (3): number / number-by-style / pair
+- `blocks` (2): reorder / relocate
+- `chapter` (3): delete / delete-empty-h1 / convert-arabic
+- `header-footer` (1): add  —— 水利院标准页眉页脚
+- `image` (1): relink  —— 从源 docx 提媒体重嵌
+- 旧族保留: extract / check / snapshot / compare / track / bullet / image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx / quality-check / review / scan-sensitive / md (子组)
+
+**SSOT 索引**:
+
+- 子命令完整能力清单: `~/Dev/tools/dev/lib/tools/report/hq_capabilities.yaml` doctools.sub_capabilities
+- 样式族 profile SSOT: `~/Dev/tools/doctools/config/styles_registry.yaml` (zdwp / eco-flow / generic)
+- JSON schemas: `~/Dev/tools/doctools/schemas/{plan,decision,patch}.schema.json`
+- distill 详情: `~/Dev/tools/doctools/handoffs/2026-05-25-qual-supply-distill.md`
+
+**调用示例**:
+
+```bash
+# audit 类(read-only, 默认 dry-run)
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py audit headings X.docx --report /tmp/h.json
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py audit captions X.docx
+
+# freeze 类(合稿前)
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py freeze headings X.docx
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py freeze fields X.docx
+
+# renumber + style(--profile 选样式族)
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py renumber headings X.docx --profile eco-flow
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py style body X.docx --profile zdwp
+
+# 各 distilled 脚本仍可独立 CLI 跑
+python3 ~/Dev/tools/doctools/scripts/document/sub/audit_heading_numbers.py X.docx --report /tmp/h.json
+```
+
+**水利项目接入**(eco-flow 范例):
+
+1. 写 `~/Work/projects/zdwp/projects/eco-flow/scripts/eco-flow-styles.yaml` 或扩 `config/styles_registry.yaml` 加 `eco-flow` profile
+2. 调用 `docx_cli.py style body <docx> --profile eco-flow` 即套对样式族
+3. qual-supply 源脚本(`~/Work/projects/zdwp/projects/qual-supply/scripts/`)保留为 spike 备份(2026-06 验收用),已 cp 到总部不动源
+

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._dispatch import exec_script, _rest_argv
+from ._dispatch import exec_script, _rest_argv, get_or_add_group, get_or_add_subparsers
 
 
 _TARGETS = {
@@ -31,12 +31,14 @@ def _run(args) -> int:
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser(
-        "chapter",
-        help="chapter/H1 text ops (convert-arabic / delete-empty-h1)",
-    )
-    sp = p.add_subparsers(dest="chapter_target", metavar="<target>", required=True)
+    # Shared `chapter` group with blocks.py (W3, `chapter delete`).
+    p = get_or_add_group(subparsers, "chapter",
+                         "chapter ops (convert-arabic / delete-empty-h1 / delete)")
+    sp = get_or_add_subparsers(p, dest="chapter_target")
+    existing = getattr(sp, "choices", {}) or {}
     for t in _TARGETS:
+        if t in existing:
+            continue
         spp = sp.add_parser(t, help=f"chapter {t}", add_help=False)
         spp.add_argument("docx_path", nargs="?", help="target docx path")
         spp.add_argument("--dry-run", action="store_true")

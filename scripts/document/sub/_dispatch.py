@@ -73,6 +73,35 @@ def exec_script(filename_stem: str, argv: list[str]) -> int:
             pass
 
 
+def get_or_add_group(subparsers, name: str, help_text: str = ""):
+    """Return existing top-level group parser if already registered, else add new.
+
+    Why: multiple distill batches (W1/W2/W3) each register `caption` / `chapter` /
+    `renumber` as their own group -> argparse raises ArgumentError on duplicate.
+    This helper lets each module's register() share the same group parent so
+    targets from different sources coexist (e.g. `caption number` from W1,
+    `caption pair` from W3, `caption number-by-style` from W2).
+    """
+    # argparse subparsers actions expose `choices` (name -> parser map)
+    existing = getattr(subparsers, "choices", None) or getattr(subparsers, "_name_parser_map", {})
+    if name in existing:
+        return existing[name]
+    return subparsers.add_parser(name, help=help_text)
+
+
+def get_or_add_subparsers(group_parser, dest: str, metavar: str = "<target>", required: bool = True):
+    """Return existing sub-subparsers action on a group parser, else add new.
+
+    Why: when get_or_add_group returns an existing parser, calling
+    `parser.add_subparsers()` again raises ArgumentError. We introspect
+    `_actions` to detect and reuse.
+    """
+    for act in group_parser._actions:
+        if act.__class__.__name__ == "_SubParsersAction":
+            return act
+    return group_parser.add_subparsers(dest=dest, metavar=metavar, required=required)
+
+
 def _rest_argv(args) -> list[str]:
     """Extract argparse Namespace -> argv list for forwarding to standalone script."""
     argv: list[str] = []

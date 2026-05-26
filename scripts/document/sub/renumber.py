@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._dispatch import exec_script, _rest_argv
+from ._dispatch import exec_script, _rest_argv, get_or_add_group, get_or_add_subparsers
 
 
 _TARGETS = {
@@ -19,7 +19,7 @@ _TARGETS = {
 
 
 def _run(args) -> int:
-    target = getattr(args, "renumber_target", None)
+    target = getattr(args, "renumber_target", None) or getattr(args, "renumber_cmd", None)
     script = _TARGETS.get(target)
     if script is None:
         print(f"[sub.renumber] unknown target: {target}; choices={list(_TARGETS)}")
@@ -28,12 +28,13 @@ def _run(args) -> int:
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser(
-        "renumber",
-        help="renumber headings + caption numbers by physical order",
-    )
-    sp = p.add_subparsers(dest="renumber_target", metavar="<target>", required=True)
+    # Shared `renumber` group with styles.py (W2, `renumber h4-figures`).
+    p = get_or_add_group(subparsers, "renumber", "renumber headings + caption numbers")
+    sp = get_or_add_subparsers(p, dest="renumber_target")
+    existing = getattr(sp, "choices", {}) or {}
     for t in _TARGETS:
+        if t in existing:
+            continue
         spp = sp.add_parser(t, help=f"renumber {t}", add_help=False)
         spp.add_argument("docx_path", nargs="?", help="target docx path")
         spp.add_argument("--dry-run", action="store_true")

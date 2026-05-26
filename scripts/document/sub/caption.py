@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 
-from ._dispatch import exec_script, _rest_argv
+from ._dispatch import exec_script, _rest_argv, get_or_add_group, get_or_add_subparsers
 
 
 _TARGETS = {
@@ -31,12 +31,13 @@ def _run(args) -> int:
 
 
 def register(subparsers) -> None:
-    p = subparsers.add_parser(
-        "caption",
-        help="caption ops (number table/figure captions)",
-    )
-    sp = p.add_subparsers(dest="caption_target", metavar="<target>", required=True)
+    # Conflict-tolerant: shared `caption` group with captions.py (W3, pair) +
+    # styles.py (W2, number-by-style). Use shared `caption_target` dest.
+    p = get_or_add_group(subparsers, "caption", "caption ops (number / pair / number-by-style)")
+    sp = get_or_add_subparsers(p, dest="caption_target")
     for t in _TARGETS:
+        if t in (getattr(sp, "choices", {}) or {}):
+            continue  # already registered by another module
         spp = sp.add_parser(t, help=f"caption {t}", add_help=False)
         spp.add_argument("docx_path", nargs="?", help="target docx path")
         spp.add_argument("--dry-run", action="store_true")
