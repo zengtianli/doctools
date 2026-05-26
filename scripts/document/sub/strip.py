@@ -1,4 +1,4 @@
-"""strip.py — group module: strip stale/polluting docx elements (5 subcommands)
+"""strip.py — group module: strip stale/polluting docx elements (7 subcommands)
 
 Subcommands:
   strip outlinelvl         ← strip_outlinelvl_from_captions.py
@@ -12,6 +12,11 @@ Subcommands:
                               clean tracked changes / comments
   strip doc-protection     ← strip_doc_protection.py
                               remove <w:documentProtection> from settings.xml
+  strip orphan-media       ← strip_orphan_media.py  (2026-05-26 added)
+                              remove word/media/* not referenced by any rId
+  strip empty-captions     ← strip_empty_captions.py  (2026-05-26 added)
+                              remove caption-style paragraphs that are strict-empty
+                              (no text, no inline drawing, no field)
 """
 from __future__ import annotations
 
@@ -26,7 +31,21 @@ _TARGETS = {
     "bookmarks":          "strip_bookmarks",
     "revisions":          "strip_revisions",
     "doc-protection":     "strip_doc_protection",
+    "orphan-media":       "strip_orphan_media",
+    "empty-captions":     "strip_empty_captions",
 }
+
+# targets that additionally support -o/--output (write to new path, leave original)
+_TARGETS_WITH_OUTPUT = {"orphan-media", "empty-captions"}
+
+
+def _rest_argv_with_output(args) -> list[str]:
+    """Extend _rest_argv to also forward -o/--output if present."""
+    argv = _rest_argv(args)
+    out = getattr(args, "output", None)
+    if out:
+        argv.extend(["-o", str(out)])
+    return argv
 
 
 def _run(args) -> int:
@@ -35,13 +54,14 @@ def _run(args) -> int:
     if script is None:
         print(f"[sub.strip] unknown target: {target}; choices={list(_TARGETS)}")
         return 2
-    return exec_script(script, _rest_argv(args))
+    argv_fn = _rest_argv_with_output if target in _TARGETS_WITH_OUTPUT else _rest_argv
+    return exec_script(script, argv_fn(args))
 
 
 def register(subparsers) -> None:
     p = subparsers.add_parser(
         "strip",
-        help="strip stale/polluting docx elements (outlinelvl / bookmarks / revisions / doc-protection)",
+        help="strip stale/polluting docx elements (outlinelvl / bookmarks / revisions / doc-protection / orphan-media / empty-captions)",
     )
     sp = p.add_subparsers(dest="strip_target", metavar="<target>", required=True)
     for t in _TARGETS:
@@ -50,5 +70,8 @@ def register(subparsers) -> None:
         spp.add_argument("--dry-run", action="store_true")
         spp.add_argument("--no-backup", action="store_true")
         spp.add_argument("--report", help="write JSON report to this path")
+        if t in _TARGETS_WITH_OUTPUT:
+            spp.add_argument("-o", "--output", default=None,
+                             help="write to new path (do not modify original, no bak)")
         spp.add_argument("rest", nargs=argparse.REMAINDER, help="extra args forwarded to underlying script")
         spp.set_defaults(func=_run)
