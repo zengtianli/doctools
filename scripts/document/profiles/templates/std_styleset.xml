@@ -1,0 +1,163 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
+<w:styles xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" xmlns:w16sdtdh="http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" xmlns:w16sdtfl="http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock" xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex">
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="ZDWP0">
+    <w:name w:val="ZDWP表格内容"/>
+    <w:qFormat/>
+    <w:pPr>
+      <w:adjustRightInd w:val="0"/>
+      <w:snapToGrid w:val="0"/>
+      <w:jc w:val="center"/>
+    </w:pPr>
+    <w:rPr>
+      <w:kern w:val="2"/>
+      <w:sz w:val="22"/>
+      <w:szCs w:val="24"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="ZDWP1">
+    <w:name w:val="ZDWP图名"/>
+    <w:basedOn w:val="a"/>
+    <w:link w:val="00"/>
+    <w:qFormat/>
+    <w:pPr>
+      <w:ind w:firstLineChars="0" w:firstLine="0"/>
+      <w:jc w:val="center"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:bCs/>
+      <w:snapToGrid w:val="0"/>
+      <w:kern w:val="0"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="ZDWP2">
+    <w:name w:val="ZDWP 表名"/>
+    <w:basedOn w:val="a"/>
+    <w:link w:val="01"/>
+    <w:qFormat/>
+    <w:pPr>
+      <w:ind w:firstLine="471"/>
+    </w:pPr>
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman"/>
+      <w:b/>
+      <w:snapToGrid w:val="0"/>
+      <w:kern w:val="0"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="ZDWP3">
+    <w:name w:val="ZDWP正文"/>
+    <w:basedOn w:val="a"/>
+    <w:link w:val="ZDWP4"/>
+    <w:qFormat/>
+    <w:rsid w:val="0088512A"/>
+    <w:pPr>
+      <w:autoSpaceDE w:val="0"/>
+      <w:autoSpaceDN w:val="0"/>
+      <w:adjustRightInd w:val="0"/>
+      <w:snapToGrid w:val="0"/>
+      <w:spacing w:line="360" w:lineRule="auto"/>
+      <w:ind w:firstLine="549"/>
+      <w:textAlignment w:val="baseline"/>
+    </w:pPr>
+    <w:rPr>
+      <w:rFonts w:cs="Times New Roman (正文 CS 字体)"/>
+      <w:snapToGrid w:val="0"/>
+      <w:kern w:val="0"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="ZDWP5">
+    <w:name w:val="ZDWP附表"/>
+    <w:basedOn w:val="3"/>
+    <w:qFormat/>
+    <w:rsid w:val="00C5327F"/>
+    <w:rPr>
+      <w:rFonts w:eastAsia="黑体"/>
+      <w:snapToGrid w:val="0"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="zdwp00">
+    <w:name w:val="zdwp题目0"/>
+    <w:basedOn w:val="a"/>
+    <w:qFormat/>
+    <w:rsid w:val="00FF339A"/>
+    <w:pPr>
+      <w:adjustRightInd w:val="0"/>
+      <w:ind w:firstLineChars="0" w:firstLine="0"/>
+      <w:jc w:val="center"/>
+    </w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="方正大标宋简体" w:eastAsia="方正大标宋简体" w:cs="Times New Roman"/>
+      <w:bCs/>
+      <w:snapToGrid w:val="0"/>
+      <w:color w:val="000000"/>
+      <w:spacing w:val="-20"/>
+      <w:kern w:val="0"/>
+      <w:sz w:val="52"/>
+      <w:szCs w:val="52"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="zdwp10">
+    <w:name w:val="zdwp题目1"/>
+    <w:basedOn w:val="a"/>
+    <w:qFormat/>
+    <w:rsid w:val="00FF339A"/>
+    <w:pPr>
+      <w:adjustRightInd w:val="0"/>
+      <w:ind w:firstLineChars="0" w:firstLine="0"/>
+      <w:jc w:val="center"/>
+    </w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体" w:cs="Times New Roman"/>
+      <w:bCs/>
+      <w:snapToGrid w:val="0"/>
+      <w:color w:val="000000"/>
+      <w:spacing w:val="-20"/>
+      <w:kern w:val="0"/>
+      <w:sz w:val="44"/>
+      <w:szCs w:val="44"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="zdwp6">
+    <w:name w:val="zdwp作者"/>
+    <w:basedOn w:val="a"/>
+    <w:qFormat/>
+    <w:rsid w:val="00FF339A"/>
+    <w:pPr>
+      <w:adjustRightInd w:val="0"/>
+      <w:spacing w:line="360" w:lineRule="auto"/>
+      <w:ind w:firstLineChars="810" w:firstLine="2548"/>
+      <w:jc w:val="left"/>
+    </w:pPr>
+    <w:rPr>
+      <w:snapToGrid w:val="0"/>
+      <w:kern w:val="0"/>
+      <w:sz w:val="32"/>
+      <w:szCs w:val="32"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:customStyle="1" w:styleId="zdwp7">
+    <w:name w:val="zdwp封面日期"/>
+    <w:basedOn w:val="a"/>
+    <w:qFormat/>
+    <w:rsid w:val="00FF339A"/>
+    <w:pPr>
+      <w:autoSpaceDE w:val="0"/>
+      <w:autoSpaceDN w:val="0"/>
+      <w:adjustRightInd w:val="0"/>
+      <w:ind w:firstLineChars="0" w:firstLine="0"/>
+      <w:jc w:val="center"/>
+      <w:textAlignment w:val="baseline"/>
+    </w:pPr>
+    <w:rPr>
+      <w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体" w:cs="Times New Roman"/>
+      <w:b/>
+      <w:bCs/>
+      <w:snapToGrid w:val="0"/>
+      <w:spacing w:val="10"/>
+      <w:kern w:val="0"/>
+      <w:sz w:val="36"/>
+      <w:szCs w:val="36"/>
+    </w:rPr>
+  </w:style>
+</w:styles>

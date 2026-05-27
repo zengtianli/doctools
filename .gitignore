@@ -2,7 +2,11 @@ __pycache__/
 *.pyc
 .DS_Store
 .ruff_cache/
-templates/
+/templates/
+
+# Allow profile-shipped style XML templates (SSOT for std_styleset etc.)
+!scripts/document/profiles/templates/
+!scripts/document/profiles/templates/**
 
 # Baseline (auto-added by /groom)
 *.py[cod]

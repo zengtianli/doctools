@@ -520,6 +520,15 @@ def _apply_body_impl(doc, profile: StylesProfile, dry_run: bool) -> dict:
 
 
 def cmd_body(args) -> int:
+    # ── TEMPLATE INJECTION MODE (2026-05-26) ──────────────────────────────────
+    # `style body --template std` 只注入预设样式骨架, 不跑启发式 body-apply。
+    # 用例: 全裸 docx (无 ZDWP 系列样式) 先打底, 再跑 `styleset restore` 不抛
+    # "ZDWP正文 not found". 与 body 启发式正交 — 用户想要套段样式再单跑
+    # `style body X.docx --profile zdwp` 即可。
+    tmpl = getattr(args, "template", None)
+    if tmpl:
+        return _cmd_template_inject(args)
+
     profile = load_profile(args.profile)
     src = _common_setup(args)
     doc = Document(str(src))
@@ -583,6 +592,186 @@ def cmd_body(args) -> int:
           f"skipped_protected={sum(stats['skipped_protected'].values())} "
           f"skipped_unknown={sum(stats['skipped_unknown_style'].values())} "
           f"zdwp_next={next_status}")
+    return 0
+
+
+# =============================================================================
+# style body --template std — XML 骨架注入 (2026-05-26)
+# =============================================================================
+# 全裸 docx (fresh md2word 等无 ZDWP 系列样式) 用此打底 9 段样式 + 再跑
+# `styleset restore` 即可走 9-step 不抛 "style ZDWP正文 not found".
+#
+# 模板来源: profiles/templates/std_styleset.xml = 磐安 v3 抽出的 9 个 <w:style>
+# 节点 (ZDWP正文/ZDWP图名/ZDWP 表名/ZDWP附表/zdwp题目0/zdwp题目1/zdwp作者/
+# zdwp封面日期/ZDWP表格内容). 注入时:
+#   - 跳过已存在 (按 styleId + name 双键查)
+#   - basedOn/link/next 引用了目标 docx 里没有的 styleId → 重定向到 docx 的
+#     Normal styleId; 若仍找不到对应字符样式 (link) 则删 link 元素
+#
+# 与 styleset restore 解耦: 这里只补 styles.xml 定义, 不动 paragraph.
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "profiles" / "templates"
+
+# 9 std styles (按磐安 v3 抽出, name 即 SSOT)
+STD_STYLE_NAMES = (
+    "ZDWP表格内容", "ZDWP图名", "ZDWP 表名", "ZDWP正文", "ZDWP附表",
+    "zdwp题目0", "zdwp题目1", "zdwp作者", "zdwp封面日期",
+)
+
+
+def _read_template_xml(name: str) -> etree._Element:
+    """读 profiles/templates/<name>_styleset.xml, 返回 <w:styles> root."""
+    p = TEMPLATE_DIR / f"{name}_styleset.xml"
+    if not p.exists():
+        raise FileNotFoundError(f"template not found: {p}")
+    return etree.fromstring(p.read_bytes())
+
+
+def _docx_styles_index(styles_root) -> tuple[dict, dict, str]:
+    """返回 (id2el, name2el, normal_style_id).
+
+    name2el 用于 'name 已存在' 检测; id2el 用于 'basedOn/link 引用 sid 存在性'
+    检测; normal_style_id = name=='Normal' 的 styleId (fallback 'Normal').
+    """
+    id2el = {}
+    name2el = {}
+    normal_sid = None
+    for st in styles_root.findall(f"{W}style"):
+        sid = st.get(f"{W}styleId")
+        if sid:
+            id2el[sid] = st
+        nm_el = st.find(f"{W}name")
+        if nm_el is not None:
+            nm_v = nm_el.get(f"{W}val")
+            if nm_v:
+                name2el[nm_v] = st
+                if nm_v in ("Normal", "正文") and st.get(f"{W}type") == "paragraph":
+                    normal_sid = sid or normal_sid
+    return id2el, name2el, (normal_sid or "Normal")
+
+
+def _rewrite_refs(style_el, docx_id2el: dict, docx_normal_sid: str) -> list[tuple[str, str, str]]:
+    """重写 basedOn / link / next: 若引用的 styleId 不在 docx_id2el, 改写或删除.
+
+    返回 [(tag, old_val, new_val_or_'<deleted>'), ...] 用于汇报.
+    规则:
+        basedOn / next 段落引用 → 重写为 docx_normal_sid
+        link 字符样式引用 → 直接删除该元素 (字符样式不强制)
+    """
+    actions = []
+    for tag in ("basedOn", "next", "link"):
+        el = style_el.find(f"{W}{tag}")
+        if el is None:
+            continue
+        old = el.get(f"{W}val")
+        if not old or old in docx_id2el:
+            continue
+        if tag == "link":
+            style_el.remove(el)
+            actions.append((tag, old, "<deleted>"))
+        else:
+            el.set(f"{W}val", docx_normal_sid)
+            actions.append((tag, old, docx_normal_sid))
+    return actions
+
+
+def _inject_template_styles(docx_path: Path, template_name: str, dry_run: bool) -> dict:
+    """注入 template 的 styles 到 docx/word/styles.xml. python-docx 不便操作整个
+    styles part XML 树 → 直接用 zipfile 重写.
+    """
+    import zipfile
+    template_root = _read_template_xml(template_name)
+
+    # 读 docx 现有 styles.xml
+    with zipfile.ZipFile(str(docx_path), "r") as zin:
+        styles_bytes = zin.read("word/styles.xml")
+        names = zin.namelist()
+    docx_styles_root = etree.fromstring(styles_bytes)
+    id2el, name2el, normal_sid = _docx_styles_index(docx_styles_root)
+
+    added = []
+    skipped = []
+    ref_rewrites = []
+    for tpl_st in template_root.findall(f"{W}style"):
+        sid = tpl_st.get(f"{W}styleId")
+        nm_el = tpl_st.find(f"{W}name")
+        nm = nm_el.get(f"{W}val") if nm_el is not None else None
+        # 双键查重
+        if (sid and sid in id2el) or (nm and nm in name2el):
+            skipped.append({"styleId": sid, "name": nm, "reason": "exists"})
+            continue
+        # 深拷贝 (避免污染 template_root)
+        new_st = etree.fromstring(etree.tostring(tpl_st))
+        # 重写跨 docx 失效引用
+        acts = _rewrite_refs(new_st, id2el, normal_sid)
+        if acts:
+            ref_rewrites.append({"styleId": sid, "name": nm, "rewrites": acts})
+        docx_styles_root.append(new_st)
+        # 更新索引以便后续 template 内自引用 (本批 9 个之间未来扩展时)
+        if sid:
+            id2el[sid] = new_st
+        if nm:
+            name2el[nm] = new_st
+        added.append({"styleId": sid, "name": nm})
+
+    result = {
+        "template": template_name,
+        "added": added,
+        "skipped": skipped,
+        "ref_rewrites": ref_rewrites,
+        "docx_normal_sid": normal_sid,
+        "dry_run": dry_run,
+    }
+    if dry_run or not added:
+        return result
+
+    # 写回 docx — zip rebuild (替换 word/styles.xml)
+    new_styles_bytes = etree.tostring(
+        docx_styles_root, xml_declaration=True, encoding="UTF-8", standalone=True
+    )
+    import os
+    tmp_path = docx_path.with_suffix(docx_path.suffix + ".tmp")
+    with zipfile.ZipFile(str(docx_path), "r") as zin, \
+         zipfile.ZipFile(str(tmp_path), "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            if item.filename == "word/styles.xml":
+                zout.writestr(item, new_styles_bytes)
+            else:
+                zout.writestr(item, zin.read(item.filename))
+    os.replace(str(tmp_path), str(docx_path))
+    return result
+
+
+def _cmd_template_inject(args) -> int:
+    src = _common_setup(args)
+    tmpl = args.template
+    # 备份 (复用 _save_with_backup 的精神, 但我们直接 zip 操作, 单独 copy)
+    bak = None
+    if not args.dry_run and not args.no_backup:
+        bak = pick_backup_path(src)
+        shutil.copy2(src, bak)
+
+    try:
+        result = _inject_template_styles(src, tmpl, args.dry_run)
+    except FileNotFoundError as e:
+        print(f"[ERR] {e}", file=sys.stderr)
+        return 4
+
+    result["docx"] = str(src)
+    result["backup"] = str(bak) if bak else None
+    result["subcommand"] = "style body --template"
+    _emit_report(result, args)
+    n_add = len(result["added"])
+    n_skip = len(result["skipped"])
+    n_rw = len(result["ref_rewrites"])
+    suffix = " (dry-run)" if args.dry_run else ""
+    print(
+        f"[style body --template {tmpl}] file={src.name} "
+        f"added={n_add} skipped={n_skip} ref_rewrites={n_rw}{suffix}"
+    )
+    if n_add:
+        names = ", ".join(s["name"] or s["styleId"] for s in result["added"])
+        print(f"  + {names}")
     return 0
 
 
@@ -1288,6 +1477,17 @@ def register(subparsers):
             "--force",
             action="store_true",
             help="绕过 caption-risk guard (不推荐: profile/docx 漂移时会把正文套成 caption 自动编号)",
+        )
+        body_p.add_argument(
+            "--template",
+            choices=["std"],
+            default=None,
+            help=(
+                "注入 ZDWP 样式骨架到 docx (跳过已存在). 'std' = 磐安 v3 抽出的"
+                " 9 段样式 (ZDWP正文/图名/表名/附表/题目0/1/作者/封面日期/表格内容). "
+                "用例: 全裸 docx (无 ZDWP 系列) 先 --template std 打底, 再跑 "
+                "`styleset restore` 不抛 'ZDWP正文 not found'."
+            ),
         )
         body_p.set_defaults(func=cmd_body)
 
