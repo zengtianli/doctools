@@ -1007,11 +1007,16 @@ def cmd_style_create(args) -> int:
         print("[ERR] --base / --new-id / --new-name 都必须给", file=sys.stderr)
         return 2
 
+    allow_name_collision = bool(getattr(args, "allow_name_collision", False))
+
     stats_holder = {
         "base_found": False,
         "base_styleId": None,
         "created": False,
         "collision": False,
+        "collision_kind": None,  # 'styleId' | 'name' | None
+        "collision_existing_id": None,
+        "reason": None,
     }
 
     def _work(doc):
@@ -1029,15 +1034,46 @@ def cmd_style_create(args) -> int:
                     base_el = st
                     break
         if base_el is None:
+            stats_holder["reason"] = f"base style {base!r} not found"
             return stats_holder
         stats_holder["base_found"] = True
         stats_holder["base_styleId"] = base_el.get(qn("w:styleId"))
 
-        # collision check: new_id already exists?
+        # collision check 1: styleId already exists? (always skip — idempotent)
         for st in styles_el.findall(qn("w:style")):
             if st.get(qn("w:styleId")) == new_id:
                 stats_holder["collision"] = True
+                stats_holder["collision_kind"] = "styleId"
+                stats_holder["collision_existing_id"] = new_id
+                stats_holder["reason"] = (
+                    f"styleId {new_id!r} already exists, skipping create — idempotent"
+                )
+                print(
+                    f"INFO: styleId {new_id!r} already exists, skipping create — idempotent",
+                    file=sys.stderr,
+                )
                 return stats_holder
+
+        # collision check 2: new_name already used by some existing style?
+        # default: skip + idempotent; pass --allow-name-collision to force-create.
+        if not allow_name_collision:
+            for st in styles_el.findall(qn("w:style")):
+                nm = st.find(qn("w:name"))
+                if nm is not None and nm.get(qn("w:val")) == new_name:
+                    existing_id = st.get(qn("w:styleId"))
+                    stats_holder["collision"] = True
+                    stats_holder["collision_kind"] = "name"
+                    stats_holder["collision_existing_id"] = existing_id
+                    stats_holder["reason"] = (
+                        f"style name {new_name!r} already exists "
+                        f"(styleId={existing_id}), skipping create — idempotent"
+                    )
+                    print(
+                        f"INFO: style name {new_name!r} already exists "
+                        f"(styleId={existing_id}), skipping create — idempotent",
+                        file=sys.stderr,
+                    )
+                    return stats_holder
 
         # deepcopy + 改 styleId + 改 name + 改 type
         new_el = etree.fromstring(etree.tostring(base_el))
@@ -1090,7 +1126,8 @@ def cmd_style_create(args) -> int:
     _emit_report(report, args)
     print(f"[fix style-create] base={base!r} new_id={new_id!r} new_name={new_name!r} "
           f"base_found={stats_holder['base_found']} "
-          f"collision={stats_holder['collision']} "
+          f"collision={stats_holder['collision']}"
+          f"{('('+stats_holder['collision_kind']+')') if stats_holder['collision_kind'] else ''} "
           f"created={stats_holder['created']} "
           f"violations={len(violations)} refused={refused}")
     if stats_holder["collision"]:
@@ -1174,6 +1211,9 @@ def register(subparsers) -> None:
             sp.add_argument("--type", dest="type", default="paragraph",
                             choices=["paragraph", "character", "table", "numbering"],
                             help="新 style 类型 (default paragraph)")
+            sp.add_argument("--allow-name-collision", dest="allow_name_collision",
+                            action="store_true",
+                            help="允许 .name 已被现存样式占用时仍强制创建 (旧行为, 同名不同 styleId 共存)")
         sp.set_defaults(func=fn)
 
 
