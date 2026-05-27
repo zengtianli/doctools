@@ -173,7 +173,7 @@ def plan_slices(docx_path: Path, include_frontmatter: bool):
                 "end": sect_idx,
                 "is_frontmatter": True,
             })
-    return slices, sect_idx
+    return slices, sect_idx, len(h1_positions)
 
 
 def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int) -> tuple[int, int]:
@@ -227,6 +227,11 @@ def main() -> int:
         "--dry-run", action="store_true",
         help="print plan only, don't write files",
     )
+    ap.add_argument(
+        "--allow-no-h1", action="store_true",
+        help="suppress unhealthy-docx fail-fast when 0 H1 detected (rarely needed; "
+             "default behavior is to FAIL and instruct user to run /docx health first)",
+    )
     args = ap.parse_args()
 
     src = Path(args.docx).expanduser().resolve()
@@ -235,8 +240,41 @@ def main() -> int:
         return 2
     out_dir = Path(args.out_dir).expanduser().resolve()
 
-    slices, sect_idx = plan_slices(src, args.include_frontmatter)
+    slices, sect_idx, h1_count = plan_slices(src, args.include_frontmatter)
+
+    # Health gate: 0 H1 detected = docx unhealthy signal (default fail-fast).
+    # Iron rule [[docx-split-fail-run-health-first]]: don't patch around bad data,
+    # tell the user to run /docx health first (scaffold already exists).
+    if h1_count == 0 and not args.allow_no_h1:
+        print(
+            "\n".join([
+                "",
+                "ERROR: 0 Heading-1 detected in body — docx likely UNHEALTHY.",
+                f"  file: {src}",
+                "",
+                "  Recognized H1 styles: " + ", ".join(sorted(H1_STYLES)),
+                "",
+                "  Likely causes:",
+                "    - chapter titles styled as Normal/body paragraphs (not Heading 1)",
+                "    - heading-level-skew (real H1 demoted to H2/H3/...)",
+                "    - caption-outline-pollution (figure/table captions stole H1 slot)",
+                "    - custom Chinese style name not in H1_STYLES whitelist",
+                "",
+                "  Fix path (scaffold already in place):",
+                f"    /docx health diagnose '{src}'    # see which病种 hits",
+                f"    /docx health full     '{src}'    # diagnose + auto-fix safe + re-diagnose",
+                "    # then re-run this split script",
+                "",
+                "  Escape hatch (rare): pass --allow-no-h1 if you really want the current behavior",
+                "  (emits only frontmatter.docx, requires --include-frontmatter).",
+                "",
+            ]),
+            file=sys.stderr,
+        )
+        return 3
+
     if not slices:
+        # h1_count > 0 path can't reach here; this is the --allow-no-h1 + no frontmatter case
         print(f"[split-by-h1] no H1 (and no frontmatter requested) — nothing to do")
         return 0
 

@@ -34,6 +34,8 @@ def _run(args) -> int:
         argv.append("--include-frontmatter")
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
+    if getattr(args, "allow_no_h1", False):
+        argv.append("--allow-no-h1")
     extra = getattr(args, "rest", None) or []
     argv.extend(str(x) for x in extra)
     return exec_script("split_by_h1", argv)
@@ -55,5 +57,8 @@ def register(subparsers) -> None:
                        help="emit content before first H1 as 00-frontmatter.docx")
     by_h1.add_argument("--dry-run", action="store_true",
                        help="print plan only, don't write files")
+    by_h1.add_argument("--allow-no-h1", action="store_true",
+                       help="suppress unhealthy-docx fail-fast (rare; default = "
+                            "FAIL on 0 H1 and tell user to run /docx health first)")
     by_h1.add_argument("rest", nargs=argparse.REMAINDER)
     by_h1.set_defaults(func=_run)
