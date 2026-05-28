@@ -49,6 +49,7 @@ from . import (
     freeze,
     header_footer,
     health,
+    health_split,
     images,
     legacy,
     md_merge,
@@ -76,6 +77,7 @@ __all__ = [
     "freeze",
     "header_footer",
     "health",
+    "health_split",
     "images",
     "legacy",
     "md_merge",
@@ -113,6 +115,7 @@ def register_all(subparsers) -> None:
         table,                                                                   # table structural ops (delete-rows, W4 2026-05-26)
         split,                                                                   # split docx by-h1 (distilled from eco-flow/taizhou-天台, W1 2026-05-26)
         fix_styleset,                                                            # style-set fix family + shape_contract gate (W13 2026-05-26)
+        health_split,                                                            # one-shot health + split thin wrapper (distilled from 业务模板 SOP, 2026-05-28)
         chapter, renumber, caption, captions, styles,                           # shared
     ):
         mod.register(subparsers)

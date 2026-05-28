@@ -353,7 +353,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     DISTILLED_GROUPS = {
         "audit", "audit-styleset", "styleset", "freeze", "strip", "header-footer", "chapter",
         "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
-        "pipeline", "health",
+        "pipeline", "health", "health-split",
         "section",    # section read/list (distilled from panan-rigid, 2026-05-26)
         "md-merge",   # merge MD content into DOCX section (distilled from panan-rigid, 2026-05-26)
         "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
