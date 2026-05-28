@@ -193,6 +193,17 @@ def _run(args) -> int:
     }
     _write_html_report(merged, summary, report_path)
 
+    # 6. (optional) fold by chapter: 每个 docx 挪进同名子目录, 便于下游
+    #    pipeline image-extract/table-extract 自动落到 <章>/images,tables/ 章内聚
+    if args.fold_by_chapter:
+        folded = 0
+        for f in sorted(out_dir.glob("*.docx")):
+            sub = out_dir / f.stem
+            sub.mkdir(exist_ok=True)
+            f.rename(sub / f.name)
+            folded += 1
+        print(f"[health-split] fold-by-chapter: {folded} 章已挪进同名子目录")
+
     wall = time.perf_counter() - t0
     split_step = split_report.get("steps", {}).get("split-by-h1") or {}
     n_chapters = split_step.get("slices_emitted") or len(split_step.get("emitted", []) or []) or "?"
@@ -211,5 +222,6 @@ def register(subparsers) -> None:
     p.add_argument("--no-backup", action="store_true", help="跳过备份 (危险)")
     p.add_argument("--no-fix", action="store_true", help="health 不达锚也不跑 styleset restore (危险)")
     p.add_argument("--no-frontmatter", action="store_true", help="split 时不输出 00-frontmatter.docx")
+    p.add_argument("--fold-by-chapter", action="store_true", help="split 后每章 docx 挪进同名子目录 (便于下游 image/table extract 章内聚)")
     p.add_argument("--report", default=None, help="健康报告 HTML 输出路径 (default: <out-dir>/_health-report.html)")
     p.set_defaults(func=_run)
