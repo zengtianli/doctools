@@ -1,66 +1,50 @@
 #!/usr/bin/env python3
 # distilled from eco-flow/taizhou-天台 table extract need (2026-05-28)
-r"""extract_tables.py — 从 docx 抽出每张表为独立 docx。
+r"""extract_tables.py — 从 docx 抽出每张表为独立 docx (最小骨架策略).
 
-文件名 = 邻近 caption 段文字（如 "表2.2-1-水库基本情况.docx"）。
-保留原 docx 全套 styles / numbering / sectPr / page setup / rels / media
-(整套 zip parts 复制, 只改 document.xml 的 body), 与 split_by_h1.py 同套路。
+文件名 = 邻近 caption 段文字 (如 "表2.2-1-水库基本情况.docx") 或 fallback `table-XX`.
+
+**实现策略 (2026-05-28 重写)**:
+旧策略「shutil.copy 源 docx → 删 body 非目标元素」在部分 case 上 zip 损坏 / media
+瘦身未生效 (54MB), 已废.
+
+新策略「构造最小 docx 骨架」:
+    target.docx
+    ├── [Content_Types].xml       (静态模板)
+    ├── _rels/.rels               (静态模板, 只关联 word/document.xml)
+    └── word/
+        ├── _rels/document.xml.rels  (静态模板, styles/numbering/theme 3 rel)
+        ├── document.xml             (新构造: 源 namespace + <w:tbl> + sectPr)
+        ├── styles.xml               (从源 docx 原样复制)
+        ├── numbering.xml            (从源 docx 原样复制, 可缺)
+        └── theme/theme1.xml         (从源 docx 原样复制, 可缺)
+
+**不复制**: word/media/* · header* · footer* · comments* · footnotes · endnotes ·
+fontTable · settings · webSettings · customXml · docProps · embeddings.
+
+inline image (w:drawing/w:pict) → 保 XML 引用, **不**带 media, Word 显示断链占位符.
 
 CLI:
-    python3 scripts/document/sub/extract_tables.py \
-        --docx <path> --out-dir <dir> \
+    python3 scripts/document/sub/extract_tables.py \\
+        --docx <path> --out-dir <dir> \\
         [--name-pattern '{stem}.docx'] [--dry-run]
-
-算法:
-    1. 用 lxml 遍历 word/document.xml body, 找所有 <w:tbl> 元素位置
-    2. 每张表往前扫最近 1-2 段 <w:p>, 取以 "表" 开头 < 80 字符的 → caption
-       若前面没有, 往后扫 1 段; 再无 → fallback `table-{idx:02d}`
-    3. caption sanitize → 文件名 stem
-    4. shutil.copy 源 docx → 打开 copy, body 内只留目标 <w:tbl> + 它的 caption 段
-       + 末尾 <w:sectPr>, 删其余 → save
-    5. 重名加 `-2`, `-3` ...
 """
 from __future__ import annotations
 
 import argparse
 import re
-import shutil
 import sys
+import zipfile
 from pathlib import Path
 from typing import Optional
 
 try:
     from docx import Document
     from docx.oxml.ns import qn
+    from lxml import etree
 except ImportError:
-    print("ERROR: python-docx 未安装 (pip install python-docx)", file=sys.stderr)
+    print("ERROR: python-docx / lxml 未安装 (pip install python-docx lxml)", file=sys.stderr)
     sys.exit(2)
-
-
-def _load_strip_orphan_media():
-    """Load sibling strip_orphan_media.py robustly across invocation paths.
-
-    Tries (1) package-relative import, (2) sys.path top-level (when scripts/document
-    is on sys.path), (3) importlib spec by file path (when loaded via _dispatch).
-    """
-    try:
-        from . import strip_orphan_media as _som  # type: ignore
-        return _som
-    except (ImportError, ValueError):
-        pass
-    try:
-        import strip_orphan_media as _som  # type: ignore
-        return _som
-    except ImportError:
-        pass
-    import importlib.util
-    sib = Path(__file__).resolve().parent / "strip_orphan_media.py"
-    spec = importlib.util.spec_from_file_location("_extract_tables__strip_orphan_media", str(sib))
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {sib}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 _ILLEGAL_FILENAME_RE = re.compile(r'[/\\:*?"<>|\r\n\t]')
@@ -70,6 +54,92 @@ _MULTI_WS_RE = re.compile(r"\s+")
 _CAPTION_PREFIX_RE = re.compile(r"^\s*(?:表|Table\b)", re.IGNORECASE)
 _CAPTION_MAX_LEN = 80
 
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+# ---------- static skeleton templates ----------
+
+_CONTENT_TYPES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+  <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+</Types>
+"""
+
+_CONTENT_TYPES_XML_NO_NUMBERING = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
+</Types>
+"""
+
+_CONTENT_TYPES_XML_NO_THEME = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+</Types>
+"""
+
+_CONTENT_TYPES_XML_MIN = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>
+"""
+
+_ROOT_RELS_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>
+"""
+
+
+def _build_doc_rels(has_numbering: bool, has_theme: bool) -> str:
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
+    ]
+    next_id = 2
+    if has_numbering:
+        parts.append(
+            f'  <Relationship Id="rId{next_id}" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" '
+            'Target="numbering.xml"/>'
+        )
+        next_id += 1
+    if has_theme:
+        parts.append(
+            f'  <Relationship Id="rId{next_id}" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" '
+            'Target="theme/theme1.xml"/>'
+        )
+    parts.append('</Relationships>')
+    return "\n".join(parts) + "\n"
+
+
+def _pick_content_types(has_numbering: bool, has_theme: bool) -> str:
+    if has_numbering and has_theme:
+        return _CONTENT_TYPES_XML
+    if has_theme and not has_numbering:
+        return _CONTENT_TYPES_XML_NO_NUMBERING
+    if has_numbering and not has_theme:
+        return _CONTENT_TYPES_XML_NO_THEME
+    return _CONTENT_TYPES_XML_MIN
+
+
+# ---------- filename helpers ----------
 
 def sanitize_filename(name: str, max_len: int = 100) -> str:
     """Replace illegal filename chars with _, compress whitespace, strip, truncate."""
@@ -100,11 +170,7 @@ def _is_caption_like(text: str) -> bool:
 
 
 def _find_caption(children: list, tbl_idx: int) -> Optional[str]:
-    """Scan back up to 2 paragraphs, else forward 1, for a caption-like <w:p>.
-
-    Returns the caption text (raw, un-sanitized) or None.
-    """
-    # Backward up to 2 non-empty paragraphs
+    """Scan back up to 2 paragraphs, else forward 1, for a caption-like <w:p>."""
     seen_paras = 0
     for i in range(tbl_idx - 1, -1, -1):
         elem = children[i]
@@ -119,11 +185,10 @@ def _find_caption(children: list, tbl_idx: int) -> Optional[str]:
         if seen_paras >= 2:
             break
 
-    # Forward 1 paragraph (some templates put caption below the table)
     for i in range(tbl_idx + 1, len(children)):
         elem = children[i]
         if elem.tag == qn("w:tbl"):
-            break  # hit next table; stop
+            break
         if elem.tag != qn("w:p"):
             continue
         text = _paragraph_text(elem).strip()
@@ -131,23 +196,23 @@ def _find_caption(children: list, tbl_idx: int) -> Optional[str]:
             continue
         if _is_caption_like(text):
             return text
-        break  # first non-empty para wasn't a caption; give up
+        break
 
     return None
 
+
+# ---------- planning ----------
 
 def plan_extracts(docx_path: Path, doc=None) -> tuple[list[dict], int]:
     """Inspect docx → return (extracts, tbl_count).
 
     extracts: list[{idx, caption, stem, tbl_idx_in_body, caption_idx_in_body}]
-        caption_idx_in_body == -1 if no caption found (fallback to table-XX)
     """
     if doc is None:
         doc = Document(str(docx_path))
     body = doc.element.body
     children = list(body)
 
-    # Locate sectPr index (final node, exclude from scan)
     sect_idx = len(children)
     for i in range(len(children) - 1, -1, -1):
         if children[i].tag == qn("w:sectPr"):
@@ -168,17 +233,14 @@ def plan_extracts(docx_path: Path, doc=None) -> tuple[list[dict], int]:
         else:
             stem_raw = f"table-{idx_counter:02d}"
         stem = sanitize_filename(stem_raw)
-        # Disambiguate duplicates
         base_stem = stem
         n = used_stems.get(base_stem, 0)
         if n > 0:
             stem = f"{base_stem}-{n + 1}"
         used_stems[base_stem] = n + 1
 
-        # Determine caption_idx (the actual element index of the caption paragraph)
         caption_idx = -1
         if caption:
-            # Walk back to find the matching caption paragraph
             seen = 0
             for j in range(i - 1, -1, -1):
                 e2 = children[j]
@@ -194,7 +256,6 @@ def plan_extracts(docx_path: Path, doc=None) -> tuple[list[dict], int]:
                 if seen >= 2:
                     break
             if caption_idx == -1:
-                # try forward
                 for j in range(i + 1, len(children)):
                     e2 = children[j]
                     if e2.tag == qn("w:tbl"):
@@ -220,52 +281,147 @@ def plan_extracts(docx_path: Path, doc=None) -> tuple[list[dict], int]:
     return extracts, idx_counter
 
 
-def write_extract(
-    src_docx: Path,
+# ---------- minimal-skeleton writer ----------
+
+def _read_source_parts(src_docx: Path) -> dict:
+    """Read needed parts from source docx zip (single open).
+
+    Returns dict with keys: document_xml_root (lxml Element of <w:document>),
+        sect_pr_xml (bytes or None), styles_xml (bytes), numbering_xml (bytes or None),
+        theme_xml (bytes or None).
+    """
+    with zipfile.ZipFile(str(src_docx)) as z:
+        names = set(z.namelist())
+        doc_bytes = z.read("word/document.xml")
+        styles_bytes = z.read("word/styles.xml") if "word/styles.xml" in names else None
+        numbering_bytes = z.read("word/numbering.xml") if "word/numbering.xml" in names else None
+        theme_bytes = z.read("word/theme/theme1.xml") if "word/theme/theme1.xml" in names else None
+
+    # Parse document.xml; keep root element for namespace declarations + sectPr extraction.
+    root = etree.fromstring(doc_bytes)
+    # Locate body/sectPr (last child of body)
+    body = root.find(qn("w:body"))
+    sect_pr = None
+    if body is not None:
+        for child in reversed(list(body)):
+            if child.tag == qn("w:sectPr"):
+                sect_pr = child
+                break
+
+    return {
+        "doc_root": root,
+        "doc_body": body,
+        "sect_pr": sect_pr,
+        "styles": styles_bytes,
+        "numbering": numbering_bytes,
+        "theme": theme_bytes,
+    }
+
+
+def _build_minimal_document_xml(
+    doc_root,
+    tbl_elem,
+    caption_elem,
+    sect_pr,
+) -> bytes:
+    """Construct minimal word/document.xml with given table + optional caption + sectPr.
+
+    Re-uses root namespace declarations of source document.xml so any
+    namespaced attrs on the copied <w:tbl> still resolve.
+    """
+    # Build new root with same nsmap as source.
+    nsmap = dict(doc_root.nsmap)
+    new_root = etree.Element(qn("w:document"), nsmap=nsmap)
+    # Preserve mc:Ignorable etc. attributes from source root.
+    for k, v in doc_root.attrib.items():
+        new_root.set(k, v)
+    new_body = etree.SubElement(new_root, qn("w:body"))
+
+    # Deep-copy caption paragraph (if any) and table, sectPr.
+    from copy import deepcopy
+    if caption_elem is not None:
+        new_body.append(deepcopy(caption_elem))
+    new_body.append(deepcopy(tbl_elem))
+    if sect_pr is not None:
+        new_body.append(deepcopy(sect_pr))
+    else:
+        # Minimal sectPr fallback
+        etree.SubElement(new_body, qn("w:sectPr"))
+
+    return b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + etree.tostring(
+        new_root, xml_declaration=False, encoding="utf-8"
+    )
+
+
+def _has_inline_image(tbl_elem) -> bool:
+    """Detect inline images (drawing or pict) inside a table."""
+    drawing_tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing"
+    pict_tag = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pict"
+    for el in tbl_elem.iter():
+        if el.tag == drawing_tag or el.tag == pict_tag:
+            return True
+    return False
+
+
+def write_extract_minimal(
+    src_parts: dict,
     dst_docx: Path,
     tbl_idx: int,
     caption_idx: int,
-) -> tuple[int, int]:
-    """Copy src→dst, prune body to keep only target <w:tbl> (+ optional caption) + sectPr.
+    body_children_cache: list,
+) -> tuple[int, int, bool]:
+    """Write a minimal docx containing the target table + caption + sectPr only.
 
-    Returns (tables_in_extracted, file_bytes).
+    Returns (tbl_count_in_output, file_bytes, has_inline_image).
     """
     dst_docx.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(str(src_docx), str(dst_docx))
-    doc = Document(str(dst_docx))
-    body = doc.element.body
-    children = list(body)
 
-    # Identify sectPr (last)
-    sect_elem = None
-    for i in range(len(children) - 1, -1, -1):
-        if children[i].tag == qn("w:sectPr"):
-            sect_elem = children[i]
-            break
+    tbl_elem = body_children_cache[tbl_idx]
+    caption_elem = body_children_cache[caption_idx] if caption_idx >= 0 else None
+    inline_img = _has_inline_image(tbl_elem)
 
-    keep_indices = {tbl_idx}
-    if caption_idx >= 0:
-        keep_indices.add(caption_idx)
+    doc_xml = _build_minimal_document_xml(
+        src_parts["doc_root"], tbl_elem, caption_elem, src_parts["sect_pr"]
+    )
 
-    for i, elem in enumerate(children):
-        if elem is sect_elem:
-            continue
-        if i not in keep_indices:
-            body.remove(elem)
-    doc.save(str(dst_docx))
+    has_numbering = src_parts["numbering"] is not None
+    has_theme = src_parts["theme"] is not None
 
-    # Post-process: strip orphan media (54MB → <100KB typical).
-    # deep=True because table-extract裁 body 不裁 rels, 浅扫会判 0 orphan.
-    _som = _load_strip_orphan_media()
-    scan = _som.scan_orphans(dst_docx, deep=True)
-    if scan["orphan_count"] > 0:
-        _som.rewrite_skip(dst_docx, dst_docx, set(scan["orphans"]))
+    content_types = _pick_content_types(has_numbering, has_theme)
+    doc_rels = _build_doc_rels(has_numbering, has_theme)
 
-    doc2 = Document(str(dst_docx))
-    tbl_count = len(doc2.tables)
+    # Write zip.
+    with zipfile.ZipFile(str(dst_docx), "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", _ROOT_RELS_XML)
+        z.writestr("word/_rels/document.xml.rels", doc_rels)
+        z.writestr("word/document.xml", doc_xml)
+        if src_parts["styles"] is not None:
+            z.writestr("word/styles.xml", src_parts["styles"])
+        else:
+            # Should never hit (Word docs always have styles.xml) but degrade safely.
+            z.writestr(
+                "word/styles.xml",
+                b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                b'<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>',
+            )
+        if has_numbering:
+            z.writestr("word/numbering.xml", src_parts["numbering"])
+        if has_theme:
+            z.writestr("word/theme/theme1.xml", src_parts["theme"])
+
+    # Verify with python-docx.
+    try:
+        doc2 = Document(str(dst_docx))
+        tbl_count = len(doc2.tables)
+    except Exception:
+        tbl_count = 0
+
     file_bytes = dst_docx.stat().st_size
-    return tbl_count, file_bytes
+    return tbl_count, file_bytes, inline_img
 
+
+# ---------- runner / CLI ----------
 
 def run_extract(
     src_docx: Path,
@@ -296,19 +452,29 @@ def run_extract(
         return {"tbl_count": tbl_count, "extracts_planned": plan, "dry_run": True}
 
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Read source parts ONCE (avoid re-opening zip per table).
+    src_parts = _read_source_parts(src)
+    body_children = list(src_parts["doc_body"]) if src_parts["doc_body"] is not None else []
+
     emitted = []
     failed = []
+    inline_img_count = 0
     for e in extracts:
         fname = name_pattern.format(stem=e["stem"], idx=e["idx"])
         dst = out_dir / fname
         try:
-            tc, nbytes = write_extract(
-                src, dst, e["tbl_idx_in_body"], e["caption_idx_in_body"],
+            tc, nbytes, has_img = write_extract_minimal(
+                src_parts, dst, e["tbl_idx_in_body"], e["caption_idx_in_body"],
+                body_children,
             )
+            if has_img:
+                inline_img_count += 1
             emitted.append({
                 "idx": e["idx"], "fname": fname,
                 "tables": tc, "bytes": nbytes,
                 "caption": e["caption"],
+                "inline_image": has_img,
             })
         except Exception as exc:
             failed.append({
@@ -319,6 +485,7 @@ def run_extract(
         "tbl_count": tbl_count,
         "extracts_emitted": len(emitted),
         "extracts_failed": len(failed),
+        "inline_image_count": inline_img_count,
         "out_dir": str(out_dir),
         "emitted": emitted,
         "failed": failed,
@@ -327,7 +494,7 @@ def run_extract(
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Extract each table in a DOCX as an independent DOCX file "
+        description="Extract each table in a DOCX as an independent minimal DOCX "
                     "(filename = neighboring caption text, or table-XX fallback).",
     )
     ap.add_argument("--docx", required=True, help="input docx path")
@@ -365,20 +532,31 @@ def main() -> int:
         return 0
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    src_parts = _read_source_parts(src)
+    body_children = list(src_parts["doc_body"]) if src_parts["doc_body"] is not None else []
+
     n_ok = 0
+    inline_img_count = 0
     for e in extracts:
         fname = args.name_pattern.format(stem=e["stem"], idx=e["idx"])
         dst = out_dir / fname
         try:
-            tc, nbytes = write_extract(
-                src, dst, e["tbl_idx_in_body"], e["caption_idx_in_body"],
+            tc, nbytes, has_img = write_extract_minimal(
+                src_parts, dst, e["tbl_idx_in_body"], e["caption_idx_in_body"],
+                body_children,
             )
-            print(f"  [{e['idx']:>2}] {fname}  · {tc} tables · {nbytes:,} bytes")
+            if has_img:
+                inline_img_count += 1
+            img_flag = " [img]" if has_img else ""
+            print(f"  [{e['idx']:>2}] {fname}  · {tc} tables · {nbytes:,} bytes{img_flag}")
             n_ok += 1
         except Exception as exc:
             print(f"  [{e['idx']:>2}] FAILED {fname}: {type(exc).__name__}: {exc}",
                   file=sys.stderr)
     print(f"OK: {n_ok} files written to {out_dir}")
+    if inline_img_count:
+        print(f"NOTE: {inline_img_count} table(s) reference inline images; "
+              "the minimal docx omits media files (Word will show broken refs).")
     return 0 if n_ok == len(extracts) else 1
 
 
