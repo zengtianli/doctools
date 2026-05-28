@@ -101,6 +101,19 @@ def register(subparsers) -> None:
                        help="split-by-h1: suppress fail-fast when 0 H1 detected")
     run_p.add_argument("--split-dry-run", action="store_true",
                        help="split-by-h1: print plan only, don't write files")
+    # image-extract / table-extract step options
+    run_p.add_argument("--image-extract-out-dir", default=None,
+                       help="image-extract output dir "
+                            "(default: <docx-parent>/images/)")
+    run_p.add_argument("--image-extract-quiet", action="store_true", default=True,
+                       help="image-extract: suppress per-file log (default True in pipeline)")
+    run_p.add_argument("--table-extract-out-dir", default=None,
+                       help="table-extract output dir "
+                            "(default: <docx-parent>/tables/)")
+    run_p.add_argument("--table-extract-name-pattern", default=None,
+                       help="table-extract filename pattern (default '{stem}.docx')")
+    run_p.add_argument("--table-extract-dry-run", action="store_true",
+                       help="table-extract: print plan only, don't write files")
     run_p.set_defaults(func=run)
 
 
@@ -157,6 +170,11 @@ def run(args: argparse.Namespace) -> int:
                 include_frontmatter=getattr(args, "include_frontmatter", False),
                 allow_no_h1=getattr(args, "allow_no_h1", False),
                 split_dry_run=getattr(args, "split_dry_run", False),
+                image_extract_out_dir=getattr(args, "image_extract_out_dir", None),
+                image_extract_quiet=getattr(args, "image_extract_quiet", True),
+                table_extract_out_dir=getattr(args, "table_extract_out_dir", None),
+                table_extract_name_pattern=getattr(args, "table_extract_name_pattern", None),
+                table_extract_dry_run=getattr(args, "table_extract_dry_run", False),
             )
             try:
                 rep = run_pipeline(
@@ -184,6 +202,11 @@ def run(args: argparse.Namespace) -> int:
             "include_frontmatter": getattr(args, "include_frontmatter", False),
             "allow_no_h1": getattr(args, "allow_no_h1", False),
             "split_dry_run": getattr(args, "split_dry_run", False),
+            "image_extract_out_dir": getattr(args, "image_extract_out_dir", None),
+            "image_extract_quiet": getattr(args, "image_extract_quiet", True),
+            "table_extract_out_dir": getattr(args, "table_extract_out_dir", None),
+            "table_extract_name_pattern": getattr(args, "table_extract_name_pattern", None),
+            "table_extract_dry_run": getattr(args, "table_extract_dry_run", False),
         }
         results = run_pipeline_parallel(
             docx_paths, args.steps,

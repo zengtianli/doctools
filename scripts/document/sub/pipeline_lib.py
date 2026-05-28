@@ -233,6 +233,67 @@ def _builtin_health_diagnose(doc, args) -> dict:
     }
 
 
+def _builtin_image_extract(doc, args) -> dict:
+    """Extract embedded images from docx by neighboring caption.
+
+    Read-only — does not mutate parsed doc. Reuses parsed doc only for API
+    uniformity (image_extract parses zip directly via lxml + zipfile).
+
+    Args:
+      args.docx — source docx path (injected by pipeline driver)
+      args.image_extract_out_dir — explicit out dir; if None → <docx-parent>/images/
+      args.image_extract_quiet — suppress per-file log lines (default True in pipeline)
+    """
+    from . import image_extract
+    docx_path = Path(str(getattr(args, "docx", "")))
+    out_dir = getattr(args, "image_extract_out_dir", None)
+    if not out_dir:
+        out_dir = docx_path.parent / "images"
+    else:
+        out_dir = Path(str(out_dir))
+    quiet = bool(getattr(args, "image_extract_quiet", True))
+    exit_code = image_extract.extract_images(docx_path, out_dir, quiet=quiet)
+    # Count what landed
+    n_files = 0
+    if out_dir.is_dir():
+        n_files = sum(1 for p in out_dir.iterdir() if p.is_file())
+    return {
+        "exit_code": exit_code,
+        "out_dir": str(out_dir),
+        "files_in_out_dir": n_files,
+    }
+
+
+def _builtin_table_extract(doc, args) -> dict:
+    """Extract each table in docx as an independent minimal docx (caption-named).
+
+    Read-only against source — does not mutate parsed doc. Reuses parsed doc
+    for plan_extracts() to avoid re-parsing.
+
+    Args:
+      args.docx — source docx path (injected by pipeline driver)
+      args.table_extract_out_dir — explicit out dir; if None → <docx-parent>/tables/
+      args.table_extract_name_pattern — filename pattern (default '{stem}.docx')
+      args.table_extract_dry_run — print plan only, don't write files
+    """
+    from . import extract_tables
+    docx_path = Path(str(getattr(args, "docx", "")))
+    out_dir = getattr(args, "table_extract_out_dir", None)
+    if not out_dir:
+        out_dir = docx_path.parent / "tables"
+    else:
+        out_dir = Path(str(out_dir))
+    name_pattern = getattr(args, "table_extract_name_pattern", None) or "{stem}.docx"
+    dry_run = bool(getattr(args, "table_extract_dry_run", False))
+    return extract_tables.run_extract(
+        src_docx=docx_path,
+        out_dir=out_dir,
+        dry_run=dry_run,
+        name_pattern=name_pattern,
+        doc=doc,
+    )
+
+
 def _builtin_split_by_h1(doc, args) -> dict:
     """Split docx by H1 reusing the already-parsed doc for slice planning.
 
@@ -268,6 +329,8 @@ _BUILTIN_STEPS: dict[str, tuple[str, Callable[..., dict]]] = {
     "audit-styleset-all": ("doc", _builtin_audit_styleset_all),
     "split-by-h1":        ("doc", _builtin_split_by_h1),
     "health-diagnose":    ("doc", _builtin_health_diagnose),
+    "image-extract":      ("doc", _builtin_image_extract),
+    "table-extract":      ("doc", _builtin_table_extract),
 }
 
 # Read-only built-ins (don't mutate parsed doc → no need to save source docx).
@@ -276,6 +339,8 @@ _NON_MUTATING_STEPS: set[str] = {
     "audit-styleset-all",
     "split-by-h1",
     "health-diagnose",
+    "image-extract",
+    "table-extract",
 }
 
 
@@ -407,6 +472,11 @@ def _worker(payload: dict) -> dict:
         include_frontmatter=payload.get("include_frontmatter", False),
         allow_no_h1=payload.get("allow_no_h1", False),
         split_dry_run=payload.get("split_dry_run", False),
+        image_extract_out_dir=payload.get("image_extract_out_dir"),
+        image_extract_quiet=payload.get("image_extract_quiet", True),
+        table_extract_out_dir=payload.get("table_extract_out_dir"),
+        table_extract_name_pattern=payload.get("table_extract_name_pattern"),
+        table_extract_dry_run=payload.get("table_extract_dry_run", False),
     )
     return run_pipeline(
         docx_path=payload["docx"],
