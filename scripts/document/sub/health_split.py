@@ -23,6 +23,7 @@ Health 判据 (磐安 v3 锚):
     AND health-diagnose overall_severity == "pass"
   → healthy, skip styleset restore.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,10 +55,7 @@ def _judge_healthy(report: dict) -> tuple[bool, dict]:
 
     health_sev = health.get("overall_severity", "fail")
     healthy = (
-        counts["fail"] == 0
-        and counts["pass"] >= 4
-        and counts["pass"] + counts["warn"] >= 5
-        and health_sev == "pass"
+        counts["fail"] == 0 and counts["pass"] >= 4 and counts["pass"] + counts["warn"] >= 5 and health_sev == "pass"
     )
     return healthy, {
         "audit_counts": counts,
@@ -92,14 +90,16 @@ def _run(args) -> int:
         print(f"[health-split] ERROR: not a file: {src}", file=sys.stderr)
         return 2
 
-    out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir \
-        else src.parent / f"{src.stem}-split"
+    out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else src.parent / f"{src.stem}-split"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. backup
     if not args.no_backup:
-        bdir = Path(args.backup_dir).expanduser() if args.backup_dir \
+        bdir = (
+            Path(args.backup_dir).expanduser()
+            if args.backup_dir
             else Path.home() / "Archives" / "docx-backups" / _dt.date.today().isoformat()
+        )
         bdir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, bdir / src.name)
         print(f"✓ 备份: {bdir / src.name}")
@@ -110,7 +110,10 @@ def _run(args) -> int:
     #    若 audit/diagnose 判 healthy → 直接收工 (省 1 次 parse, SOP baseline 33s)
     #    若 unhealthy → 删除已写章节, 走 styleset restore → 用新文件重 split
     one_shot_ns = argparse.Namespace(
-        docx=src, dry_run=False, no_backup=True, report=None,
+        docx=src,
+        dry_run=False,
+        no_backup=True,
+        report=None,
         styleset_profile=None,
         split_out_dir=out_dir,
         split_name_pattern=None,
@@ -121,12 +124,15 @@ def _run(args) -> int:
     diag_report = run_pipeline(
         src,
         ["health-diagnose", "audit-styleset-all", "split-by-h1"],
-        args=one_shot_ns, no_backup=True,
+        args=one_shot_ns,
+        no_backup=True,
     )
     healthy, summary = _judge_healthy(diag_report)
-    print(f"[health-split] health: audit={summary['audit_counts']} "
-          f"diagnose={summary['health_severity']} → "
-          f"{'healthy' if healthy else 'unhealthy'}")
+    print(
+        f"[health-split] health: audit={summary['audit_counts']} "
+        f"diagnose={summary['health_severity']} → "
+        f"{'healthy' if healthy else 'unhealthy'}"
+    )
 
     target = src
     split_report = diag_report
@@ -134,6 +140,7 @@ def _run(args) -> int:
     # 3. conditional styleset restore (unhealthy 才走第二轮)
     if not healthy and not args.no_fix:
         from . import fix_styleset
+
         # 丢弃 speculative split 产物, 用 restored docx 重切
         for f in out_dir.glob("*.docx"):
             f.unlink()
@@ -141,8 +148,14 @@ def _run(args) -> int:
         target = src.parent / new_name
         restore_ns = argparse.Namespace(
             docx_path=src,
-            dry_run=False, inplace=False, no_backup=True, force=False,
-            output=target, no_llm=True, yaml_profile=None, report=None,
+            dry_run=False,
+            inplace=False,
+            no_backup=True,
+            force=False,
+            output=target,
+            no_llm=True,
+            yaml_profile=None,
+            report=None,
         )
         rc = fix_styleset.cmd_restore(restore_ns)
         if rc != 0:
@@ -150,7 +163,10 @@ def _run(args) -> int:
             return rc
         print(f"⚠ 不达锚, 已健康化 → {target.name}")
         split_ns = argparse.Namespace(
-            docx=target, dry_run=False, no_backup=True, report=None,
+            docx=target,
+            dry_run=False,
+            no_backup=True,
+            report=None,
             split_out_dir=out_dir,
             split_name_pattern=None,
             include_frontmatter=not args.no_frontmatter,
@@ -158,26 +174,29 @@ def _run(args) -> int:
             split_dry_run=False,
         )
         split_report = run_pipeline(
-            target, ["split-by-h1"], args=split_ns, no_backup=True,
+            target,
+            ["split-by-h1"],
+            args=split_ns,
+            no_backup=True,
         )
     elif not healthy:
         print("⚠ 不达锚 + --no-fix, 已 split 原 docx (用户自担风险)")
 
     # 5. report + summary
-    report_path = Path(args.report).expanduser() if args.report \
-        else out_dir / "_health-report.html"
+    report_path = Path(args.report).expanduser() if args.report else out_dir / "_health-report.html"
     merged = {
-        "src": str(src), "target": str(target), "out_dir": str(out_dir),
-        "diagnose": diag_report, "split": split_report,
+        "src": str(src),
+        "target": str(target),
+        "out_dir": str(out_dir),
+        "diagnose": diag_report,
+        "split": split_report,
     }
     _write_html_report(merged, summary, report_path)
 
     wall = time.perf_counter() - t0
-    split_step = (split_report.get("steps", {}).get("split-by-h1") or {})
-    n_chapters = split_step.get("chapters_written") or split_step.get("n_chapters") \
-        or len(split_step.get("outputs", []) or []) or "?"
-    print(f"\n[health-split] DONE 章数={n_chapters} 墙钟={wall:.1f}s "
-          f"out_dir={out_dir} report={report_path}")
+    split_step = split_report.get("steps", {}).get("split-by-h1") or {}
+    n_chapters = split_step.get("slices_emitted") or len(split_step.get("emitted", []) or []) or "?"
+    print(f"\n[health-split] DONE 章数={n_chapters} 墙钟={wall:.1f}s out_dir={out_dir} report={report_path}")
     return 0
 
 
@@ -187,15 +206,10 @@ def register(subparsers) -> None:
         help="docx 一键健康化 + 按 H1 切分 (backup + diagnose + audit + 条件 styleset restore + split)",
     )
     p.add_argument("docx", help="input docx path")
-    p.add_argument("--out-dir", default=None,
-                   help="split 输出目录 (default: <docx-stem>-split/ 同目录)")
-    p.add_argument("--backup-dir", default=None,
-                   help="备份目录 (default: ~/Archives/docx-backups/<today>/)")
+    p.add_argument("--out-dir", default=None, help="split 输出目录 (default: <docx-stem>-split/ 同目录)")
+    p.add_argument("--backup-dir", default=None, help="备份目录 (default: ~/Archives/docx-backups/<today>/)")
     p.add_argument("--no-backup", action="store_true", help="跳过备份 (危险)")
-    p.add_argument("--no-fix", action="store_true",
-                   help="health 不达锚也不跑 styleset restore (危险)")
-    p.add_argument("--no-frontmatter", action="store_true",
-                   help="split 时不输出 00-frontmatter.docx")
-    p.add_argument("--report", default=None,
-                   help="健康报告 HTML 输出路径 (default: <out-dir>/_health-report.html)")
+    p.add_argument("--no-fix", action="store_true", help="health 不达锚也不跑 styleset restore (危险)")
+    p.add_argument("--no-frontmatter", action="store_true", help="split 时不输出 00-frontmatter.docx")
+    p.add_argument("--report", default=None, help="健康报告 HTML 输出路径 (default: <out-dir>/_health-report.html)")
     p.set_defaults(func=_run)
