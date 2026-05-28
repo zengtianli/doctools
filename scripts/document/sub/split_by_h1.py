@@ -45,6 +45,8 @@ H1_STYLES = {
     "1",
     "10",
     "1.1.1.1 N级标题",
+    # 院方系列报告（浙江省水利水电勘测设计院可用水量/生态流量报告）样式名
+    "1一级标题",
 }
 
 
@@ -94,7 +96,24 @@ def _paragraph_text(p_elem) -> str:
     return "".join(t.text or "" for t in p_elem.iter(qn("w:t")))
 
 
-def _is_h1_elem(elem) -> bool:
+def _build_style_id_to_name(doc) -> dict:
+    """Map styleId → styleName for the doc (院方系列 styleId 如 '1f8',
+    与 styleName '1一级标题' 不同 → 必须建映射才能命中 H1_STYLES)."""
+    out = {}
+    try:
+        styles_xml = doc.styles.element
+        for s in styles_xml.findall(qn("w:style")):
+            sid = s.get(qn("w:styleId"))
+            name_el = s.find(qn("w:name"))
+            nm = name_el.get(qn("w:val")) if name_el is not None else None
+            if sid and nm:
+                out[sid] = nm
+    except Exception:
+        pass
+    return out
+
+
+def _is_h1_elem(elem, style_id_to_name: Optional[dict] = None) -> bool:
     """Check if a body-level <w:p> element carries an H1 style."""
     if elem.tag != qn("w:p"):
         return False
@@ -113,6 +132,11 @@ def _is_h1_elem(elem) -> bool:
     # Heuristic: some templates use "1" or "10" as Heading 1 styleId
     if style_val in {"1", "10", "Heading1"}:
         return True
+    # 院方系列: styleId (如 '1f8') ≠ styleName (如 '1一级标题') → 查 map
+    if style_id_to_name is not None:
+        nm = style_id_to_name.get(style_val)
+        if nm and (nm in H1_STYLES or nm.lower() in {s.lower() for s in H1_STYLES}):
+            return True
     return False
 
 
@@ -128,6 +152,7 @@ def plan_slices(docx_path: Path, include_frontmatter: bool, doc=None):
         doc = Document(str(docx_path))
     body = doc.element.body
     children = list(body)
+    style_id_to_name = _build_style_id_to_name(doc)
     # Locate sectPr (final node) — we exclude it from slicing range
     sect_idx = len(children)
     for i in range(len(children) - 1, -1, -1):
@@ -139,7 +164,7 @@ def plan_slices(docx_path: Path, include_frontmatter: bool, doc=None):
     h1_positions: list[tuple[int, str]] = []
     for i in range(sect_idx):
         elem = children[i]
-        if _is_h1_elem(elem):
+        if _is_h1_elem(elem, style_id_to_name):
             title = _paragraph_text(elem).strip() or "untitled"
             h1_positions.append((i, title))
 
