@@ -294,6 +294,37 @@ def _builtin_table_extract(doc, args) -> dict:
     )
 
 
+def _builtin_slim_safe(doc, args) -> dict:
+    """Slim safe: ensemble strip (revisions+bookmarks+empty-captions+intra-dedup+orphan-media).
+
+    Args:
+      args.docx — source docx path (injected by pipeline driver)
+      args.slim_out — explicit output path; if None → in-place with .bak
+
+    Read-only against parsed `doc`; rewrites zip on disk via underlying modules.
+    """
+    from . import slim
+    docx_path = Path(str(getattr(args, "docx", "")))
+    out = getattr(args, "slim_out", None)
+    out_path = Path(str(out)) if out else None
+    return slim.run_safe(docx_path, out_path)
+
+
+def _builtin_slim_aggressive(doc, args) -> dict:
+    """Slim aggressive: minimal docx skeleton rebuild.
+
+    Args:
+      args.docx — source docx path
+      args.slim_out — REQUIRED output path (aggressive refuses in-place)
+    """
+    from . import slim
+    docx_path = Path(str(getattr(args, "docx", "")))
+    out = getattr(args, "slim_out", None)
+    if not out:
+        raise RuntimeError("slim-aggressive step requires --slim-out OUT")
+    return slim.run_aggressive(docx_path, Path(str(out)))
+
+
 def _builtin_split_by_h1(doc, args) -> dict:
     """Split docx by H1 reusing the already-parsed doc for slice planning.
 
@@ -331,6 +362,8 @@ _BUILTIN_STEPS: dict[str, tuple[str, Callable[..., dict]]] = {
     "health-diagnose":    ("doc", _builtin_health_diagnose),
     "image-extract":      ("doc", _builtin_image_extract),
     "table-extract":      ("doc", _builtin_table_extract),
+    "slim-safe":          ("doc", _builtin_slim_safe),
+    "slim-aggressive":    ("doc", _builtin_slim_aggressive),
 }
 
 # Read-only built-ins (don't mutate parsed doc → no need to save source docx).
@@ -341,6 +374,8 @@ _NON_MUTATING_STEPS: set[str] = {
     "health-diagnose",
     "image-extract",
     "table-extract",
+    "slim-safe",
+    "slim-aggressive",
 }
 
 
