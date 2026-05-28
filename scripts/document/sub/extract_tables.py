@@ -37,6 +37,32 @@ except ImportError:
     sys.exit(2)
 
 
+def _load_strip_orphan_media():
+    """Load sibling strip_orphan_media.py robustly across invocation paths.
+
+    Tries (1) package-relative import, (2) sys.path top-level (when scripts/document
+    is on sys.path), (3) importlib spec by file path (when loaded via _dispatch).
+    """
+    try:
+        from . import strip_orphan_media as _som  # type: ignore
+        return _som
+    except (ImportError, ValueError):
+        pass
+    try:
+        import strip_orphan_media as _som  # type: ignore
+        return _som
+    except ImportError:
+        pass
+    import importlib.util
+    sib = Path(__file__).resolve().parent / "strip_orphan_media.py"
+    spec = importlib.util.spec_from_file_location("_extract_tables__strip_orphan_media", str(sib))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {sib}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 _ILLEGAL_FILENAME_RE = re.compile(r'[/\\:*?"<>|\r\n\t]')
 _MULTI_WS_RE = re.compile(r"\s+")
 
@@ -227,6 +253,13 @@ def write_extract(
         if i not in keep_indices:
             body.remove(elem)
     doc.save(str(dst_docx))
+
+    # Post-process: strip orphan media (54MB → <100KB typical).
+    # deep=True because table-extract裁 body 不裁 rels, 浅扫会判 0 orphan.
+    _som = _load_strip_orphan_media()
+    scan = _som.scan_orphans(dst_docx, deep=True)
+    if scan["orphan_count"] > 0:
+        _som.rewrite_skip(dst_docx, dst_docx, set(scan["orphans"]))
 
     doc2 = Document(str(dst_docx))
     tbl_count = len(doc2.tables)

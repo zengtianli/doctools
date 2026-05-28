@@ -93,6 +93,10 @@ def lsof_check(p: Path) -> str | None:
 _RELS_RE = re.compile(r"^word/_rels/.+\.xml\.rels$")
 _MEDIA_RE = re.compile(r"^word/media/.+$")
 
+# Office namespaces used to detect rId usage in body / header / footer xml
+NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+NS_R_ATTRS = (f"{{{NS_R}}}embed", f"{{{NS_R}}}link", f"{{{NS_R}}}id")
+
 
 def _collect_referenced_media(z: zipfile.ZipFile) -> set[str]:
     """收集所有 rels 文件里 Target 指向 media/* 的项,返回 zip 内规范化路径集合 (word/media/<name>)."""
@@ -122,10 +126,98 @@ def _collect_referenced_media(z: zipfile.ZipFile) -> set[str]:
     return referenced
 
 
-def scan_orphans(docx_path: Path) -> dict:
-    """只读扫: 返回 {referenced, media_in_zip, orphans, orphan_bytes}."""
+def _scan_used_rids_in_xml(z: zipfile.ZipFile, xml_name: str) -> set[str]:
+    """Scan an OOXML part for actually-used rIds (r:embed / r:link / r:id attrs)."""
+    used: set[str] = set()
+    try:
+        data = z.read(xml_name)
+    except KeyError:
+        return used
+    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    try:
+        root = etree.fromstring(data, parser=parser)
+    except etree.XMLSyntaxError:
+        return used
+    if root is None:
+        return used
+    for elem in root.iter():
+        for attr in NS_R_ATTRS:
+            rid = elem.get(attr)
+            if rid:
+                used.add(rid)
+    return used
+
+
+def _collect_used_media_via_body(z: zipfile.ZipFile) -> set[str]:
+    """Deep scan: only count media actually referenced by an rId used in
+    document.xml / header*.xml / footer*.xml / footnotes.xml / endnotes.xml / comments.xml.
+
+    Returns set of zip-paths like "word/media/imageN.png" that are TRULY used.
+    """
+    # 1. Map each rels file to its used-rIds (from the corresponding XML part)
+    body_xmls = [
+        "word/document.xml",
+        "word/footnotes.xml",
+        "word/endnotes.xml",
+        "word/comments.xml",
+    ]
+    for n in z.namelist():
+        if re.match(r"^word/(header|footer)\d*\.xml$", n):
+            body_xmls.append(n)
+
+    used_per_part: dict[str, set[str]] = {}
+    for xn in body_xmls:
+        used_per_part[xn] = _scan_used_rids_in_xml(z, xn)
+
+    # 2. For each rels file, intersect its Relationship rIds with the used-rIds
+    #    of the corresponding XML part, then collect Target → zip-path.
+    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    truly_referenced: set[str] = set()
+
+    def _rels_for(part_xml: str) -> str:
+        # word/document.xml -> word/_rels/document.xml.rels
+        # word/header1.xml -> word/_rels/header1.xml.rels
+        d, fn = part_xml.rsplit("/", 1)
+        return f"{d}/_rels/{fn}.rels"
+
+    for part_xml, used_rids in used_per_part.items():
+        if not used_rids:
+            continue
+        rels_name = _rels_for(part_xml)
+        try:
+            data = z.read(rels_name)
+            root = etree.fromstring(data, parser=parser)
+        except (KeyError, etree.XMLSyntaxError):
+            continue
+        if root is None:
+            continue
+        for rel in root.findall(f"{REL}Relationship"):
+            rid = rel.get("Id")
+            if rid not in used_rids:
+                continue
+            target = (rel.get("Target") or "").replace("\\", "/").lstrip("/")
+            if target.startswith("media/"):
+                truly_referenced.add("word/" + target)
+            elif "/media/" in target:
+                idx = target.find("media/")
+                truly_referenced.add("word/" + target[idx:])
+    return truly_referenced
+
+
+def scan_orphans(docx_path: Path, deep: bool = False) -> dict:
+    """只读扫: 返回 {referenced, media_in_zip, orphans, orphan_bytes}.
+
+    deep=False (默认): 只看 rels 是否仍 list 此 media (相容旧行为).
+    deep=True: 还看 document.xml/header*/footer*/footnotes/endnotes/comments 里
+               有没有真的用到此 rId. 用于 split / table-extract 这类
+               "body 已裁但 rels 未裁" 的场景, 此时多数 media 在 rels 里
+               还在但已无 body 引用 -> 标 orphan.
+    """
     with zipfile.ZipFile(str(docx_path), "r") as z:
-        referenced = _collect_referenced_media(z)
+        if deep:
+            referenced = _collect_used_media_via_body(z)
+        else:
+            referenced = _collect_referenced_media(z)
         media_in_zip: dict[str, int] = {}  # name -> compressed size (近似释放空间)
         for info in z.infolist():
             if _MEDIA_RE.match(info.filename):
@@ -138,6 +230,7 @@ def scan_orphans(docx_path: Path) -> dict:
         "orphans": orphans,
         "orphan_count": len(orphans),
         "orphan_compressed_bytes": orphan_bytes,
+        "deep": deep,
     }
 
 
@@ -173,6 +266,12 @@ def main() -> int:
     parser.add_argument("--no-backup", action="store_true",
                         help="inplace 模式下不留 .bak")
     parser.add_argument("--report", type=Path, default=None)
+    parser.add_argument(
+        "--deep", action="store_true",
+        help="深扫: 只保留 document.xml/header*/footer*/footnotes/endnotes/"
+             "comments 真正引用的 rId 对应 media; 其余即使 rels 还在 list 也算 orphan "
+             "(split / table-extract 等 body 裁但 rels 未裁的场景必须开)",
+    )
     args = parser.parse_args()
 
     if not args.docx.exists():
@@ -186,8 +285,8 @@ def main() -> int:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?), 立即停止:\n{occ}", file=sys.stderr)
             return 3
 
-    print(f"[INFO] 扫描 {args.docx.name}")
-    scan = scan_orphans(args.docx)
+    print(f"[INFO] 扫描 {args.docx.name}{' (deep)' if args.deep else ''}")
+    scan = scan_orphans(args.docx, deep=args.deep)
     print(f"  [scan] referenced={scan['referenced_count']} "
           f"media_in_zip={scan['media_in_zip_count']} "
           f"orphans={scan['orphan_count']} "
