@@ -123,7 +123,15 @@ def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
     name = 脚本名(无.py).
     step_dir = 从哪个目录加载脚本。默认 None → cwd/scripts/（qual-supply 兼容）。
     Dynamic import; 优先 apply(doc, args), 否则 apply_path(path, args).
+
+    Built-in steps (audit-styleset-all / split-by-h1) take precedence over
+    on-disk scripts; they reuse the pipeline's already-parsed doc to avoid
+    re-parsing the same 53MB docx 5-6 times.
     """
+    if name in _BUILTIN_STEPS:
+        kind, fn = _BUILTIN_STEPS[name]
+        return LoadedStep(name=name, kind=kind, fn=fn, module=None)
+
     # Determine search path
     if step_dir is not None:
         search_dirs = [Path(step_dir).resolve()]
@@ -173,6 +181,110 @@ def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
     raise AttributeError(
         f"script '{name}' has neither apply(doc,args) nor apply_path(path,args)"
     )
+
+
+# ----------------- built-in steps (single-parse reuse) -----------------
+# Registered names short-circuit on-disk script loading; each reuses the
+# pipeline's already-parsed `doc` to amortize 53MB-docx parse cost across
+# multiple analyses.
+
+def _builtin_audit_styleset_all(doc, args) -> dict:
+    """Run all 5 audit-styleset checks against the already-parsed doc.
+
+    Resolves profile path from args.styleset_profile or default profile.
+    Reads zip-level word/settings.xml once (for stylePaneFormatFilter check).
+    """
+    from . import audit_styleset
+    docx_path = Path(str(getattr(args, "docx", "")))
+    profile_path = getattr(args, "styleset_profile", None) or str(
+        audit_styleset.DEFAULT_PROFILE_PATH
+    )
+    return audit_styleset.run_all_on_doc(doc, docx_path, Path(profile_path))
+
+
+def _builtin_health_diagnose(doc, args) -> dict:
+    """Run docx health 8-check diagnose against source path.
+
+    NOTE: most health checks parse docx independently via zipfile and lxml
+    (not python-docx), so they don't benefit from the pipeline's already-
+    parsed `doc`. We accept `doc` for API uniformity but pass docx_path
+    through to the HealthChecker.
+    """
+    from . import health
+    docx_path = Path(str(getattr(args, "docx", "")))
+    workers = int(getattr(args, "health_workers", 8) or 8)
+    checker = health.HealthChecker(docx_path, workers=workers)
+    results = checker.run_all()
+    # severity rollup
+    sev_levels = []
+    for cid, r in results.items():
+        if r.get("found"):
+            sev_levels.append(health.SEVERITY.get(cid, "?"))
+    if "High" in sev_levels:
+        overall = "fail"
+    elif sev_levels:
+        overall = "warn"
+    else:
+        overall = "pass"
+    return {
+        "overall_severity": overall,
+        "checks": results,
+        "found_count": sum(1 for r in results.values() if r.get("found")),
+    }
+
+
+def _builtin_split_by_h1(doc, args) -> dict:
+    """Split docx by H1 reusing the already-parsed doc for slice planning.
+
+    Required args: split_out_dir.
+    Optional args: include_frontmatter (bool), allow_no_h1 (bool),
+                   split_name_pattern (str), split_dry_run (bool).
+    Raises RuntimeError on h1_count=0 + not allow_no_h1 (per fail-fast contract).
+    """
+    from . import split_by_h1
+    docx_path = Path(str(getattr(args, "docx", "")))
+    out_dir = getattr(args, "split_out_dir", None)
+    if not out_dir:
+        raise RuntimeError("split-by-h1 step requires --split-out-dir")
+    rep = split_by_h1.run_split(
+        src_docx=docx_path,
+        out_dir=Path(str(out_dir)),
+        include_frontmatter=bool(getattr(args, "include_frontmatter", False)),
+        allow_no_h1=bool(getattr(args, "allow_no_h1", False)),
+        dry_run=bool(getattr(args, "split_dry_run", False)),
+        name_pattern=getattr(args, "split_name_pattern", None)
+            or "{idx:02d}-{title}.docx",
+        doc=doc,
+    )
+    # propagate fail-fast exit code 3 (0 H1 detected) as exception so pipeline
+    # surfaces it instead of silent partial success
+    if rep.get("exit_code") == 3:
+        raise RuntimeError(rep.get("error", "0 Heading-1 detected"))
+    return rep
+
+
+# (name → (kind, callable)); kind = "doc" → fn(doc, args)
+_BUILTIN_STEPS: dict[str, tuple[str, Callable[..., dict]]] = {
+    "audit-styleset-all": ("doc", _builtin_audit_styleset_all),
+    "split-by-h1":        ("doc", _builtin_split_by_h1),
+    "health-diagnose":    ("doc", _builtin_health_diagnose),
+}
+
+# Read-only built-ins (don't mutate parsed doc → no need to save source docx).
+# When ALL doc-based steps are non-mutating, run_pipeline skips doc.save().
+_NON_MUTATING_STEPS: set[str] = {
+    "audit-styleset-all",
+    "split-by-h1",
+    "health-diagnose",
+}
+
+
+def is_builtin_step(name: str) -> bool:
+    return name in _BUILTIN_STEPS
+
+
+def is_non_mutating_step(name: str) -> bool:
+    return name in _NON_MUTATING_STEPS
 
 
 # ----------------- single docx pipeline -----------------
@@ -256,7 +368,11 @@ def run_pipeline(
                 rep = {"error": repr(exc)}
             report["steps"][s.name] = rep
             report["timing"][f"step:{s.name}"] = time.perf_counter() - t_s
-        if not dry_run:
+        # Skip save when all doc-based steps are non-mutating built-ins (audit
+        # / split = read-only against source). Avoids touching mtime + bytes
+        # of the source 53MB docx (and lets baseline split byte-for-byte match).
+        all_non_mutating = all(is_non_mutating_step(s.name) for s in doc_steps)
+        if not dry_run and not all_non_mutating:
             t_w = time.perf_counter()
             doc.save(str(docx_path))
             report["timing"]["save"] = time.perf_counter() - t_w
@@ -279,10 +395,23 @@ def run_pipeline(
 
 def _worker(payload: dict) -> dict:
     """ProcessPoolExecutor worker entry"""
+    # Reconstruct args namespace from payload for built-in step options
+    ns_args = argparse.Namespace(
+        docx=Path(payload["docx"]),
+        dry_run=payload.get("dry_run", False),
+        no_backup=True,
+        report=None,
+        styleset_profile=payload.get("styleset_profile"),
+        split_out_dir=payload.get("split_out_dir"),
+        split_name_pattern=payload.get("split_name_pattern"),
+        include_frontmatter=payload.get("include_frontmatter", False),
+        allow_no_h1=payload.get("allow_no_h1", False),
+        split_dry_run=payload.get("split_dry_run", False),
+    )
     return run_pipeline(
         docx_path=payload["docx"],
         step_names=payload["steps"],
-        args=None,
+        args=ns_args,
         backup_once=payload.get("backup_once", True),
         lsof_once=payload.get("lsof_once", True),
         dry_run=payload.get("dry_run", False),
@@ -298,12 +427,18 @@ def run_pipeline_parallel(
     dry_run: bool = False,
     no_backup: bool = False,
     step_dir: Path | str | None = None,
+    builtin_opts: dict | None = None,
 ) -> dict[str, dict]:
-    """对 N docx 并行执行 pipeline (跨 docx process-level 并行)"""
+    """对 N docx 并行执行 pipeline (跨 docx process-level 并行).
+
+    builtin_opts: forwarded to workers for built-in step options
+                  (styleset_profile / split_out_dir / include_frontmatter / ...).
+    """
     if not docx_list:
         return {}
     if max_workers is None:
         max_workers = min(len(docx_list), os.cpu_count() or 4)
+    builtin_opts = builtin_opts or {}
     payloads = [
         {
             "docx": str(d),
@@ -311,6 +446,7 @@ def run_pipeline_parallel(
             "dry_run": dry_run,
             "no_backup": no_backup,
             "step_dir": str(step_dir) if step_dir else None,
+            **builtin_opts,
         }
         for d in docx_list
     ]

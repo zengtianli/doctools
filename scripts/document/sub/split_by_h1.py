@@ -116,13 +116,16 @@ def _is_h1_elem(elem) -> bool:
     return False
 
 
-def plan_slices(docx_path: Path, include_frontmatter: bool):
+def plan_slices(docx_path: Path, include_frontmatter: bool, doc=None):
     """Inspect docx → return (slices, sect_idx, h1_count).
 
     slices: list[{idx, title, start, end, is_frontmatter}]
     h1_count: number of H1 elements detected in body (independent of slice emission)
+
+    `doc`: if provided, skip the source parse (pipeline reuse).
     """
-    doc = Document(str(docx_path))
+    if doc is None:
+        doc = Document(str(docx_path))
     body = doc.element.body
     children = list(body)
     # Locate sectPr (final node) — we exclude it from slicing range
@@ -206,6 +209,70 @@ def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int) -> tuple[i
     para_count = len(doc2.paragraphs)
     file_bytes = dst_docx.stat().st_size
     return para_count, file_bytes
+
+
+def run_split(
+    src_docx: Path,
+    out_dir: Path,
+    include_frontmatter: bool = False,
+    allow_no_h1: bool = False,
+    dry_run: bool = False,
+    name_pattern: str = "{idx:02d}-{title}.docx",
+    doc=None,
+) -> dict:
+    """Execute split-by-h1; reuses provided `doc` for planning if given.
+
+    Returns a report dict (used by pipeline built-in step). Raises on
+    fail-fast conditions (0 H1 + no allow_no_h1) for caller to handle.
+    """
+    src = Path(src_docx).expanduser().resolve()
+    if not src.exists():
+        return {"error": f"input docx not found: {src}", "exit_code": 2}
+    out_dir = Path(out_dir).expanduser().resolve()
+
+    slices, sect_idx, h1_count = plan_slices(src, include_frontmatter, doc=doc)
+
+    if h1_count == 0 and not allow_no_h1:
+        return {
+            "error": "0 Heading-1 detected (docx unhealthy); run /docx health first or pass --allow-no-h1",
+            "exit_code": 3,
+            "h1_count": 0,
+        }
+
+    if not slices:
+        return {"h1_count": h1_count, "slices_emitted": 0, "note": "no slices to emit"}
+
+    if dry_run:
+        plan = []
+        for s in slices:
+            safe = sanitize_filename(s["title"])
+            fname = name_pattern.format(idx=s["idx"], title=safe)
+            plan.append({"idx": s["idx"], "fname": fname, "title": s["title"]})
+        return {"h1_count": h1_count, "slices_planned": plan, "dry_run": True}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    emitted = []
+    failed = []
+    for s in slices:
+        safe = sanitize_filename(s["title"])
+        fname = name_pattern.format(idx=s["idx"], title=safe)
+        dst = out_dir / fname
+        try:
+            paras, nbytes = write_slice(src, dst, s["start"], s["end"])
+            emitted.append({
+                "idx": s["idx"], "fname": fname, "paragraphs": paras, "bytes": nbytes,
+            })
+        except Exception as e:
+            failed.append({"idx": s["idx"], "fname": fname,
+                           "error": f"{type(e).__name__}: {e}"})
+    return {
+        "h1_count": h1_count,
+        "slices_emitted": len(emitted),
+        "slices_failed": len(failed),
+        "out_dir": str(out_dir),
+        "emitted": emitted,
+        "failed": failed,
+    }
 
 
 def main() -> int:

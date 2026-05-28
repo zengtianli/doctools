@@ -87,6 +87,20 @@ def register(subparsers) -> None:
     run_p.add_argument("--header", default="嘉兴市千岛湖引水受水区分质供水管理项目研究")
     run_p.add_argument("--footer-prefix", default="浙江省水利水电勘测设计院")
     run_p.add_argument("--page-number", action="store_true", default=True)
+    # Built-in step options (audit-styleset-all / split-by-h1)
+    run_p.add_argument("--styleset-profile", default=None,
+                       help="audit-styleset-all profile yaml path "
+                            "(default: profiles/eco_flow_health.yaml)")
+    run_p.add_argument("--split-out-dir", default=None,
+                       help="split-by-h1 output directory (required if step used)")
+    run_p.add_argument("--split-name-pattern", default=None,
+                       help="split-by-h1 filename pattern (default '{idx:02d}-{title}.docx')")
+    run_p.add_argument("--include-frontmatter", action="store_true",
+                       help="split-by-h1: emit pre-first-H1 content as 00-frontmatter.docx")
+    run_p.add_argument("--allow-no-h1", action="store_true",
+                       help="split-by-h1: suppress fail-fast when 0 H1 detected")
+    run_p.add_argument("--split-dry-run", action="store_true",
+                       help="split-by-h1: print plan only, don't write files")
     run_p.set_defaults(func=run)
 
 
@@ -136,6 +150,13 @@ def run(args: argparse.Namespace) -> int:
                 header=getattr(args, "header", ""),
                 footer_prefix=getattr(args, "footer_prefix", "浙江省水利水电勘测设计院"),
                 page_number=getattr(args, "page_number", True),
+                # built-in step options
+                styleset_profile=getattr(args, "styleset_profile", None),
+                split_out_dir=getattr(args, "split_out_dir", None),
+                split_name_pattern=getattr(args, "split_name_pattern", None),
+                include_frontmatter=getattr(args, "include_frontmatter", False),
+                allow_no_h1=getattr(args, "allow_no_h1", False),
+                split_dry_run=getattr(args, "split_dry_run", False),
             )
             try:
                 rep = run_pipeline(
@@ -156,11 +177,20 @@ def run(args: argparse.Namespace) -> int:
         ]):
             print("[WARN] 破坏性 step 参数在并行模式下未透传; 建议用 serial 模式（去 --parallel）",
                   file=sys.stderr)
+        builtin_opts = {
+            "styleset_profile": getattr(args, "styleset_profile", None),
+            "split_out_dir": getattr(args, "split_out_dir", None),
+            "split_name_pattern": getattr(args, "split_name_pattern", None),
+            "include_frontmatter": getattr(args, "include_frontmatter", False),
+            "allow_no_h1": getattr(args, "allow_no_h1", False),
+            "split_dry_run": getattr(args, "split_dry_run", False),
+        }
         results = run_pipeline_parallel(
             docx_paths, args.steps,
             max_workers=max_workers,
             dry_run=dry_run, no_backup=no_backup,
             step_dir=step_dir,
+            builtin_opts=builtin_opts,
         )
 
     wall = time.perf_counter() - t0

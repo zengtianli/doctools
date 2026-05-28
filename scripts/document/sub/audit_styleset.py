@@ -102,12 +102,13 @@ def _settings_has_stylepanefilter(docx_path: Path) -> bool:
 
 # ---------- 5 audit functions ----------
 
-def audit_style_coherence(docx_path: Path, prof: dict) -> dict:
+def audit_style_coherence(docx_path: Path, prof: dict, doc=None) -> dict:
     """段实际套样式集 ⊆ profile.roles ∪ tolerated。
     fail: 非空段使用 profile-外 + 非 tolerated 样式比例 > coherence_unknown_ratio_max
        OR 任一 tolerated 样式 dominance > tolerated_dominance_max
     """
-    doc = Document(str(docx_path))
+    if doc is None:
+        doc = Document(str(docx_path))
     _, c_ne, _, ne_total = _paragraphs_style_count(doc)
     role_set = _all_role_styles(prof)
     tol = _tolerated(prof)
@@ -169,11 +170,12 @@ def audit_style_coherence(docx_path: Path, prof: dict) -> dict:
     }
 
 
-def audit_role_coverage(docx_path: Path, prof: dict) -> dict:
+def audit_role_coverage(docx_path: Path, prof: dict, doc=None) -> dict:
     """7 角色全覆盖 (每个角色至少 1 个 style 在 nonempty 段出现)。
     fail: 任一 mandatory role 在 docx nonempty 段一个都没出现。
     """
-    doc = Document(str(docx_path))
+    if doc is None:
+        doc = Document(str(docx_path))
     c_all, c_ne, _, _ = _paragraphs_style_count(doc)
     roles = prof.get("roles") or {}
     # mandatory roles (按 task GOAL): body / title / heading / caption-figure / caption-table
@@ -222,12 +224,13 @@ def audit_role_coverage(docx_path: Path, prof: dict) -> dict:
     }
 
 
-def audit_body_style_concentration(docx_path: Path, prof: dict) -> dict:
+def audit_body_style_concentration(docx_path: Path, prof: dict, doc=None) -> dict:
     """主 body 样式占比 ≥ profile.concentration_threshold。
     算法: sum(body-role 样式段在 nonempty 段) / nonempty 段总数
     fail: 比例 < concentration_threshold。
     """
-    doc = Document(str(docx_path))
+    if doc is None:
+        doc = Document(str(docx_path))
     _, c_ne, _, ne_total = _paragraphs_style_count(doc)
     body_styles = (prof.get("roles") or {}).get("body") or []
     body_count = sum(c_ne.get(s, 0) for s in body_styles)
@@ -255,9 +258,10 @@ def audit_body_style_concentration(docx_path: Path, prof: dict) -> dict:
     }
 
 
-def audit_style_pool_cleanliness(docx_path: Path, prof: dict) -> dict:
+def audit_style_pool_cleanliness(docx_path: Path, prof: dict, doc=None) -> dict:
     """未用样式 / 总定义 ≤ pool_unused_ratio_max (warn 级)。"""
-    doc = Document(str(docx_path))
+    if doc is None:
+        doc = Document(str(docx_path))
     c_all, _, _, _ = _paragraphs_style_count(doc)
     defined = _defined_styles(doc)
     used = {sn for sn, n in c_all.items() if sn and n > 0}
@@ -287,8 +291,8 @@ def audit_style_pool_cleanliness(docx_path: Path, prof: dict) -> dict:
     }
 
 
-def audit_style_pane_filter(docx_path: Path, prof: dict) -> dict:
-    """stylePaneFormatFilter 已设 (warn 级)。"""
+def audit_style_pane_filter(docx_path: Path, prof: dict, doc=None) -> dict:
+    """stylePaneFormatFilter 已设 (warn 级). doc 参数仅 API 一致, 不使用 (走 zipfile)."""
     require = bool(prof.get("require_stylepanefilter", True))
     has = _settings_has_stylepanefilter(docx_path)
     severity = "pass"
@@ -317,7 +321,7 @@ _AUDITS = {
 }
 
 
-def run_one(target: str, docx_path: Path, profile_path: Path) -> dict:
+def run_one(target: str, docx_path: Path, profile_path: Path, doc=None) -> dict:
     prof = load_profile(profile_path)
     fn = _AUDITS.get(target)
     if fn is None:
@@ -328,10 +332,41 @@ def run_one(target: str, docx_path: Path, profile_path: Path) -> dict:
             "details": {"error": f"unknown audit target: {target}"},
             "summary": f"unknown target {target}",
         }
-    report = fn(docx_path, prof)
+    report = fn(docx_path, prof, doc=doc)
     report["docx_path"] = str(docx_path)
     report["profile_path"] = prof.get("_profile_path")
     return report
+
+
+def run_all_on_doc(doc, docx_path: Path, profile_path: Path) -> dict:
+    """Run all 5 audits reusing the already-parsed doc object.
+
+    Used by pipeline's built-in `audit-styleset-all` step to avoid 5×
+    re-parsing the same docx.
+    """
+    prof = load_profile(profile_path)
+    out: dict[str, dict] = {}
+    severities: list[str] = []
+    for target, fn in _AUDITS.items():
+        rep = fn(docx_path, prof, doc=doc)
+        rep["docx_path"] = str(docx_path)
+        rep["profile_path"] = prof.get("_profile_path")
+        out[target] = rep
+        severities.append(rep.get("severity", "pass"))
+    # Aggregate severity
+    if "fail" in severities:
+        overall = "fail"
+    elif "warn" in severities:
+        overall = "warn"
+    else:
+        overall = "pass"
+    return {
+        "overall_severity": overall,
+        "checks": out,
+        "summary": {
+            t: r.get("summary", "") for t, r in out.items()
+        },
+    }
 
 
 def _print_human(report: dict) -> None:
