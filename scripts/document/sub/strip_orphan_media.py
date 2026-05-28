@@ -234,8 +234,40 @@ def scan_orphans(docx_path: Path, deep: bool = False) -> dict:
     }
 
 
+def _rewrite_rels_drop_orphans(rels_xml: bytes, orphan_targets: set[str]) -> bytes:
+    """Drop <Relationship> entries whose Target points to a removed media file.
+
+    orphan_targets: zip-paths like "word/media/imageN.png" that have been deleted.
+    Returns rewritten rels XML bytes; if nothing changed, returns input unchanged.
+    """
+    parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    try:
+        root = etree.fromstring(rels_xml, parser=parser)
+    except etree.XMLSyntaxError:
+        return rels_xml
+    if root is None:
+        return rels_xml
+    changed = False
+    for rel in list(root.findall(f"{REL}Relationship")):
+        target = (rel.get("Target") or "").replace("\\", "/").lstrip("/")
+        if target.startswith("media/"):
+            zp = "word/" + target
+        elif "/media/" in target:
+            idx = target.find("media/")
+            zp = "word/" + target[idx:]
+        else:
+            continue
+        if zp in orphan_targets:
+            root.remove(rel)
+            changed = True
+    if not changed:
+        return rels_xml
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def rewrite_skip(docx_path: Path, out_path: Path, orphans: set[str]) -> int:
-    """重打包: 跳过 orphans 集合中的文件. 返回实际跳过数."""
+    """重打包: 跳过 orphans 集合中的文件 + 同步清理 rels 里指向它们的 Relationship.
+    返回实际跳过数 (媒体文件)."""
     skipped = 0
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     with zipfile.ZipFile(str(docx_path), "r") as zin:
@@ -244,7 +276,11 @@ def rewrite_skip(docx_path: Path, out_path: Path, orphans: set[str]) -> int:
                 if it.filename in orphans:
                     skipped += 1
                     continue
-                zout.writestr(it, zin.read(it.filename))
+                data = zin.read(it.filename)
+                # If it's a rels file, drop any Relationship pointing to a deleted media
+                if _RELS_RE.match(it.filename):
+                    data = _rewrite_rels_drop_orphans(data, orphans)
+                zout.writestr(it, data)
     shutil.move(str(tmp), str(out_path))
     return skipped
 
