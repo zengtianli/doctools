@@ -1,7 +1,7 @@
 """sub — distilled docx-processing subcommand modules (W1+W2+W3 · 2026-05-25)
 
-Distilled from `~/Work/projects/zdwp/projects/qual-supply/scripts/` per
-qual-supply CLAUDE.md « Word/docx 操作 SOP » + 一脚本一功能 ironclad rule.
+Distilled from 浙东引水 qual-supply 项目的 Word/docx 操作 SOP（原 zdwp monorepo,
+2026-05-26 已拆为独立 repo `~/Work/projects/qual-supply/`）+ 一脚本一功能 ironclad rule.
 
 Group modules (each exposes `register(subparsers)` for docx_cli.py dispatcher):
 

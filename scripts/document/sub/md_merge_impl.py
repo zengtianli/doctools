@@ -27,12 +27,14 @@ Distilled from panan-rigid-2026/scripts/merge_md_to_docx.py (A级通用, 2026-05
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import shutil
 from datetime import datetime
 from pathlib import Path
 from docx import Document
+from docx.shared import Inches
 
 # 复用 md_docx_template 的 md-table 解析/边框 helper, 不重写 (铁律 #5)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -83,6 +85,17 @@ def parse_md(filepath: str) -> list:
             else:
                 for tl in tbl_lines:  # 退化: 不足 2 行不成表 → 普通段落
                     blocks.append(("para", clean_markdown_text(tl.strip())))
+            continue
+        # 图片 ![alt](path) — 路径相对 md 文件目录解析
+        img_m = re.match(r"^!\[(.*?)\]\((.+?)\)\s*$", stripped)
+        if img_m:
+            alt, path = img_m.group(1), img_m.group(2).strip()
+            if not os.path.isabs(path):
+                path = os.path.normpath(
+                    os.path.join(os.path.dirname(os.path.abspath(filepath)), path)
+                )
+            blocks.append(("image", path, alt))
+            i += 1
             continue
         # 标题 ##..#####
         m = re.match(r"^(#{2,5})\s+(.+)$", line)
@@ -219,6 +232,20 @@ def apply(
                     if j < ncols:
                         table.rows[ri + 1].cells[j].text = ct
             new_elem = table._tbl  # add_table 追加在 body 末; addnext 移到 anchor 后
+        elif blk[0] == "image":
+            img_path, _alt = blk[1], blk[2]
+            new_p = doc.add_paragraph(style="Normal")
+            if os.path.exists(img_path):
+                pic = new_p.add_run().add_picture(img_path)
+                maxw = Inches(5.8)  # 超过正文宽则等比缩放
+                if pic.width > maxw:
+                    ratio = maxw / pic.width
+                    pic.width = int(pic.width * ratio)
+                    pic.height = int(pic.height * ratio)
+            else:
+                new_p.add_run(f"[图片缺失: {img_path}]")
+                print(f"WARN: 图片不存在, 插占位文本: {img_path}")
+            new_elem = new_p._element
         else:  # para
             new_p = doc.add_paragraph(blk[1], style="Normal")
             new_elem = new_p._element
