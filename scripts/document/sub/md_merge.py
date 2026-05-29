@@ -40,6 +40,14 @@ def _run(args) -> int:
         argv.append(str(args.end_idx))
     if getattr(args, "output_file", None):
         argv.append(str(args.output_file))
+    if getattr(args, "start_anchor", None):
+        argv += ["--start-anchor", str(args.start_anchor)]
+    if getattr(args, "end_anchor", None):
+        argv += ["--end-anchor", str(args.end_anchor)]
+    if getattr(args, "in_place", False):
+        argv.append("--in-place")
+    if getattr(args, "no_backup", False):
+        argv.append("--no-backup")
     extra = _rest_argv(args)
     argv.extend(extra)
     return exec_script("md_merge_impl", argv)
@@ -49,16 +57,20 @@ def register(subparsers) -> None:
     """Register `md-merge` as a top-level subcommand."""
     p = subparsers.add_parser(
         "md-merge",
-        help="replace a DOCX section with MD content (table-safe anchor reinsert)",
+        help="replace a DOCX section with MD content (table-safe; --in-place + .bak; --start/end-anchor)",
     )
     p.add_argument("md_file", help="source Markdown file")
     p.add_argument("docx_file", help="target DOCX file")
-    p.add_argument("start_idx", type=int,
-                   help="start paragraph index (heading paragraph, preserved + title updated from MD)")
-    p.add_argument("end_idx", type=int,
-                   help="end paragraph index (exclusive; next section heading)")
+    p.add_argument("start_idx", nargs="?", type=int,
+                   help="start paragraph index (heading; preserved + title updated). 可用 --start-anchor 替代")
+    p.add_argument("end_idx", nargs="?", type=int,
+                   help="end paragraph index (exclusive; next section heading). 可用 --end-anchor 替代")
     p.add_argument("output_file", nargs="?",
-                   help="output path (default: <docx>-merged.docx)")
+                   help="output path (default: <docx>-merged.docx; --in-place 时忽略)")
+    p.add_argument("--start-anchor", help="按标题文本定位 start_idx (省掉手查索引)")
+    p.add_argument("--end-anchor", help="按标题文本定位 end_idx (下一节标题)")
+    p.add_argument("--in-place", action="store_true", help="原地改 + 自动 .bak-时间戳 (Work §1.5)")
+    p.add_argument("--no-backup", action="store_true", help="配合 --in-place 跳过备份")
     p.add_argument("rest", nargs=argparse.REMAINDER,
                    help="extra args forwarded to underlying script")
     p.set_defaults(func=_run)

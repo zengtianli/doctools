@@ -26,8 +26,10 @@ Distilled from panan-rigid-2026/scripts/merge_md_to_docx.py (A级通用, 2026-05
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import shutil
+from datetime import datetime
 from pathlib import Path
 from docx import Document
 
@@ -57,12 +59,27 @@ def parse_md(filepath: str) -> list[tuple[str, str]]:
     return paragraphs
 
 
+def resolve_anchor(doc, anchor: str, *, from_idx: int = 0) -> int:
+    """返回 from_idx 起首个 stripped 文本 startswith/contains anchor 的段落 idx。
+
+    未匹配 → ValueError。用于 --start-anchor/--end-anchor 省掉手查索引那步。
+    """
+    norm = anchor.strip()
+    for i in range(from_idx, len(doc.paragraphs)):
+        t = (doc.paragraphs[i].text or "").strip()
+        if t.startswith(norm) or norm in t:
+            return i
+    raise ValueError(f"anchor 未匹配: {anchor!r}")
+
+
 def apply(
     md_file: str,
     docx_file: str,
     start_idx: int,
     end_idx: int,
     output_file: str | None = None,
+    in_place: bool = False,
+    no_backup: bool = False,
 ) -> str:
     """Merge MD into DOCX section and return output path.
 
@@ -76,11 +93,18 @@ def apply(
     Returns:
         Absolute path of saved output file.
     """
-    if output_file is None:
+    if in_place:
+        if not no_backup:
+            bak = f"{docx_file}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(docx_file, bak)
+            print(f"已备份: {bak}")
+        output_file = docx_file
+    elif output_file is None:
         p = Path(docx_file)
         output_file = str(p.parent / (p.stem + "-merged" + p.suffix))
 
-    shutil.copy2(docx_file, output_file)
+    if output_file != docx_file:
+        shutil.copy2(docx_file, output_file)
     doc = Document(output_file)
     body = doc.element.body
 
@@ -194,17 +218,38 @@ def apply_path(docx_path=None, args=None) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) < 5:
-        print(__doc__)
-        sys.exit(1)
+    ap = argparse.ArgumentParser(
+        prog="md-merge",
+        description="用 MD 内容替换 DOCX 指定节 (表格 anchor 安全回插)。"
+                    "支持位置索引 或 --start-anchor/--end-anchor 按标题定位；"
+                    "--in-place 原地改 + 自动 .bak-时间戳 (Work §1.5 协议)。",
+    )
+    ap.add_argument("md_file", help="源 Markdown")
+    ap.add_argument("docx_file", help="目标 DOCX")
+    ap.add_argument("start_idx", nargs="?", type=int, help="起始段落 idx (节标题段)")
+    ap.add_argument("end_idx", nargs="?", type=int, help="结束段落 idx (不含, 下一节标题)")
+    ap.add_argument("output_file", nargs="?", help="输出路径 (默认 <docx>-merged.docx; --in-place 时忽略)")
+    ap.add_argument("--start-anchor", help="按标题文本定位 start_idx (替代位置参数)")
+    ap.add_argument("--end-anchor", help="按标题文本定位 end_idx (下一节标题)")
+    ap.add_argument("--in-place", action="store_true", help="原地改 + 自动备份 .bak-时间戳")
+    ap.add_argument("--no-backup", action="store_true", help="配合 --in-place 跳过备份")
+    args = ap.parse_args()
 
-    md_file = sys.argv[1]
-    docx_file = sys.argv[2]
-    start_idx = int(sys.argv[3])
-    end_idx = int(sys.argv[4])
-    output_file = sys.argv[5] if len(sys.argv) > 5 else None
+    start_idx, end_idx = args.start_idx, args.end_idx
+    if args.start_anchor or args.end_anchor:
+        doc = Document(args.docx_file)
+        if args.start_anchor:
+            start_idx = resolve_anchor(doc, args.start_anchor)
+        if args.end_anchor:
+            end_idx = resolve_anchor(doc, args.end_anchor, from_idx=(start_idx or 0) + 1)
+        print(f"锚点解析: start_idx={start_idx} end_idx={end_idx}")
 
-    apply(md_file, docx_file, start_idx, end_idx, output_file)
+    if start_idx is None or end_idx is None:
+        print("[md-merge] 需位置参数 start_idx/end_idx, 或 --start-anchor/--end-anchor", file=sys.stderr)
+        return 2
+
+    apply(args.md_file, args.docx_file, start_idx, end_idx,
+          args.output_file, in_place=args.in_place, no_backup=args.no_backup)
     return 0
 
 
