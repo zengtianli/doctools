@@ -222,6 +222,9 @@ def register(subparsers) -> None:
     p.add_argument("--no-backup", action="store_true", help="跳过备份 (危险)")
     p.add_argument("--no-fix", action="store_true", help="health 不达锚也不跑 styleset restore (危险)")
     p.add_argument("--no-frontmatter", action="store_true", help="split 时不输出 00-frontmatter.docx")
-    p.add_argument("--fold-by-chapter", action="store_true", help="split 后每章 docx 挪进同名子目录 (便于下游 image/table extract 章内聚)")
+    p.add_argument("--fold-by-chapter", dest="fold_by_chapter", action="store_true", default=True,
+                   help="split 后每章 docx 挪进同名子目录 (便于下游 image/table extract 章内聚) [DEFAULT ON]")
+    p.add_argument("--no-fold-by-chapter", dest="fold_by_chapter", action="store_false",
+                   help="保留平铺产出 (老 SOP 兼容; 用 split/*.docx 一级 glob 的下游)")
     p.add_argument("--report", default=None, help="健康报告 HTML 输出路径 (default: <out-dir>/_health-report.html)")
     p.set_defaults(func=_run)
