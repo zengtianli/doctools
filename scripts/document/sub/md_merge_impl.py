@@ -27,36 +27,73 @@ Distilled from panan-rigid-2026/scripts/merge_md_to_docx.py (A级通用, 2026-05
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import shutil
 from datetime import datetime
 from pathlib import Path
 from docx import Document
 
+# 复用 md_docx_template 的 md-table 解析/边框 helper, 不重写 (铁律 #5)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from md_docx_template import (  # noqa: E402
+    parse_table_row,
+    is_separator_row,
+    set_table_border,
+    clean_markdown_text,
+)
 
-def parse_md(filepath: str) -> list[tuple[str, str]]:
-    """解析 MD 为 [(style_name, text)] 列表。
 
-    只处理 ##/###/####/##### 标题和普通段落（空行跳过）。
-    Returns list of (Word style name, text) tuples.
+def parse_md(filepath: str) -> list:
+    """解析 MD 为 block 列表,支持 标题 / 段落 / markdown 表格→w:tbl。
+
+    block 形态:
+      ("heading", level:int, text)     —— ## .. ##### → level 2..5
+      ("para", text)                   —— 普通段落(经 clean_markdown_text 去 **bold**/`code`/$math$ 语法噪音)
+      ("table", headers:list, rows:list[list]) —— markdown 表格(管道符 + 分隔行)
+
+    2026-05-29 (GOAL report-automation Phase 0-A): 修复原 parse_md 只认标题+段、
+    markdown 表格静默写成字面管道符 Normal 段的 🔴 缺口。表格解析复用 md_docx_template
+    的 parse_table_row/is_separator_row(铁律 #5 不重写)。
     """
-    paragraphs: list[tuple[str, str]] = []
+    blocks: list = []
     with open(filepath, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.rstrip("\n")
-            if line.startswith("##### "):
-                paragraphs.append(("Heading 5", line[6:]))
-            elif line.startswith("#### "):
-                paragraphs.append(("Heading 4", line[5:]))
-            elif line.startswith("### "):
-                paragraphs.append(("Heading 3", line[4:]))
-            elif line.startswith("## "):
-                paragraphs.append(("Heading 2", line[3:]))
-            elif line.strip() == "":
-                continue
+        lines = f.read().split("\n")
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].rstrip()
+        stripped = line.strip()
+        if stripped == "":
+            i += 1
+            continue
+        # 表格: 连续 | 开头行 (≥2 行: 表头 + 分隔 + 数据)
+        if stripped.startswith("|"):
+            tbl_lines = []
+            while i < n and lines[i].strip().startswith("|"):
+                tbl_lines.append(lines[i])
+                i += 1
+            if len(tbl_lines) >= 2:
+                headers = [clean_markdown_text(c) for c in parse_table_row(tbl_lines[0])]
+                rows = [
+                    [clean_markdown_text(c) for c in parse_table_row(tl)]
+                    for tl in tbl_lines[2:]
+                    if not is_separator_row(tl)
+                ]
+                blocks.append(("table", headers, rows))
             else:
-                paragraphs.append(("Normal", line))
-    return paragraphs
+                for tl in tbl_lines:  # 退化: 不足 2 行不成表 → 普通段落
+                    blocks.append(("para", clean_markdown_text(tl.strip())))
+            continue
+        # 标题 ##..#####
+        m = re.match(r"^(#{2,5})\s+(.+)$", line)
+        if m:
+            blocks.append(("heading", len(m.group(1)), m.group(2).strip()))
+            i += 1
+            continue
+        # 普通段落
+        blocks.append(("para", clean_markdown_text(stripped)))
+        i += 1
+    return blocks
 
 
 def resolve_anchor(doc, anchor: str, *, from_idx: int = 0) -> int:
@@ -148,26 +185,43 @@ def apply(
     for p_elem in paras:
         body.remove(p_elem)
 
-    md_paras = parse_md(md_file)
+    blocks = parse_md(md_file)
 
     # If MD starts with a heading, update the section heading text
-    if md_paras and md_paras[0][0].startswith("Heading"):
-        title_text = md_paras[0][1]
+    if blocks and blocks[0][0] == "heading":
+        title_text = blocks[0][2]
         p_start = doc.paragraphs[start_idx]
         for run in p_start.runs:
             run.text = ""
         if p_start.runs:
             p_start.runs[0].text = title_text
-        md_paras = md_paras[1:]
+        blocks = blocks[1:]
         print(f"标题更新为: {title_text}")
 
-    print(f"插入 {len(md_paras)} 段新内容")
+    n_tbl = sum(1 for b in blocks if b[0] == "table")
+    print(f"插入 {len(blocks)} 个 block (含 {n_tbl} 个表格)")
 
-    # Insert MD paragraphs after the section heading
+    # Insert blocks after the section heading (para/heading/table)
     ref = start_elem
-    for style, text in md_paras:
-        new_p = doc.add_paragraph(text, style=style)
-        new_elem = new_p._element
+    for blk in blocks:
+        if blk[0] == "heading":
+            new_p = doc.add_paragraph(blk[2], style=f"Heading {min(blk[1], 5)}")
+            new_elem = new_p._element
+        elif blk[0] == "table":
+            headers, rows = blk[1], blk[2]
+            ncols = len(headers)
+            table = doc.add_table(rows=1 + len(rows), cols=ncols)
+            set_table_border(table)
+            for j, h in enumerate(headers):
+                table.rows[0].cells[j].text = h
+            for ri, rd in enumerate(rows):
+                for j, ct in enumerate(rd):
+                    if j < ncols:
+                        table.rows[ri + 1].cells[j].text = ct
+            new_elem = table._tbl  # add_table 追加在 body 末; addnext 移到 anchor 后
+        else:  # para
+            new_p = doc.add_paragraph(blk[1], style="Normal")
+            new_elem = new_p._element
         ref.addnext(new_elem)
         ref = new_elem
 
