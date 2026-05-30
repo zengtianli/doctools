@@ -541,7 +541,7 @@ def render_rich_html(
   <h2>📊 体检摘要</h2>
   <div class="summary-grid">
     <div class="stat"><span class="n">{total_paras}</span><span class="l">总段落数</span></div>
-    <div class="stat"><span class="n">{sum(h_count.values()) if h_count else 0}</span><span class="l">标题总数</span></div>
+    <div class="stat"><span class="n">{sum(v for v in h_count.values() if isinstance(v, (int, float))) if h_count else 0}</span><span class="l">标题总数</span></div>
     <div class="stat"><span class="n">{len(cap_records)}</span><span class="l">Caption 总数</span></div>
     <div class="stat {'bad' if empty_n else 'ok'}"><span class="n">{empty_n}</span><span class="l">空 Caption</span></div>
     <div class="stat {'warn' if wrong_style_n else 'ok'}"><span class="n">{wrong_style_n}</span><span class="l">Caption 样式偏</span></div>
@@ -561,7 +561,7 @@ def render_rich_html(
   <h2>🏗️ 文档结构</h2>
   <div class="kv">
     <dt>总段落</dt><dd>{total_paras}</dd>
-    <dt>标题分布</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (h_count or {{}}).items()) or '—'}</dd>
+    <dt>标题分布</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (h_count or {{}}).items() if not isinstance(v, (dict, list, set))) or '—'}</dd>
     <dt>Caption 分布(按样式)</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (cap_by_style or {{}}).items()) or '—'}</dd>
     <dt>可用 caption 样式</dt><dd>{' '.join(f'<span class=tag>{_esc(s)}</span>' for s in (caption_styles_avail or [])) or '—'}</dd>
   </div>
