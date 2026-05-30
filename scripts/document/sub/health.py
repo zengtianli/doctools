@@ -532,6 +532,23 @@ def check_heading_number_stale(doc_path: Path, tmp_dir: Path) -> dict:
 
 # ─── 交付物不变量 check 组 (gate, read-only, import 复用现有 sub/*) ─────────────
 
+def _is_non_captioned_report(doc_path: Path) -> bool:
+    """零图注守卫: 复用 shape_contract.capture_structure 拿 caption 总数。
+
+    caption_figure_count == 0 且 caption_table_count == 0 → 该 docx 非
+    captioned-report (简历 / 无图注论文 / 版式表), caption 类 gate check
+    对它误报, 应 SKIP。capture 失败 (无 shape_contract / 抛异常) → 返回
+    False (不守卫, 让原 check 照常跑, 失败信息走原 check 的 error 通道)。
+    """
+    try:
+        from . import shape_contract as sc  # type: ignore
+        snap = sc.capture_structure(doc_path)
+    except Exception:
+        return False
+    return (snap.get("caption_figure_count", 0) == 0
+            and snap.get("caption_table_count", 0) == 0)
+
+
 def check_caption_table_pairing(doc_path: Path) -> dict:
     """import audit_table_pairing → 报 orphan caption/table + 远距配对 + 低分配对.
 
@@ -540,6 +557,10 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
       caption-name-content-mismatch (低分配对) / empty-caption-name.
     distance 在底层 issue 的 details 里 (>5 才报 orphan-caption); 这里汇总计数。
     """
+    # 零图注守卫: 非 captioned-report (简历/无图注表) → SKIP, 不拦 gate
+    if _is_non_captioned_report(doc_path):
+        return {"found": False, "skipped": True,
+                "reason": "非 captioned-report (零图注) → 跳过配对检查"}
     try:
         from . import audit_table_pairing as atp  # type: ignore
     except Exception as e:
@@ -753,6 +774,12 @@ def check_caption_count_consistency(doc_path: Path) -> dict:
         snap = sc.capture_structure(doc_path)
     except Exception as e:
         return {"found": False, "error": f"{type(e).__name__}: {e}"}
+
+    # 零图注守卫: 非 captioned-report (简历/无图注表) → SKIP, 不拦 gate
+    if (snap.get("caption_figure_count", 0) == 0
+            and snap.get("caption_table_count", 0) == 0):
+        return {"found": False, "skipped": True,
+                "reason": "非 captioned-report (零图注) → 跳过计数检查"}
 
     fig_set = list(snap.get("figure_number_set", []))
     tbl_set = list(snap.get("table_number_set", []))
