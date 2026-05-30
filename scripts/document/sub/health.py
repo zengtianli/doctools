@@ -54,6 +54,26 @@ SAFE_FIX = {
 
 ALL_CHECKS = list(SEVERITY.keys())
 
+# ─── 交付物不变量 check 组 (gate) ──────────────────────────────────────────────
+# 这 5 个是「交付前 gate」类不变量, 全部 read-only, 默认不在 ALL_CHECKS 里
+# (避免拖慢现有 8 病种 diagnose workflow), 通过 --gate / --checks 显式 opt-in.
+# 任一 found → gate exit 非 0; 全 clean / skipped → exit 0.
+GATE_CHECKS = [
+    "caption-table-pairing",
+    "orphan-media",
+    "forbidden-source-placeholders",
+    "caption-count-consistency",
+    "numbering-depth-uniformity",
+]
+
+GATE_SEVERITY = {
+    "caption-table-pairing":          "High",
+    "orphan-media":                   "Med",
+    "forbidden-source-placeholders":  "High",
+    "caption-count-consistency":      "High",
+    "numbering-depth-uniformity":     "Med",
+}
+
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
@@ -510,6 +530,366 @@ def check_heading_number_stale(doc_path: Path, tmp_dir: Path) -> dict:
     return {"found": False, "no_prefix_count": no_prefix, "with_prefix_count": with_prefix}
 
 
+# ─── 交付物不变量 check 组 (gate, read-only, import 复用现有 sub/*) ─────────────
+
+def check_caption_table_pairing(doc_path: Path) -> dict:
+    """import audit_table_pairing → 报 orphan caption/table + 远距配对 + 低分配对.
+
+    复用 audit_table_pairing.audit() 的 6 类 issue (不 copy)。gate-relevant 子集:
+      orphan-caption-no-downstream-tbl / orphan-tbl-no-upstream-caption /
+      caption-name-content-mismatch (低分配对) / empty-caption-name.
+    distance 在底层 issue 的 details 里 (>5 才报 orphan-caption); 这里汇总计数。
+    """
+    try:
+        from . import audit_table_pairing as atp  # type: ignore
+    except Exception as e:
+        return {"found": False, "error": f"import audit_table_pairing: {type(e).__name__}: {e}"}
+    try:
+        data = atp.audit(doc_path)
+    except Exception as e:
+        return {"found": False, "error": f"{type(e).__name__}: {e}"}
+
+    summary = data.get("summary", {})
+    issues = data.get("issues", [])
+    # gate-relevant issue 类型 (孤儿 / 内容不匹配 / 空名)
+    GATE_TYPES = {
+        "orphan-caption-no-downstream-tbl",
+        "orphan-tbl-no-upstream-caption",
+        "caption-name-content-mismatch",
+        "empty-caption-name",
+    }
+    bad = [i for i in issues if i.get("type") in GATE_TYPES]
+    base = {
+        "captions": summary.get("captions", 0),
+        "tbls": summary.get("tbls", 0),
+        "orphan_captions": summary.get("orphan_captions", 0),
+        "orphan_tbls": summary.get("orphan_tbls", 0),
+        "content_mismatches": summary.get("content_mismatches", 0),
+        "empty_names": summary.get("empty_names", 0),
+    }
+    if bad:
+        type_counts: Counter = Counter(i["type"] for i in bad)
+        base.update({
+            "found": True,
+            "bad_count": len(bad),
+            "by_type": dict(type_counts),
+            "examples": [
+                {"type": i["type"], **{k: v for k, v in i.items()
+                                       if k in ("caption_number", "caption_name", "tbl_id", "details")}}
+                for i in bad[:8]
+            ],
+            "safe_fix": False,
+            "fix_hint": "人工核对图注↔表配对 (caption pair / pair_table_captions)",
+        })
+        return base
+    base["found"] = False
+    return base
+
+
+def check_orphan_media(doc_path: Path) -> dict:
+    """复用 strip_orphan_media.scan_orphans (只读 scan, 不删) → 报模板媒体残留.
+
+    deep=True: 既看 rels 是否仍 list, 又看 body 是否真引用此 rId (split/裁表后
+    rels 未裁的残留场景)。gate 用 deep 抓最全的 orphan 集。
+    """
+    try:
+        from . import strip_orphan_media as som  # type: ignore
+    except Exception as e:
+        return {"found": False, "error": f"import strip_orphan_media: {type(e).__name__}: {e}"}
+    try:
+        scan = som.scan_orphans(doc_path, deep=True)
+    except Exception as e:
+        return {"found": False, "error": f"{type(e).__name__}: {e}"}
+
+    orphan_count = scan.get("orphan_count", 0)
+    base = {
+        "referenced_count": scan.get("referenced_count", 0),
+        "media_in_zip_count": scan.get("media_in_zip_count", 0),
+        "orphan_count": orphan_count,
+        "orphan_compressed_bytes": scan.get("orphan_compressed_bytes", 0),
+        "deep": True,
+    }
+    if orphan_count > 0:
+        base.update({
+            "found": True,
+            "examples": [n.replace("word/media/", "") for n in scan.get("orphans", [])[:10]],
+            "safe_fix": True,
+            "fix_hint": "strip orphan media (docx_cli.py strip ... / strip_orphan_media.py)",
+        })
+        return base
+    base["found"] = False
+    return base
+
+
+# 源地名占位残留: 默认目标地名占位 pattern (城市级地名残留判定靠用户配置列表)
+def _load_forbidden_source_names(doc_path: Path) -> tuple[list[str], str]:
+    """读「commit_gate.forbidden_source_names」配置列表。
+
+    查找顺序 (第一个命中即用):
+      1. <docx 同目录>/.commit_gate.json     {"forbidden_source_names": [...]}
+      2. <docx 同目录>/.claude/settings.json {"commit_gate": {"forbidden_source_names": [...]}}
+      3. 逐级向上找 project root 的 .claude/settings.json (止于 home 或 ~/Dev)
+
+    返回 (names, source_label)。列表为空 / 找不到 → ([], "")。
+    严禁硬编码任何具体地名 (如 "磐安")。
+    """
+    import os
+
+    def _from_commit_gate_json(p: Path) -> list[str]:
+        if not p.exists():
+            return []
+        try:
+            d = json.loads(p.read_text("utf-8"))
+        except Exception:
+            return []
+        v = d.get("forbidden_source_names") or d.get("commit_gate", {}).get("forbidden_source_names")
+        return [str(x) for x in v] if isinstance(v, list) else []
+
+    def _from_settings(p: Path) -> list[str]:
+        if not p.exists():
+            return []
+        try:
+            d = json.loads(p.read_text("utf-8"))
+        except Exception:
+            return []
+        cg = d.get("commit_gate") or {}
+        v = cg.get("forbidden_source_names")
+        return [str(x) for x in v] if isinstance(v, list) else []
+
+    parent = doc_path.resolve().parent
+    # 1. <docx 同目录>/.commit_gate.json
+    names = _from_commit_gate_json(parent / ".commit_gate.json")
+    if names:
+        return names, str(parent / ".commit_gate.json")
+    # 2. <docx 同目录>/.claude/settings.json
+    names = _from_settings(parent / ".claude" / "settings.json")
+    if names:
+        return names, str(parent / ".claude" / "settings.json")
+    # 3. 逐级向上找 project root .claude/settings.json
+    home = Path.home().resolve()
+    cur = parent
+    seen = set()
+    while True:
+        if cur in seen:
+            break
+        seen.add(cur)
+        cand = cur / ".claude" / "settings.json"
+        if cand.exists():
+            names = _from_settings(cand)
+            if names:
+                return names, str(cand)
+        if cur == home or cur == cur.parent:
+            break
+        cur = cur.parent
+    return [], ""
+
+
+def check_forbidden_source_placeholders(doc_path: Path) -> dict:
+    """可配置: 报正文中残留的「源地名」(模板从 A 地复刻到 B 地后 A 的残留)。
+
+    配置走 _load_forbidden_source_names (docx 同目录 .commit_gate.json /
+    .claude settings.json 的 commit_gate.forbidden_source_names)。
+    **列表为空 → skipped (不算 found, 不拦 gate)**。严禁硬编码地名。
+    复用 report_quality_check 的「逐行扫文本 + 上下文截取」扫描范式。
+    """
+    names, src_label = _load_forbidden_source_names(doc_path)
+    if not names:
+        return {"found": False, "skipped": True,
+                "reason": "未配置 commit_gate.forbidden_source_names (跳过该 check)"}
+
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            doc_xml = z.open("word/document.xml").read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    # 段落文本逐段提取 (复用 _para_text 范式), 命中即记上下文 (前后 15 字)
+    hits: list[dict] = []
+    by_name: Counter = Counter()
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        text = _para_text(para_xml)
+        if not text:
+            continue
+        for nm in names:
+            col = text.find(nm)
+            while col != -1:
+                start = max(0, col - 15)
+                end = min(len(text), col + len(nm) + 15)
+                by_name[nm] += 1
+                if len(hits) < 30:
+                    hits.append({"name": nm, "context": text[start:end].strip()})
+                col = text.find(nm, col + len(nm))
+
+    if hits:
+        return {
+            "found": True,
+            "config_source": src_label,
+            "forbidden_names": names,
+            "total_hits": sum(by_name.values()),
+            "by_name": dict(by_name),
+            "examples": hits[:12],
+            "safe_fix": False,
+            "fix_hint": "人工替换残留源地名 (复刻模板时漏改的章节)",
+        }
+    return {"found": False, "config_source": src_label, "forbidden_names": names,
+            "total_hits": 0}
+
+
+def check_caption_count_consistency(doc_path: Path) -> dict:
+    """import shape_contract → 报「caption 编号集合 vs caption 段计数不一致 + 跳号」。
+
+    复用 shape_contract.capture_structure() 的 figure_number_set / table_number_set
+    (caption 文本里的 图X-Y / 表X-Y 集合) + caption_figure_count / caption_table_count
+    (按 style name 数的 caption 段数)。
+    报两类:
+      A) 集合 size != caption 段计数 (声明编号数 ≠ caption 段数)
+      B) 同章内编号跳号 (出现 图3-7 但章内 max seq 之前缺号)
+    """
+    try:
+        from . import shape_contract as sc  # type: ignore
+    except Exception as e:
+        return {"found": False, "error": f"import shape_contract: {type(e).__name__}: {e}"}
+    try:
+        snap = sc.capture_structure(doc_path)
+    except Exception as e:
+        return {"found": False, "error": f"{type(e).__name__}: {e}"}
+
+    fig_set = list(snap.get("figure_number_set", []))
+    tbl_set = list(snap.get("table_number_set", []))
+    fig_cap_cnt = snap.get("caption_figure_count", 0)
+    tbl_cap_cnt = snap.get("caption_table_count", 0)
+
+    NUM_RE = re.compile(r"[图表]\s*([\d．.]+)[-—–]([\d．.]+)")
+
+    def _gap_analysis(num_set: list[str]) -> list[dict]:
+        """按章聚 seq, 找跳号 (章内 1..max 缺号)。"""
+        by_chapter: dict[str, list[int]] = {}
+        for s in num_set:
+            m = NUM_RE.search(s)
+            if not m:
+                continue
+            ch = m.group(1).replace("．", ".").rstrip(".")
+            try:
+                seq = int(m.group(2).replace("．", ".").rstrip("."))
+            except ValueError:
+                continue
+            by_chapter.setdefault(ch, []).append(seq)
+        gaps = []
+        for ch, seqs in sorted(by_chapter.items()):
+            uniq = sorted(set(seqs))
+            if not uniq:
+                continue
+            full = set(range(1, max(uniq) + 1))
+            missing = sorted(full - set(uniq))
+            if missing:
+                gaps.append({"chapter": ch, "present": uniq, "missing_seq": missing})
+        return gaps
+
+    fig_gaps = _gap_analysis(fig_set)
+    tbl_gaps = _gap_analysis(tbl_set)
+
+    # A) size 不一致 (集合大小 vs caption 段数). 容差: 编号集合可能 < 段数
+    #    (无编号 caption 段) 但 > 段数 一定异常 (编号多于段)。两向都报。
+    fig_size_mismatch = (fig_cap_cnt > 0 or len(fig_set) > 0) and len(fig_set) != fig_cap_cnt
+    tbl_size_mismatch = (tbl_cap_cnt > 0 or len(tbl_set) > 0) and len(tbl_set) != tbl_cap_cnt
+
+    found = bool(fig_gaps or tbl_gaps or fig_size_mismatch or tbl_size_mismatch)
+    base = {
+        "figure_number_set_size": len(fig_set),
+        "caption_figure_count": fig_cap_cnt,
+        "table_number_set_size": len(tbl_set),
+        "caption_table_count": tbl_cap_cnt,
+        "figure_gaps": fig_gaps,
+        "table_gaps": tbl_gaps,
+    }
+    if found:
+        reasons = []
+        if fig_size_mismatch:
+            reasons.append(f"图: 编号集 {len(fig_set)} ≠ caption 段 {fig_cap_cnt}")
+        if tbl_size_mismatch:
+            reasons.append(f"表: 编号集 {len(tbl_set)} ≠ caption 段 {tbl_cap_cnt}")
+        if fig_gaps:
+            reasons.append(f"图跳号 {len(fig_gaps)} 章")
+        if tbl_gaps:
+            reasons.append(f"表跳号 {len(tbl_gaps)} 章")
+        base.update({
+            "found": True,
+            "reasons": reasons,
+            "safe_fix": False,
+            "fix_hint": "人工核对 caption 编号连续性 (renumber / caption number)",
+        })
+        return base
+    base["found"] = False
+    return base
+
+
+def check_numbering_depth_uniformity(doc_path: Path) -> dict:
+    """扩 audit_heading_numbers.PREFIX_RE + caption 编号 pattern → 报深度分布散布 >1 级.
+
+    复用 audit_heading_numbers.PREFIX_RE (^\\d+(\\.\\d+)*\\s) 数标题数字前缀深度;
+    caption (图/表) 用 X-Y 视为深度 2。报「编号深度分布散布跨度 > 1 级」(混用
+    1.2 / 1.2.3.4 这种不统一编号深度的迹象)。
+    """
+    try:
+        from . import audit_heading_numbers as ahn  # type: ignore
+    except Exception as e:
+        return {"found": False, "error": f"import audit_heading_numbers: {type(e).__name__}: {e}"}
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            doc_xml = z.open("word/document.xml").read().decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+    PREFIX_RE = ahn.PREFIX_RE  # ^\d+(?:\.\d+)*\s  (复用, 不重定义)
+
+    heading_depths: list[int] = []
+    for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
+        if not sm:
+            continue
+        # 仅看 heading 系样式 (复用 audit_heading_numbers 的归一)
+        norm = ahn._normalize_style(sm.group(1))
+        if norm not in {"Heading 1", "Heading 2", "Heading 3", "Heading 4"}:
+            continue
+        text = _para_text(para_xml)
+        m = PREFIX_RE.match(text)
+        if not m:
+            continue
+        depth = m.group(0).strip().count(".") + 1
+        heading_depths.append(depth)
+
+    if not heading_depths:
+        return {"found": False, "reason": "no headings with numeric prefix"}
+
+    counter = Counter(heading_depths)
+    depths_present = sorted(counter)
+    span = depths_present[-1] - depths_present[0]
+    # 单层主导 = 占比最高深度 / 总数
+    dominant_depth, dominant_n = counter.most_common(1)[0]
+    coverage = dominant_n / len(heading_depths)
+    base = {
+        "heading_count": len(heading_depths),
+        "depth_distribution": dict(counter),
+        "depth_span": span,
+        "dominant_depth": dominant_depth,
+        "dominant_coverage": round(coverage, 3),
+    }
+    # found = 深度散布跨度 > 1 级 (典型: 同文档混 1 级和 4 级标题前缀深度, 无中间级)
+    # span > 1 才报 (span<=1 = 自然相邻深度, 正常文档)
+    if span > 1:
+        present_set = set(depths_present)
+        missing_mid = sorted(set(range(depths_present[0], depths_present[-1] + 1)) - present_set)
+        base.update({
+            "found": True,
+            "missing_mid_depths": missing_mid,
+            "safe_fix": False,
+            "fix_hint": "编号深度散布跨度 >1 级, 人工核对标题层级 (outline / fix heading)",
+        })
+        return base
+    base["found"] = False
+    return base
+
+
 # ─── HealthChecker ────────────────────────────────────────────────────────────
 
 class HealthChecker:
@@ -557,6 +937,17 @@ class HealthChecker:
             return check_duplicate_figures(dp, td)
         if check_id == "heading-number-stale":
             return check_heading_number_stale(dp, td)
+        # ── 交付物不变量 gate check 组 (read-only, import 复用现有 sub/*) ──
+        if check_id == "caption-table-pairing":
+            return check_caption_table_pairing(dp)
+        if check_id == "orphan-media":
+            return check_orphan_media(dp)
+        if check_id == "forbidden-source-placeholders":
+            return check_forbidden_source_placeholders(dp)
+        if check_id == "caption-count-consistency":
+            return check_caption_count_consistency(dp)
+        if check_id == "numbering-depth-uniformity":
+            return check_numbering_depth_uniformity(dp)
         return {"found": False, "error": f"unknown check: {check_id}"}
 
 
@@ -640,6 +1031,10 @@ class HealthFixer:
 def _parse_checks(checks_str: str) -> list[str]:
     if checks_str == "all":
         return ALL_CHECKS
+    if checks_str == "gate":
+        return list(GATE_CHECKS)
+    if checks_str == "all+gate":
+        return ALL_CHECKS + list(GATE_CHECKS)
     return [c.strip() for c in checks_str.split(",") if c.strip()]
 
 
@@ -704,6 +1099,80 @@ def cmd_diagnose(args) -> int:
         style = getattr(args, "html_style", "rich") or "rich"
         _write_html_report(doc_path, results, rc, style=style,
                            tmp_dir=checker._tmp_dir)
+
+    return rc
+
+
+def cmd_gate(args) -> int:
+    """交付前 gate: 只跑 5 个不变量 check, 任一 found → exit 非 0, 输出简短 JSON.
+
+    skipped (如未配 forbidden_source_names) 不算 found, 不拦 gate。
+    --checks 可缩减/扩 (默认 GATE_CHECKS 全 5)。
+    """
+    doc_path = Path(args.docx_path)
+    if not doc_path.exists():
+        print(json.dumps({"docx": str(doc_path), "error": "file not found",
+                          "gate": "ERROR", "exit_code": 2}, ensure_ascii=False))
+        return 2
+
+    checks_str = getattr(args, "checks", "gate") or "gate"
+    checks = _parse_checks(checks_str)
+    # gate 只允许跑 GATE_CHECKS 子集 (防误把 8 病种塞进 gate)
+    checks = [c for c in checks if c in GATE_CHECKS] or list(GATE_CHECKS)
+
+    workers = getattr(args, "workers", 5) or 5
+    checker = HealthChecker(doc_path, workers=workers)
+    results = checker.run_all(checks)
+
+    failed: list[str] = []
+    skipped: list[str] = []
+    errored: list[str] = []
+    summary: dict[str, dict] = {}
+    for cid in checks:
+        res = results.get(cid, {"found": False})
+        is_skip = res.get("skipped", False)
+        has_err = bool(res.get("error"))
+        is_found = res.get("found", False)
+        status = ("ERROR" if has_err else
+                  "SKIP" if is_skip else
+                  "FAIL" if is_found else "PASS")
+        summary[cid] = {
+            "status": status,
+            "severity": GATE_SEVERITY.get(cid, "Med"),
+            "detail": (res.get("error") if has_err else
+                       res.get("reason") if is_skip else
+                       res.get("fix_hint", "") if is_found else "ok"),
+        }
+        if status == "FAIL":
+            failed.append(cid)
+        elif status == "SKIP":
+            skipped.append(cid)
+        elif status == "ERROR":
+            errored.append(cid)
+
+    # exit code: 任一 FAIL → 2; 任一 ERROR (check 自身炸, 无法判断) → 1; 否则 0
+    rc = 2 if failed else (1 if errored else 0)
+    gate_status = "FAIL" if failed else ("ERROR" if errored else "PASS")
+
+    payload = {
+        "docx": str(doc_path),
+        "gate": gate_status,
+        "exit_code": rc,
+        "failed": failed,
+        "skipped": skipped,
+        "errored": errored,
+        "checks": summary,
+    }
+    if getattr(args, "verbose", False):
+        payload["full_results"] = results
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    report_path = getattr(args, "report", None)
+    if report_path:
+        rp = Path(report_path)
+        full = dict(payload)
+        full["full_results"] = results
+        rp.write_text(json.dumps(full, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return rc
 
@@ -836,3 +1305,18 @@ def register(subparsers) -> None:
                       help="HTML 风格: rich (默认富 HTML / vault-citizen) | simple (单表)")
     full.add_argument("--dry-run", action="store_true", help="不写文件")
     full.set_defaults(func=cmd_full)
+
+    # gate — 交付前不变量 gate (只跑 5 个不变量 check, 任一 found → exit 非 0)
+    gate = sp.add_parser(
+        "gate",
+        help="交付前不变量 gate (5 个 read-only 不变量 check, 任一 found → exit 非 0)",
+    )
+    gate.add_argument("docx_path", help="target docx")
+    gate.add_argument(
+        "--checks", default="gate",
+        help="逗号分隔 gate check ID 或 'gate' (默认全 5); 仅 GATE_CHECKS 子集生效",
+    )
+    gate.add_argument("--report", help="完整 gate 结果 JSON 输出路径")
+    gate.add_argument("--verbose", action="store_true", help="JSON 内含每个 check 的完整结果")
+    gate.add_argument("--workers", type=int, default=5, help="并发线程数 (default: 5)")
+    gate.set_defaults(func=cmd_gate)
