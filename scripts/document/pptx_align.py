@@ -15,6 +15,7 @@ OOXML 操作沉淀为总部单功能子命令。与 pptx_tools.py(font/format/ta
     python3 pptx_align.py layout      <pptx> --map "3:13,4:14" # 改 slide→layout 引用(逗号分隔 slideN:layoutN)
     python3 pptx_align.py tablestyle  <pptx> --style "{GUID}"  # 全部表统一为某 tableStyleId
     python3 pptx_align.py titlecolor  <pptx> --color bg1 [--pattern '^[（(][一二三四五六七八九十]']  # 标题run补颜色
+    python3 pptx_align.py textboxfill <pptx> [--match bg1-alpha|any-solid] [--dry-run]  # 文本框 spPr 填充→透明(noFill)
     python3 pptx_align.py render      <pptx> [--pages 1,3,10] [--dpi 110] [--outdir DIR]  # soffice→PNG 验证
 
 所有写操作默认 backup(.bak-YYYY... 由调用方负责或加 --backup);本模块写前自检 lsof 占用。
@@ -199,6 +200,78 @@ def cmd_titlecolor(path, args):
     return 0
 
 
+# ── textboxfill:文本框 spPr 填充 → 透明(noFill) ────────────────
+# 把"文字文本框"(<p:sp> 内含 <p:txBody>)的 shape 级填充改成透明。
+# 只动 <p:spPr> 直接子级的 <a:solidFill>,绝不碰 <p:txBody> 内 run 文字色
+# (<a:rPr> 里的 solidFill 结构上在 txBody 内,被 spPr 块边界天然隔离)。
+# --match 选目标填充签名:
+#   bg1-alpha (默认) — 只动 <a:schemeClr val="bg1"> 含 <a:alpha> 的半透明白底遮罩
+#                       (保护纯色设计块/渐变块/无 alpha 的实底色)
+#   any-solid        — 文本框所有 spPr 级 solidFill 都改透明(含纯色块,慎用)
+_SPPR_RE = re.compile(r'<p:spPr\b[^>]*>.*?</p:spPr>', re.S)
+_SOLIDFILL_RE = re.compile(r'<a:solidFill>.*?</a:solidFill>', re.S)
+
+
+def _is_bg1_alpha(solidfill_xml):
+    """该 solidFill 是否 schemeClr=bg1 且带 alpha(半透明白底遮罩)。"""
+    sc = re.search(r'<a:schemeClr val="(\w+)"\s*>(.*?)</a:schemeClr>', solidfill_xml, re.S)
+    if not sc or sc.group(1) != 'bg1':
+        return False
+    return '<a:alpha' in sc.group(2)
+
+
+def cmd_textboxfill(path, args):
+    if not _lsof_guard(path):
+        return 1
+    mode = args.match
+    with zipfile.ZipFile(path) as z:
+        items = {n: z.read(n) for n in z.namelist()}
+        infos = {n: z.getinfo(n) for n in z.namelist()}
+
+    total = 0
+    per_page = {}
+    for n in list(items):
+        if not SLIDE_RE.match(n):
+            continue
+        num = int(SLIDE_RE.match(n).group(1))
+        x = items[n].decode('utf-8', 'ignore')
+
+        def fix_sp(m):
+            sp = m.group(0)
+            if '<p:txBody>' not in sp:        # 仅文字文本框
+                return sp
+            spm = _SPPR_RE.search(sp)
+            if not spm:
+                return sp
+            spPr = spm.group(0)
+
+            def repl_fill(fm):
+                fill = fm.group(0)
+                if mode == 'bg1-alpha' and not _is_bg1_alpha(fill):
+                    return fill               # 保护非 bg1-alpha 填充(纯色块等)
+                return '<a:noFill/>'
+            new_spPr = _SOLIDFILL_RE.sub(repl_fill, spPr)
+            if new_spPr == spPr:
+                return sp
+            cnt = spPr.count('<a:solidFill>') - new_spPr.count('<a:solidFill>')
+            fix_sp.hits += cnt
+            return sp.replace(spPr, new_spPr, 1)
+        fix_sp.hits = 0
+
+        x2 = re.sub(r'<p:sp>.*?</p:sp>', fix_sp, x, flags=re.S)
+        if x2 != x:
+            items[n] = x2.encode()
+            per_page[num] = fix_sp.hits
+            total += fix_sp.hits
+
+    if not args.dry_run and total:
+        _rewrite(path, items, infos)
+    tag = '[dry-run] ' if args.dry_run else ''
+    pages = ','.join(f'{p}({c})' for p, c in sorted(per_page.items()))
+    print(f"{tag}文本框填充→透明(match={mode}): {total} 处, 涉及页 [{pages}]")
+    return 0
+
+
 # ── render:soffice → PNG 验证 ──────────────────────────────────
 def cmd_render(path, args):
     soffice = next((p for p in ['/opt/homebrew/bin/soffice',
@@ -270,6 +343,12 @@ def main():
                    help='标题文本匹配正则(默认 (一)(二)类)')
     c.add_argument('--dry-run', action='store_true')
 
+    tf = sub.add_parser('textboxfill', help='文本框 spPr 填充→透明(noFill)')
+    tf.add_argument('pptx')
+    tf.add_argument('--match', choices=['bg1-alpha', 'any-solid'], default='bg1-alpha',
+                    help='bg1-alpha(默认,只动半透明白底遮罩)| any-solid(所有 solidFill)')
+    tf.add_argument('--dry-run', action='store_true')
+
     r = sub.add_parser('render', help='soffice→PNG 渲染验证')
     r.add_argument('pptx')
     r.add_argument('--pages', help='逗号分隔页号(演示顺序),如 1,3,10;省略=全部')
@@ -282,7 +361,8 @@ def main():
         print(f"文件不存在: {path}", file=sys.stderr)
         return 1
     return {'audit': cmd_audit, 'layout': cmd_layout, 'tablestyle': cmd_tablestyle,
-            'titlecolor': cmd_titlecolor, 'render': cmd_render}[args.cmd](path, args)
+            'titlecolor': cmd_titlecolor, 'textboxfill': cmd_textboxfill,
+            'render': cmd_render}[args.cmd](path, args)
 
 
 if __name__ == '__main__':
