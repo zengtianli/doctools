@@ -24,6 +24,7 @@ import asyncio
 import base64
 import html
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -1026,31 +1027,47 @@ async def main():
     print(f"   大小: {size_mb:.1f} MB")
 
 
-async def _build_epub_flow(chapters, output_path, title, voice):
-    """EPUB3 流程：逐章生成音频 + 句子时间戳 → 打包"""
-    enriched = []
+# 章节 TTS 默认并发数(edge-tts 网络调用;限流礼貌待 API,可 AUDIOBOOK_TTS_CONCURRENCY 覆盖)
+_TTS_CONCURRENCY = int(os.environ.get("AUDIOBOOK_TTS_CONCURRENCY", "4"))
 
+
+async def _gather_chapters(chapters, synth_one, max_concurrency=_TTS_CONCURRENCY):
+    """并发逐章合成(asyncio.Semaphore 限流 + gather 保序)。
+
+    synth_one(i, ch) -> enriched dict | None(跳过)。
+    返回按章节顺序的非 None 列表(等价串行结果,仅并发执行)。
+    """
+    sem = asyncio.Semaphore(max(1, max_concurrency))
+
+    async def _wrapped(i, ch):
+        async with sem:
+            return await synth_one(i, ch)
+
+    results = await asyncio.gather(*[_wrapped(i, ch) for i, ch in enumerate(chapters, 1)])
+    return [r for r in results if r is not None]
+
+
+async def _build_epub_flow(chapters, output_path, title, voice):
+    """EPUB3 流程：并发逐章生成音频 + 句子时间戳 → 打包"""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
-        for i, ch in enumerate(chapters, 1):
+        async def synth_one(i, ch):
             cleaned = clean_text(ch["body"])
             if not cleaned:
                 print(f"  [{i}/{len(chapters)}] {ch['title']} — 跳过")
-                continue
-
+                return None
             mp3_path = tmpdir / f"chapter_{i:03d}.mp3"
-            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(cleaned)} 字) ...", end="", flush=True)
-
             sentences, duration = await generate_audio_with_sync(cleaned, mp3_path, voice)
-            print(f" {duration:.0f}s ({len(sentences)} 句)")
-
-            enriched.append({
+            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(cleaned)} 字) {duration:.0f}s ({len(sentences)} 句)")
+            return {
                 "title": ch["title"],
                 "sentences": sentences,
                 "audio_path": mp3_path,
                 "duration": duration,
-            })
+            }
+
+        enriched = await _gather_chapters(chapters, synth_one)
 
         if not enriched:
             print("错误：没有可合成的内容")
@@ -1062,34 +1079,29 @@ async def _build_epub_flow(chapters, output_path, title, voice):
 
 
 async def _build_html_flow(chapters, output_path, title, voice):
-    """HTML 播放器流程：解析 MD 结构 → 逐章生成音频 + 时间戳 → 打包 HTML"""
-    enriched = []
-
+    """HTML 播放器流程：解析 MD 结构 → 并发逐章生成音频 + 时间戳 → 打包 HTML"""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
-        for i, ch in enumerate(chapters, 1):
+        async def synth_one(i, ch):
             blocks = parse_chapter_blocks(ch["body"])
             text_blocks = [b for b in blocks if b["type"] == "text"]
             tts_text = "\n\n".join(b["text"] for b in text_blocks)
-
             if not tts_text.strip():
                 print(f"  [{i}/{len(chapters)}] {ch['title']} — 跳过")
-                continue
-
+                return None
             mp3_path = tmpdir / f"chapter_{i:03d}.mp3"
-            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(tts_text)} 字) ...", end="", flush=True)
-
             sentences, duration = await generate_audio_with_sync(tts_text, mp3_path, voice)
-            print(f" {duration:.0f}s ({len(sentences)} 句)")
-
-            enriched.append({
+            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(tts_text)} 字) {duration:.0f}s ({len(sentences)} 句)")
+            return {
                 "title": ch["title"],
                 "blocks": blocks,
                 "sentences": sentences,
                 "audio_path": mp3_path,
                 "duration": duration,
-            })
+            }
+
+        enriched = await _gather_chapters(chapters, synth_one)
 
         if not enriched:
             print("错误：没有可合成的内容")
@@ -1101,24 +1113,21 @@ async def _build_html_flow(chapters, output_path, title, voice):
 
 
 async def _build_m4b_flow(chapters, output_path, title, voice):
-    """M4B 流程：逐章生成音频 → 合并"""
-    chapter_files = []
-
+    """M4B 流程：并发逐章生成音频 → 合并"""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
-        for i, ch in enumerate(chapters, 1):
+        async def synth_one(i, ch):
             cleaned = clean_text(ch["body"])
             if not cleaned:
                 print(f"  [{i}/{len(chapters)}] {ch['title']} — 跳过")
-                continue
-
+                return None
             mp3_path = tmpdir / f"chapter_{i:03d}.mp3"
-            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(cleaned)} 字) ...", end="", flush=True)
             duration = await generate_audio_simple(cleaned, mp3_path, voice)
-            print(f" {duration:.0f}s")
+            print(f"  [{i}/{len(chapters)}] {ch['title']} ({len(cleaned)} 字) {duration:.0f}s")
+            return {"title": ch["title"], "path": mp3_path, "duration": duration}
 
-            chapter_files.append({"title": ch["title"], "path": mp3_path, "duration": duration})
+        chapter_files = await _gather_chapters(chapters, synth_one)
 
         if not chapter_files:
             print("错误：没有可合成的内容")
