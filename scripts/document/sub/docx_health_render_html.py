@@ -562,7 +562,7 @@ def render_rich_html(
   <div class="kv">
     <dt>总段落</dt><dd>{total_paras}</dd>
     <dt>标题分布</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (h_count or {{}}).items() if not isinstance(v, (dict, list, set))) or '—'}</dd>
-    <dt>Caption 分布(按样式)</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (cap_by_style or {{}}).items()) or '—'}</dd>
+    <dt>Caption 分布(按样式)</dt><dd>{' · '.join(f'{_esc(k)}:{_esc(v)}' for k, v in (cap_by_style or {{}}).items() if not isinstance(v, (dict, list, set))) or '—'}</dd>
     <dt>可用 caption 样式</dt><dd>{' '.join(f'<span class=tag>{_esc(s)}</span>' for s in (caption_styles_avail or [])) or '—'}</dd>
   </div>
 </section>
