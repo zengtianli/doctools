@@ -16,6 +16,7 @@ OOXML 操作沉淀为总部单功能子命令。与 pptx_tools.py(font/format/ta
     python3 pptx_align.py tablestyle  <pptx> --style "{GUID}"  # 全部表统一为某 tableStyleId
     python3 pptx_align.py titlecolor  <pptx> --color bg1 [--pattern '^[（(][一二三四五六七八九十]']  # 标题run补颜色
     python3 pptx_align.py textboxfill <pptx> [--match bg1-alpha|any-solid] [--dry-run]  # 文本框 spPr 填充→透明(noFill)
+    python3 pptx_align.py fontsize    <pptx> --body 18 --table 14 [--protect-above 24] [--dry-run]  # 正文/表格分区字号(保护标题+设计大字)
     python3 pptx_align.py render      <pptx> [--pages 1,3,10] [--dpi 110] [--outdir DIR]  # soffice→PNG 验证
 
 所有写操作默认 backup(.bak-YYYY... 由调用方负责或加 --backup);本模块写前自检 lsof 占用。
@@ -272,6 +273,74 @@ def cmd_textboxfill(path, args):
     return 0
 
 
+# ── fontsize:正文/表格分区设字号(保护标题与设计大字) ──────────
+# 精确分区设 run 字号,三类边界互不覆盖:
+#   表格单元格(<a:tbl> 内 rPr)        → --table pt
+#   正文文本框(<p:sp>/<p:txBody> 非tbl)→ --body  pt
+#   标题(--title-pattern 命中文本)     → 跳过(保护 (一)(二) 大标题)
+#   设计大字(原 sz ≥ --protect-above)  → 跳过(保护封面/目录/章节/致谢 54/72/80pt 等)
+# 用 lxml 局部 import(精确 DOM 区分 tbl 边界,正则难可靠);系统 python3 自带 lxml,
+# 不破坏模块顶层 stdlib-only 契约(仅本子命令触发时 import)。
+_TITLE_PAT = r'^[（(][一二三四五六七八九十][）)]|^[一二三四五六七八九十]、'
+
+
+def cmd_fontsize(path, args):
+    if not _lsof_guard(path):
+        return 1
+    from lxml import etree
+    A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+    PP = '{http://schemas.openxmlformats.org/presentationml/2006/main}'
+    nsd = {'a': A[1:-1], 'p': PP[1:-1]}
+    title_pat = re.compile(args.title_pattern)
+    body_sz, tbl_sz, protect = args.body, args.table, args.protect_above
+
+    with zipfile.ZipFile(path) as z:
+        items = {n: z.read(n) for n in z.namelist()}
+        infos = {n: z.getinfo(n) for n in z.namelist()}
+
+    stat = {'table': 0, 'body': 0, 'skip_title': 0, 'skip_big': 0}
+    for n in list(items):
+        if not SLIDE_RE.match(n):
+            continue
+        root = etree.fromstring(items[n])
+        tbl_rpr = set()
+        if tbl_sz:
+            for tbl in root.iter(A + 'tbl'):
+                for rpr in tbl.iter(A + 'rPr'):
+                    tbl_rpr.add(id(rpr))
+                    rpr.set('sz', str(tbl_sz * 100)); stat['table'] += 1
+                for tag in ('endParaRPr', 'defRPr'):
+                    for rpr in tbl.iter(A + tag):
+                        rpr.set('sz', str(tbl_sz * 100))
+        else:
+            for tbl in root.iter(A + 'tbl'):
+                for rpr in tbl.iter(A + 'rPr'):
+                    tbl_rpr.add(id(rpr))
+        if body_sz:
+            for sp in root.iter(PP + 'sp'):
+                tb = sp.find('p:txBody', nsd)
+                if tb is None:
+                    continue
+                if title_pat.match(''.join(tb.itertext()).strip()):
+                    stat['skip_title'] += sum(1 for _ in tb.iter(A + 'rPr'))
+                    continue
+                for rpr in tb.iter(A + 'rPr'):
+                    if id(rpr) in tbl_rpr:
+                        continue
+                    cur = rpr.get('sz')
+                    if cur and int(cur) >= protect * 100:
+                        stat['skip_big'] += 1; continue
+                    rpr.set('sz', str(body_sz * 100)); stat['body'] += 1
+        items[n] = etree.tostring(root)
+
+    if not args.dry_run and (stat['table'] or stat['body']):
+        _rewrite(path, items, infos)
+    tag = '[dry-run] ' if args.dry_run else ''
+    print(f"{tag}字号分区: 表格cell→{tbl_sz}pt:{stat['table']}  正文→{body_sz}pt:{stat['body']}  "
+          f"跳过标题run:{stat['skip_title']}  跳过≥{protect}pt设计大字:{stat['skip_big']}")
+    return 0
+
+
 # ── render:soffice → PNG 验证 ──────────────────────────────────
 def cmd_render(path, args):
     soffice = next((p for p in ['/opt/homebrew/bin/soffice',
@@ -343,6 +412,15 @@ def main():
                    help='标题文本匹配正则(默认 (一)(二)类)')
     c.add_argument('--dry-run', action='store_true')
 
+    fs = sub.add_parser('fontsize', help='正文/表格分区设字号(保护标题与设计大字)')
+    fs.add_argument('pptx')
+    fs.add_argument('--body', type=int, default=0, help='正文文本框 run 字号pt(0=不动)')
+    fs.add_argument('--table', type=int, default=0, help='表格单元格 run 字号pt(0=不动)')
+    fs.add_argument('--protect-above', type=int, default=24,
+                    help='正文中原≥此pt的大字跳过(保护封面/目录/章节大字,默认24)')
+    fs.add_argument('--title-pattern', default=_TITLE_PAT, help='标题文本正则(命中跳过,默认 (一)(二)类)')
+    fs.add_argument('--dry-run', action='store_true')
+
     tf = sub.add_parser('textboxfill', help='文本框 spPr 填充→透明(noFill)')
     tf.add_argument('pptx')
     tf.add_argument('--match', choices=['bg1-alpha', 'any-solid'], default='bg1-alpha',
@@ -362,7 +440,7 @@ def main():
         return 1
     return {'audit': cmd_audit, 'layout': cmd_layout, 'tablestyle': cmd_tablestyle,
             'titlecolor': cmd_titlecolor, 'textboxfill': cmd_textboxfill,
-            'render': cmd_render}[args.cmd](path, args)
+            'fontsize': cmd_fontsize, 'render': cmd_render}[args.cmd](path, args)
 
 
 if __name__ == '__main__':
