@@ -4,7 +4,7 @@
 # @raycast.description 删除 Markdown 中所有 blockquote 行（Finder 选中文件或输入路径）
 # @raycast.mode fullOutput
 # @raycast.icon 📝
-# @raycast.packageName Scripts
+# @raycast.packageName Document Processing
 # @raycast.argument1 { "type": "text", "placeholder": "MD 文件/目录路径", "optional": true }
 source ~/Dev/tools/dev/lib/log_usage.sh
 

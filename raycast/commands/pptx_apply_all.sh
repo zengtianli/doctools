@@ -4,6 +4,6 @@
 # @raycast.description Apply all formatting to PowerPoint presentation
 # @raycast.mode fullOutput
 # @raycast.icon 📽️
-# @raycast.packageName Scripts
+# @raycast.packageName Document Processing
 source ~/Dev/tools/dev/lib/log_usage.sh
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/pptx_tools.py" all "$@"

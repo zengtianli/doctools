@@ -4,6 +4,6 @@
 # @raycast.description Apply template styles to a Word document
 # @raycast.mode fullOutput
 # @raycast.icon 📄
-# @raycast.packageName DOCX
+# @raycast.packageName Document Processing
 source ~/Dev/tools/dev/lib/log_usage.sh
 source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "document/docx_apply_template.py" "$@"
