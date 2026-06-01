@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,15 @@ from pathlib import Path
 DOC = Path(__file__).resolve().parent            # scripts/document
 DATA = DOC.parent / "data"                       # scripts/data
 PY = sys.executable                              # uv 环境的 python
+
+# 兜底 PYTHONPATH:有些引擎(如 md_docx_template.py)只加了 doctools/lib、漏了 dev/lib，
+# 直接子进程调用会 ModuleNotFoundError(file_ops 等)。这里统一补齐,覆盖所有引擎。
+_LIBS = [
+    str(DOC.parent.parent / "lib"),                              # doctools/lib
+    str(Path.home() / "Dev/tools/dev/lib"),                      # dev/lib (file_ops 等 canonical)
+    str(Path.home() / "Dev/stations/dockit/src"),               # dockit text utils
+]
+_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(_LIBS + [os.environ.get("PYTHONPATH", "")])}
 
 GREEN, YELLOW, RED, DIM, RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
 
@@ -36,7 +46,7 @@ def _ext(f: str) -> str:
 
 def _run(cmd: list[str], label: str) -> int:
     print(f"{DIM}  ↳ {label}{RST}")
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, env=_ENV).returncode
 
 
 def _py(engine: str, *args: str) -> list[str]:
