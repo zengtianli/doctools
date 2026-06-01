@@ -5,6 +5,8 @@ Targets:
                   ~/Work/shared/bids/.claude/skills/bid-diff-and-revise/scripts/delete_table_rows.py）
   extract       — 抽 docx 内每张表为独立 docx，文件名 = 邻近 caption 段文字
                   (distilled from eco-flow/taizhou-天台 need · 2026-05-28)
+  borders       — 把所有表格统一为「满格实线」（表级 tblBorders 全 single +
+                  默认清单元格级 tcBorders 的 nil 覆盖；含嵌套表 · 2026-06-01）
 """
 from __future__ import annotations
 import argparse
@@ -28,6 +30,23 @@ def _run_extract(args) -> int:
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
     return _dispatch.exec_script("extract_tables", argv)
+
+
+def _run_borders(args) -> int:
+    """func= handler for `table borders`（distilled 路径直接调用）。"""
+    docx = getattr(args, "docx_kw", None) or getattr(args, "docx_path_pos", None)
+    if not docx:
+        print("[table borders] missing docx (positional or --docx)", flush=True)
+        return 2
+    argv = ["--docx", str(docx), "--val", str(args.val), "--sz", str(args.sz),
+            "--color", str(args.color), "--space", str(args.space)]
+    if getattr(args, "keep_cell_borders", False):
+        argv.append("--keep-cell-borders")
+    if getattr(args, "no_backup", False):
+        argv.append("--no-backup")
+    if getattr(args, "dry_run", False):
+        argv.append("--dry-run")
+    return _dispatch.exec_script("set_table_borders", argv)
 
 
 def register(subparsers) -> None:
@@ -80,6 +99,32 @@ def register(subparsers) -> None:
     sp_ex.add_argument("--dry-run", action="store_true", help="只打印 plan，不写文件")
     sp_ex.set_defaults(_sub_target="extract", func=_run_extract)
 
+    # ── borders ───────────────────────────────────────────────────────────────
+    sp_bd = subs.add_parser(
+        "borders",
+        help="把所有表格统一为满格实线（表级全 single + 清单元格 nil 覆盖）",
+        description=(
+            "把 docx 内所有表格（含嵌套表）统一为「满格实线」边框。\n\n"
+            "根因：表级 <w:tblBorders> 与单元格级 <w:tcBorders> 两级，后者优先级更高。\n"
+            "某表「看着不是全实线」常因表级没设边框、且部分单元格 tcBorders 把内部边\n"
+            "设成 val='nil'（无线）→ 内部竖/横线缺失。光设表级盖不住单元格 nil。\n\n"
+            "本命令两手抓：① 每表设表级 tblBorders 6 边全 single；\n"
+            "② 默认删每个单元格 tcBorders（让表级统一生效），或 --keep-cell-borders\n"
+            "时只把非 single 边改写为实线。原地改 + 默认备份 .bak-时间戳。"
+        ),
+    )
+    sp_bd.add_argument("docx_path_pos", nargs="?", help="(positional) docx 路径，等价 --docx")
+    sp_bd.add_argument("--docx", dest="docx_kw", help="目标 docx（原地修改）")
+    sp_bd.add_argument("--val", default="single", help="线型，默认 single 实线")
+    sp_bd.add_argument("--sz", type=int, default=4, help="线宽 1/8pt（4=0.5pt），默认 4")
+    sp_bd.add_argument("--color", default="auto", help="颜色，默认 auto（黑）")
+    sp_bd.add_argument("--space", type=int, default=0, help="边距，默认 0")
+    sp_bd.add_argument("--keep-cell-borders", action="store_true",
+                       help="保留 tcBorders，仅改写非实线边（默认=删 tcBorders）")
+    sp_bd.add_argument("--no-backup", action="store_true", help="不创建 .bak-时间戳")
+    sp_bd.add_argument("--dry-run", action="store_true", help="只报告不写盘")
+    sp_bd.set_defaults(_sub_target="borders", func=_run_borders)
+
     grp.set_defaults(_group=_GROUP)
 
 
@@ -107,5 +152,7 @@ def handle(args: argparse.Namespace, rest: list[str]) -> int:
         if args.dry_run:
             argv.append("--dry-run")
         return _dispatch.exec_script("extract_tables", argv)
+    if target == "borders":
+        return _run_borders(args)
     print(f"[table] unknown target: {target}", flush=True)
     return 1

@@ -33,7 +33,6 @@ PY = sys.executable                              # uv 环境的 python
 _LIBS = [
     str(DOC.parent.parent / "lib"),                              # doctools/lib
     str(Path.home() / "Dev/tools/dev/lib"),                      # dev/lib (file_ops 等 canonical)
-    str(Path.home() / "Dev/stations/dockit/src"),               # dockit text utils
 ]
 _ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(_LIBS + [os.environ.get("PYTHONPATH", "")])}
 

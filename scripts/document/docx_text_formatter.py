@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canoni
 from file_ops import clear_quarantine
 from finder import get_input_files
 from progress import ProgressTracker
-from dockit.text import fix_punctuation, fix_quotes, fix_units
+from text_fixes import fix_punctuation, fix_quotes, fix_units
 
 # ===== 配置选项 =====
 SKIP_FOOTER = True
