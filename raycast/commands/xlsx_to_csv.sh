@@ -1,9 +1,0 @@
-#!/bin/bash
-# @raycast.schemaVersion 1
-# @raycast.title xlsx-to-csv
-# @raycast.description Convert Excel spreadsheet to CSV format
-# @raycast.mode fullOutput
-# @raycast.icon 📊
-# @raycast.packageName Data Processing
-source ~/Dev/tools/dev/lib/log_usage.sh
-source "$(dirname "$(realpath "$0")")/../lib/run_python.sh" && run_python "data/convert.py" xlsx-to-csv "$@"
