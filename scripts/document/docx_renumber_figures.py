@@ -132,6 +132,105 @@ def _verify(out_path, prefix):
     return nums, nums == list(range(1, len(nums) + 1))
 
 
+def renumber_cn_section(docx_path, kind="图", dry_run=False):
+    """中文章节式 图{X.Y}-{N} / 表{X.Y}-{N} 按**节内物理顺序**重排 + 同步正文引用。
+
+    与全局 renumber 的区别：编号是「节内」的（同 X.Y 前缀各自从 1 递增），断号
+    (图2.1-2 后直接 2.1-4) 与重复号 (两个图2.2-1) 都按物理顺序顺排修正。重复号
+    在本模式下**不报错退出**（重复正是要修的）——但若该重复号有正文引用，无法判定
+    引用指向哪个实例 → 记 warning，引用不动，caption 仍按物理位置改对。
+
+    kind: '图' 或 '表'。返回 (root, plan, caps, ok, warnings)。
+    plan: [(para_idx, sec, old_n, new_n)] 物理顺序。dry_run 不改 root。
+    """
+    zin = zipfile.ZipFile(docx_path)
+    root = etree.fromstring(zin.read("word/document.xml"))
+    paras = list(root.iter(f"{W}p"))
+
+    def ptext(p):
+        return "".join(n.text or "" for n in _visible_t_nodes(p))
+
+    # caption 行首：图2.1-4 / 表2.1-1（sec=2.1 可为 X 或 X.Y，n 为节内序），<80 字
+    cap_re = re.compile(rf'^\s*{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    caps = []  # (para_idx, sec, old_n) 物理顺序
+    for idx, p in enumerate(paras):
+        s = ptext(p).strip()
+        if len(s) >= 80:
+            continue
+        m = cap_re.match(s)
+        if m:
+            caps.append((idx, m.group(1), int(m.group(2))))
+
+    sec_ctr, plan = {}, []
+    for idx, sec, old_n in caps:
+        sec_ctr[sec] = sec_ctr.get(sec, 0) + 1
+        plan.append((idx, sec, old_n, sec_ctr[sec]))
+
+    # (sec,old_n)->new_n 映射；同 key 多个 new_n = 重复号冲突
+    remap, conflict = {}, set()
+    for idx, sec, old_n, new_n in plan:
+        k = (sec, old_n)
+        if k in remap and remap[k] != new_n:
+            conflict.add(k)
+        remap.setdefault(k, new_n)
+
+    if dry_run:
+        return root, plan, caps, True, sorted(conflict)
+
+    para_by_idx = dict(enumerate(paras))
+    n_after_re = re.compile(rf'(\s*{kind}\s*\d+(?:\.\d+)?\s*[-－—–]\s*)(\d+)')
+
+    # 1) caption 改写：按物理位置直接改 n 段（不查 remap，避免重复号歧义）
+    for idx, sec, old_n, new_n in plan:
+        if old_n == new_n:
+            continue
+        nodes = _visible_t_nodes(para_by_idx[idx])
+        full = "".join(n.text or "" for n in nodes)
+        m2 = n_after_re.match(full)
+        if not m2:
+            continue
+        _apply_edits(nodes, [(m2.start(2), m2.end(2), str(new_n))])
+
+    # 2) 正文引用改写（排除 caption 段自身）；重复号有引用 → warning 不动
+    cap_ids = {idx for idx, _, _ in caps}
+    ref_re = re.compile(rf'{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    warnings = []
+    for idx, p in enumerate(paras):
+        if idx in cap_ids:
+            continue
+        nodes = _visible_t_nodes(p)
+        full = "".join(n.text or "" for n in nodes)
+        if kind not in full:
+            continue
+        edits = []
+        for m in ref_re.finditer(full):
+            k = (m.group(1), int(m.group(2)))
+            if k in conflict:
+                warnings.append(f"{kind}{k[0]}-{k[1]}（重复号，引用需人工确认）")
+                continue
+            if k in remap and remap[k] != k[1]:
+                edits.append((m.start(2), m.end(2), str(remap[k])))
+        if edits:
+            _apply_edits(nodes, edits)
+    return root, plan, caps, True, warnings
+
+
+def _verify_cn(out_path, kind):
+    """重读输出确认每个 sec 内 n 连续 1..k。返回 ({sec:[n...]}, all_ok)。"""
+    root = etree.fromstring(zipfile.ZipFile(out_path).read("word/document.xml"))
+    cap_re = re.compile(rf'^\s*{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    by_sec = {}
+    for p in root.iter(f"{W}p"):
+        s = "".join(n.text or "" for n in _visible_t_nodes(p)).strip()
+        if len(s) >= 80:
+            continue
+        m = cap_re.match(s)
+        if m:
+            by_sec.setdefault(m.group(1), []).append(int(m.group(2)))
+    ok = all(v == list(range(1, len(v) + 1)) for v in by_sec.values())
+    return by_sec, ok
+
+
 def main():
     ap = argparse.ArgumentParser(description="按出现顺序重排 docx 图号 + 同步正文引用")
     ap.add_argument("docx")
@@ -139,7 +238,33 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--prefix", default="Figure")
+    ap.add_argument("--cn-section", action="store_true",
+                    help="中文章节式 图X.Y-N / 表X.Y-N 节内重排（修断号+重复号）")
+    ap.add_argument("--kind", default="图", choices=["图", "表"],
+                    help="--cn-section 模式下的题注类型，默认 图")
     a = ap.parse_args()
+
+    if a.cn_section:
+        root, plan, caps, ok, warns = renumber_cn_section(a.docx, a.kind, dry_run=a.dry_run)
+        changes = [(f"{a.kind}{s}-{o}", f"{a.kind}{s}-{n}") for _, s, o, n in plan if o != n]
+        print(f"{a.kind}题数: {len(caps)}（节内分组）")
+        print(f"变动 (现→新): {changes or '无（已连续）'}")
+        if warns:
+            print(f"⚠ 重复号引用需人工确认: {warns}")
+        if a.dry_run:
+            print("[dry-run] 未写文件")
+            return
+        out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
+        if a.inplace:
+            shutil.copy2(a.docx, a.docx + ".bak")
+            _write(a.docx + ".bak", root, out)   # 从 .bak 读、写回原文件，避免读写同路径截断
+        else:
+            _write(a.docx, root, out)
+        by_sec, seq = _verify_cn(out, a.kind)
+        print(f"已写: {out}")
+        print(f"验证: 各节 {a.kind}号 = {by_sec}")
+        print("✓ 每节连续 1..k" if seq else "✗ 重编号后仍不连续，请检查")
+        sys.exit(0 if seq else 2)
 
     root, remap, order, ok, dup = renumber(a.docx, a.prefix, dry_run=a.dry_run)
     if not ok:
@@ -157,7 +282,9 @@ def main():
     out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
     if a.inplace:
         shutil.copy2(a.docx, a.docx + ".bak")
-    _write(a.docx, root, out)
+        _write(a.docx + ".bak", root, out)   # 从 .bak 读、写回原文件，避免读写同路径截断
+    else:
+        _write(a.docx, root, out)
     nums, seq = _verify(out, a.prefix)
     print(f"已写: {out}")
     print(f"验证: captions = {nums}")
