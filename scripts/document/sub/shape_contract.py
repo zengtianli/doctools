@@ -120,15 +120,17 @@ def capture_structure(docx_path: Path | str) -> dict:
         name = _style_name_of(para)
         if name in _HEADING_NAMES:
             heading_counter[name] += 1
-        # caption by style name
+        # caption by style name — 空段不计入 caption 数: 带「图名/表名」样式但无文本 =
+        # 排版占位空行 (审定模板常在题注前后留同样式空段), 非真题注; 计入会虚增 caption 段数
+        # 致 caption-count-consistency 误报 (编号集 ≠ 段数).
         is_fig = bool(_FIG_CAPTION_NAME_RE.search(name)) if name else False
         is_tbl = bool(_TABLE_CAPTION_NAME_RE.search(name)) if name else False
-        if is_fig:
+        text = para.text or ""
+        if is_fig and text.strip():
             cap_fig += 1
-        if is_tbl:
+        if is_tbl and text.strip():
             cap_tbl += 1
         # caption text → "图X-Y" / "表X-Y" 集合
-        text = para.text or ""
         if is_fig or "图" in text[:6]:
             for m in _FIG_NUM_TEXT_RE.findall(text):
                 fig_nums.add(re.sub(r"\s+", "", m))

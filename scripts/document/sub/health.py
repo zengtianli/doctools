@@ -572,20 +572,25 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
 
     summary = data.get("summary", {})
     issues = data.get("issues", [])
-    # gate-relevant issue 类型 (孤儿 / 内容不匹配 / 空名)
+    # gate-阻断子集 = 仅**结构性**确定缺陷: 孤儿题注 / 孤儿表 / 空表名。
+    # caption-name-content-mismatch (题注关键词与下游 tbl 列头字面无交集) 是**低置信启发式**:
+    # 题注命名「指标」(如"径流月分配表") 而列头是「维度」(1月..12月/年份) 时必然无字面交集,
+    # 却是结构上正确的配对 —— 审定母本(磐安)亦含 10 例。故降级为 advisory(报告不阻断 gate),
+    # 防把良构表误判为缺陷。结构性孤儿/空名仍硬阻断。
     GATE_TYPES = {
         "orphan-caption-no-downstream-tbl",
         "orphan-tbl-no-upstream-caption",
-        "caption-name-content-mismatch",
         "empty-caption-name",
     }
     bad = [i for i in issues if i.get("type") in GATE_TYPES]
+    advisory = [i for i in issues if i.get("type") == "caption-name-content-mismatch"]
     base = {
         "captions": summary.get("captions", 0),
         "tbls": summary.get("tbls", 0),
         "orphan_captions": summary.get("orphan_captions", 0),
         "orphan_tbls": summary.get("orphan_tbls", 0),
         "content_mismatches": summary.get("content_mismatches", 0),
+        "advisory_content_mismatches": len(advisory),
         "empty_names": summary.get("empty_names", 0),
     }
     if bad:
@@ -901,19 +906,21 @@ def check_numbering_depth_uniformity(doc_path: Path) -> dict:
         "dominant_depth": dominant_depth,
         "dominant_coverage": round(coverage, 3),
     }
-    # found = 深度散布跨度 > 1 级 (典型: 同文档混 1 级和 4 级标题前缀深度, 无中间级)
-    # span > 1 才报 (span<=1 = 自然相邻深度, 正常文档)
-    if span > 1:
-        present_set = set(depths_present)
-        missing_mid = sorted(set(range(depths_present[0], depths_present[-1] + 1)) - present_set)
+    # found = 编号深度「跳级」: 既散布 > 1 级, 又有缺失的中间级 (典型 = 混 1 级和 4 级前缀,
+    # 中间 2/3 级缺失). 关键修正: 仅 span>1 不足以判异常 —— 良构 H1→H4 全嵌套文档 span=3 但
+    # 各级齐备 (无缺中间级), 是正常深文档, 不应误报 (原实现 `if span>1` 把所有 4 级文档全判异常).
+    present_set = set(depths_present)
+    missing_mid = sorted(set(range(depths_present[0], depths_present[-1] + 1)) - present_set)
+    if span > 1 and missing_mid:
         base.update({
             "found": True,
             "missing_mid_depths": missing_mid,
             "safe_fix": False,
-            "fix_hint": "编号深度散布跨度 >1 级, 人工核对标题层级 (outline / fix heading)",
+            "fix_hint": f"编号深度跳级 (缺中间级 {missing_mid}), 人工核对标题层级 (outline / fix heading)",
         })
         return base
     base["found"] = False
+    base["missing_mid_depths"] = missing_mid
     return base
 
 

@@ -36,7 +36,9 @@ W_VAL = f"{{{W_NS}}}val"
 W_TR = f"{{{W_NS}}}tr"
 W_TC = f"{{{W_NS}}}tc"
 
-CAP_PATTERN = re.compile(r"^\s*表\s*(\d+)\s*[-–—]\s*(\d+)\s*(.*)$")
+# 兼容两种表号: 扁平 "表3-1" 与中文章节式 "表3.1-1" (章.节-序, /docx renumber --cn-section 产出)。
+# group(1)=章节号(3 或 3.1), group(2)=序号, group(3)=表名。向后兼容: (?:\.\d+)* 可选, 扁平号仍匹配。
+CAP_PATTERN = re.compile(r"^\s*表\s*(\d+(?:\.\d+)*)\s*[-–—]\s*(\d+)\s*(.*)$")
 
 # 关键词→同义词字典 (字面包含即视为命中)
 KEYWORD_SYNONYMS: dict[str, list[str]] = {
@@ -142,7 +144,7 @@ def _audit_from_doc(doc, docx_path_label: str = "") -> dict:
                     "id": f"cap-{cap_counter}",
                     "elem_idx": i,
                     "number": f"表{ch}-{num}",
-                    "chapter": int(ch),
+                    "chapter": ch,  # 字符串: 兼容 cn-section "3.1" (旧扁平 "3" 亦为字符串)
                     "seq": int(num),
                     "name": name,
                     "style": get_style_id(e),
