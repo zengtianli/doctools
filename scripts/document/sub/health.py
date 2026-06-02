@@ -64,6 +64,7 @@ GATE_CHECKS = [
     "forbidden-source-placeholders",
     "caption-count-consistency",
     "numbering-depth-uniformity",
+    "orphaned-comment-markup",
 ]
 
 GATE_SEVERITY = {
@@ -72,6 +73,7 @@ GATE_SEVERITY = {
     "forbidden-source-placeholders":  "High",
     "caption-count-consistency":      "High",
     "numbering-depth-uniformity":     "Med",
+    "orphaned-comment-markup":        "High",
 }
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -353,6 +355,41 @@ def check_revision_tracking(doc_path: Path) -> dict:
                 "total": total, "safe_fix": True,
                 "fix_hint": "strip revisions"}
     return {"found": False}
+
+
+def check_orphaned_comment_markup(doc_path: Path) -> dict:
+    """孤儿批注标记 → Word「无法读取的内容」根因。
+
+    document.xml 含 <w:commentRangeStart/End> / <w:commentReference> 批注标记,
+    但包内 **无 word/comments.xml** (常见于某步删了 comments.xml 却漏删 body 标记,
+    或 python-docx round-trip 丢失无关系的 comments 部件)。Word 打开此 docx 会弹
+    「在 X.docx 中发现无法读取的内容」修复提示。
+    修复 = strip_revisions (删 commentRange/Reference 标记 + 清/删 comments.xml)。
+
+    口径: 仅当「批注标记存在 且 comments.xml 缺失」才 found=True (Word 真触发);
+    有合法 comments.xml 时标记合法, 不报。孤儿 rStyle=CommentReference 仅装饰性
+    (Word 容忍未定义样式引用), 不单独触发 found, 仅作信息上报。
+    """
+    try:
+        with zipfile.ZipFile(doc_path) as z:
+            names = set(z.namelist())
+            doc_xml = z.read("word/document.xml").decode("utf-8")
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+    has_comments = "word/comments.xml" in names
+    crs = len(re.findall(r"<w:commentRangeStart\b", doc_xml))
+    cre = len(re.findall(r"<w:commentRangeEnd\b", doc_xml))
+    cref = len(re.findall(r"<w:commentReference\b", doc_xml))
+    orphan_rstyle = len(re.findall(r'<w:rStyle w:val="CommentReference"\s*/?>', doc_xml))
+    markup = crs + cre + cref
+    if markup > 0 and not has_comments:
+        return {"found": True,
+                "comment_range_start": crs, "comment_range_end": cre,
+                "comment_reference": cref, "orphan_rstyle": orphan_rstyle,
+                "has_comments_xml": False, "safe_fix": True,
+                "fix_hint": "strip_revisions (删孤儿批注标记 — Word「无法读取的内容」根因)"}
+    return {"found": False, "comment_markup": markup,
+            "has_comments_xml": has_comments, "orphan_rstyle": orphan_rstyle}
 
 
 def check_field_not_frozen(doc_path: Path, tmp_dir: Path) -> dict:
@@ -982,6 +1019,8 @@ class HealthChecker:
             return check_caption_count_consistency(dp)
         if check_id == "numbering-depth-uniformity":
             return check_numbering_depth_uniformity(dp)
+        if check_id == "orphaned-comment-markup":
+            return check_orphaned_comment_markup(dp)
         return {"found": False, "error": f"unknown check: {check_id}"}
 
 
