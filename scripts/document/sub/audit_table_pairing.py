@@ -39,6 +39,9 @@ W_TC = f"{{{W_NS}}}tc"
 # 兼容两种表号: 扁平 "表3-1" 与中文章节式 "表3.1-1" (章.节-序, /docx renumber --cn-section 产出)。
 # group(1)=章节号(3 或 3.1), group(2)=序号, group(3)=表名。向后兼容: (?:\.\d+)* 可选, 扁平号仍匹配。
 CAP_PATTERN = re.compile(r"^\s*表\s*(\d+(?:\.\d+)*)\s*[-–—]\s*(\d+)\s*(.*)$")
+# 附录式表号 "附表N 表名" (院模板结论章/附录常用, 单号无短横)。与 CAP_PATTERN 互斥:
+# 仅当 CAP_PATTERN 不匹配时回退此式, 把附表识别为合法 caption (否则真附表被误判孤儿表)。
+CAP_APPENDIX_PATTERN = re.compile(r"^\s*附表\s*(\d+)\s*(.*)$")
 
 # 关键词→同义词字典 (字面包含即视为命中)
 KEYWORD_SYNONYMS: dict[str, list[str]] = {
@@ -127,9 +130,15 @@ def _audit_from_doc(doc, docx_path_label: str = "") -> dict:
         if e.tag == W_P:
             text = get_text(e)
             m = CAP_PATTERN.match(text)
-            if m:
+            ma = CAP_APPENDIX_PATTERN.match(text) if not m else None
+            if m or ma:
                 cap_counter += 1
-                ch, num, name = m.group(1), m.group(2), m.group(3).strip()
+                if m:
+                    ch, num, name = m.group(1), m.group(2), m.group(3).strip()
+                    number = f"表{ch}-{num}"
+                else:  # 附录式 "附表N"
+                    ch, num, name = "附", ma.group(1), ma.group(2).strip()
+                    number = f"附表{num}"
                 # 找紧邻下游"注:..."段 (style ZDWP, 文本以"注"开头)
                 notes_idx = []
                 j = i + 1
@@ -143,8 +152,8 @@ def _audit_from_doc(doc, docx_path_label: str = "") -> dict:
                 captions.append({
                     "id": f"cap-{cap_counter}",
                     "elem_idx": i,
-                    "number": f"表{ch}-{num}",
-                    "chapter": ch,  # 字符串: 兼容 cn-section "3.1" (旧扁平 "3" 亦为字符串)
+                    "number": number,
+                    "chapter": ch,  # 字符串: 兼容 cn-section "3.1" (旧扁平 "3" 亦为字符串)；附录式 ch="附"
                     "seq": int(num),
                     "name": name,
                     "style": get_style_id(e),
