@@ -360,6 +360,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
         "split",      # split docx by-h1 (eco-flow/taizhou-天台 distill, W1 2026-05-26)
         "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
+        "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
     }
     while i < len(raw):
         tok = raw[i]

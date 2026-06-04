@@ -42,6 +42,7 @@ from . import (
     blocks,
     caption,
     captions,
+    chrome,
     chapter,
     compare,
     diff,
@@ -72,6 +73,7 @@ __all__ = [
     "blocks",
     "caption",
     "captions",
+    "chrome",
     "chapter",
     "compare",
     "diff",
@@ -111,6 +113,7 @@ def register_all(subparsers) -> None:
     # Order: unique-group first, then shared-group contributors
     for mod in (
         audit, audit_styleset, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        chrome,                                                                  # 院报告版面装帧(逐章分节+横向节, distilled eco-flow 2026-06-04)
         diff, compare, revise_rules,                                             # distilled from bid-diff-and-revise
         health,                                                                  # health diagnose/fix/full
         pipeline,                                                                # pipeline driver
