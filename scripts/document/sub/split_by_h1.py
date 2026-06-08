@@ -37,6 +37,21 @@ except ImportError:
     print("ERROR: python-docx 未安装 (pip install python-docx)", file=sys.stderr)
     sys.exit(2)
 
+# 媒体去冗余(默认开): 每片只留它 body 真引用的 media + 同步裁 rels。
+# 不做的话每片都扛整本 media(bug: 整本 27MB → 每章都 27MB)。复用 strip_orphan_media 的
+# deep 扫描(专为 split/table-extract "body 已裁 rels 未裁" 场景设计)。三态 import 兼容:
+# 包内(pipeline `from . import`) / 脚本(sys.path[0]=sub/) / docx_cli runpy(__main__)。
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+try:
+    from . import strip_orphan_media as _som  # type: ignore
+except ImportError:
+    try:
+        import strip_orphan_media as _som  # type: ignore
+    except ImportError:
+        _som = None  # 缺 lxml 等极端情况: 退化为不去冗余, 不让 split 失败
+
 
 H1_STYLES = {
     "Heading 1",
@@ -204,8 +219,12 @@ def plan_slices(docx_path: Path, include_frontmatter: bool, doc=None):
     return slices, sect_idx, len(h1_positions)
 
 
-def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int) -> tuple[int, int]:
+def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int,
+                prune_media: bool = True) -> tuple[int, int]:
     """Copy src→dst, then prune body keeping only children [start, end) + sectPr.
+
+    prune_media (默认 True): 切完后丢掉本片 body 不再引用的 media + 同步裁 rels,
+    避免每片都扛整本媒体(否则整本 27MB → 每片 27MB)。
 
     Returns (paragraph_count_in_slice, file_bytes).
     """
@@ -229,6 +248,15 @@ def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int) -> tuple[i
         if i not in keep_set:
             body.remove(elem)
     doc.save(str(dst_docx))
+    # 去冗余 media: 本片 body 已裁但 rels/media 仍是整本 → deep 扫只留真引用的, 同步裁 rels。
+    # best-effort: 任何异常都不让 split 失败(去冗余是优化, 不是正确性前提)。
+    if prune_media and _som is not None:
+        try:
+            scan = _som.scan_orphans(dst_docx, deep=True)
+            if scan.get("orphan_count"):
+                _som.rewrite_skip(dst_docx, dst_docx, set(scan["orphans"]))
+        except Exception:
+            pass
     # Count paragraphs in saved slice
     doc2 = Document(str(dst_docx))
     para_count = len(doc2.paragraphs)
@@ -244,6 +272,7 @@ def run_split(
     dry_run: bool = False,
     name_pattern: str = "{idx:02d}-{title}.docx",
     doc=None,
+    prune_media: bool = True,
 ) -> dict:
     """Execute split-by-h1; reuses provided `doc` for planning if given.
 
@@ -283,7 +312,7 @@ def run_split(
         fname = name_pattern.format(idx=s["idx"], title=safe)
         dst = out_dir / fname
         try:
-            paras, nbytes = write_slice(src, dst, s["start"], s["end"])
+            paras, nbytes = write_slice(src, dst, s["start"], s["end"], prune_media=prune_media)
             emitted.append({
                 "idx": s["idx"], "fname": fname, "paragraphs": paras, "bytes": nbytes,
             })
@@ -323,6 +352,10 @@ def main() -> int:
         "--allow-no-h1", action="store_true",
         help="suppress unhealthy-docx fail-fast when 0 H1 detected (rarely needed; "
              "default behavior is to FAIL and instruct user to run /docx health first)",
+    )
+    ap.add_argument(
+        "--keep-all-media", action="store_true",
+        help="禁用默认的媒体去冗余: 每片保留整本 media(默认 OFF=去冗余, 每片只留自己引用的图)",
     )
     args = ap.parse_args()
 
@@ -385,7 +418,8 @@ def main() -> int:
         fname = args.name_pattern.format(idx=s["idx"], title=safe)
         dst = out_dir / fname
         try:
-            paras, nbytes = write_slice(src, dst, s["start"], s["end"])
+            paras, nbytes = write_slice(src, dst, s["start"], s["end"],
+                                        prune_media=not args.keep_all_media)
             print(f"  [{s['idx']:>2}] {fname}  · {paras} paragraphs · {nbytes:,} bytes")
             n_ok += 1
         except Exception as e:
