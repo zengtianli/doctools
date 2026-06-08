@@ -359,6 +359,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "md-merge-track",  # MD→track-changes 锚点前插 (上提 reclaim merge-tracked, GOAL 0-B 2026-05-29)
         "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
         "split",      # split docx by-h1 (eco-flow/taizhou-天台 distill, W1 2026-05-26)
+        "combine",    # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
         "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
         "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
     }

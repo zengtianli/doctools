@@ -44,6 +44,7 @@ from . import (
     captions,
     chrome,
     chapter,
+    combine,
     compare,
     diff,
     fix_styleset,
@@ -75,6 +76,7 @@ __all__ = [
     "captions",
     "chrome",
     "chapter",
+    "combine",
     "compare",
     "diff",
     "fix_styleset",
@@ -113,6 +115,7 @@ def register_all(subparsers) -> None:
     # Order: unique-group first, then shared-group contributors
     for mod in (
         audit, audit_styleset, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        combine,                                                                 # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
         chrome,                                                                  # 院报告版面装帧(逐章分节+横向节, distilled eco-flow 2026-06-04)
         diff, compare, revise_rules,                                             # distilled from bid-diff-and-revise
         health,                                                                  # health diagnose/fix/full
