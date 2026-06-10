@@ -360,6 +360,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "table",      # table structural ops: delete-rows (W4 distill, 2026-05-26)
         "split",      # split docx by-h1 (eco-flow/taizhou-天台 distill, W1 2026-05-26)
         "combine",    # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
+        "chapters-sync",  # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
         "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
         "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
     }
