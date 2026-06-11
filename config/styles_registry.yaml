@@ -2,7 +2,7 @@
 # edits:       手写唯一手改点（加 --profile <name> 样式族 / 改样式名候选集）
 # consumers:   doctools docx 操作脚本（--profile <name> 切换；无 profile 走 default）
 # regenerator: 无（手写 SSOT，脚本运行时读 profile）
-# audit:       无独立 audit
+# audit:       python3 ~/Dev/tools/dev/lib/tools/ssot/ssot_misc_audit.py styles-registry  (default 指向存在 + 每 profile 必备字段 description/H1_STYLES/BODY_STYLES)
 #
 # Styles registry · 项目无关样式族 SSOT
 # distilled from qual-supply/scripts/* (2026-05-25 W2)
