@@ -7,8 +7,8 @@
 
 用法:
   doc_dispatch.py clean    <files...>                 规范化(docx 文本修复 / md format / pptx 全套)
-  doc_dispatch.py convert  --to {md,word,xlsx,csv,txt} <files...>   转换(源自动认)
-  doc_dispatch.py typeset  <files...>                 md/docx → 院模板成品 Word(套模板→修文本→图注)
+  doc_dispatch.py convert  --to {md,word,xlsx,csv,txt} <files...>   转换(源自动认;老 .doc 经 textutil 升级)
+  doc_dispatch.py typeset  <files...>                 md/docx/doc → 院模板成品 Word(套模板→修文本→图注)
   doc_dispatch.py merge    <files...>                 合并(md/txt→csv/xlsx)
   doc_dispatch.py split    <files...>                 拆分(md 按标题 / xlsx 按 sheet)
   doc_dispatch.py view     <files...>                 预览(md → HTML 浏览器)
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +59,24 @@ def _data(engine: str, *args: str) -> list[str]:
 
 def warn(msg: str) -> None:
     print(f"{YELLOW}  ⚠ {msg}{RST}")
+
+
+def _doc_to_docx(f: str) -> str | None:
+    """老 .doc → .docx。优先 soffice(产完整 docx 含 styles.xml,下游套模板等引擎都吃),
+    没装 LibreOffice 才 textutil 兜底(极简 docx,缺 styles.xml,套模板线会挂)。
+    成功返回产出路径,失败返回 None。"""
+    p = Path(f)
+    out = p.with_suffix(".docx")
+    soffice = shutil.which("soffice") or "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    if Path(soffice).exists():
+        cmd = [soffice, "--headless",
+               "-env:UserInstallation=file:///tmp/lo_profile_doc_dispatch",
+               "--convert-to", "docx", "--outdir", str(p.parent), str(p)]
+        if _run(cmd, "老 doc → docx(soffice)") == 0 and out.exists():
+            return str(out)
+    if _run(["textutil", "-convert", "docx", str(p), "-output", str(out)], "老 doc → docx(textutil 兜底)"):
+        return None
+    return str(out) if out.exists() else None
 
 
 # ───────────────────────────────────────────── 路由表
@@ -150,6 +169,28 @@ def do_convert(files, target):
     for f in files:
         if not Path(f).exists():
             warn(f"文件不存在,跳过: {f}"); continue
+        # 老 .doc:textutil 直转(word/txt),或先升级成 docx 再走 docx 路由(md)
+        if _ext(f) == "doc":
+            if target == "txt":
+                print(f"{GREEN}● {Path(f).name}{RST}")
+                rc |= _run(["textutil", "-convert", "txt", f], "老 doc → txt(textutil)")
+                continue
+            if target in ("word", "md"):
+                print(f"{GREEN}● {Path(f).name}{RST}")
+                nf = _doc_to_docx(f)
+                if nf is None:
+                    rc |= 1; continue
+                if target == "word":
+                    print(f"{GREEN}  ✓ → {Path(nf).name}{RST}")
+                    continue
+                f = nf  # md:继续按 docx → md 路由
+            else:
+                warn(f"{Path(f).name}: doc → {target} 这条转换没引擎(不支持的组合),跳过")
+                continue
+            hit = route_convert(f, target)
+            if hit:
+                rc |= _run(hit[0], hit[1] or f"→ {target}")
+            continue
         hit = route_convert(f, target)
         if not hit:
             warn(f"{Path(f).name}: {_ext(f) or '?'} → {target} 这条转换没引擎(不支持的组合),跳过")
@@ -229,9 +270,14 @@ def do_typeset(files) -> int:
         if not p.exists():
             warn(f"文件不存在,跳过: {f}"); continue
         e = _ext(f)
-        if e not in ("md", "docx"):
-            warn(f"{p.name}: 套模板出 Word 只吃 md/docx,跳过"); continue
+        if e not in ("md", "docx", "doc"):
+            warn(f"{p.name}: 套模板出 Word 只吃 md/docx/doc,跳过"); continue
         print(f"{GREEN}● {p.name}{RST}")
+        if e == "doc":  # 老 doc 先升级成 docx 再走 docx 线
+            nf = _doc_to_docx(str(p))
+            if nf is None:
+                rc |= 1; continue
+            p, e = Path(nf), "docx"
         d, stem = p.parent, p.stem
         # Step 1: 转换/套模板
         if e == "md":
