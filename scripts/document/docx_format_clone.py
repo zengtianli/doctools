@@ -329,7 +329,8 @@ def cmd_apply(args) -> int:
         new_children.append(_clone_with_text(shells["title"], content["title"]))
     for para in content["body"]:
         new_children.append(_clone_with_text(shells["body"], para))
-    if content["signature"]:
+    emit_sig = content["signature"] and not getattr(args, "no_signature", False)
+    if emit_sig:
         new_children.append(_blank_like(shells["body"]))  # 落款前空一行
         for line in content["signature"]:
             new_children.append(_clone_with_text(shells["signature"], line))
@@ -377,6 +378,8 @@ def main(argv=None) -> int:
     pa.add_argument("input", help="content（.md 或 .docx）")
     pa.add_argument("--ref", required=True, help="范式 docx（格式来源）")
     pa.add_argument("-o", "--output", help="输出 docx")
+    pa.add_argument("--no-signature", action="store_true",
+                    help="不发射落款段（交付件留空让对方自填署名）")
     pa.set_defaults(func=cmd_apply)
 
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
