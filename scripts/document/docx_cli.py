@@ -57,7 +57,7 @@ _HERE = Path(__file__).resolve().parent
 # ALL_DOCX_CMDS — for batch-all 编排（外部消费者读此常量）
 ALL_DOCX_CMDS = [
     "extract", "check", "snapshot", "compare", "track",
-    "bullet", "image-caption", "template",
+    "bullet", "image-caption", "template", "format",
     "renumber-fig", "text-fmt", "fix-ref",
     "md-to-docx", "quality-check", "review", "scan-sensitive",
     "md",
@@ -165,6 +165,10 @@ def cmd_image_caption(args: argparse.Namespace, rest: list[str]) -> int:
 def cmd_template(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("docx_apply_template", rest)
 
+def cmd_format(args: argparse.Namespace, rest: list[str]) -> int:
+    # 提取/复刻版式: format extract <ref> / format apply <content> --ref <ref>
+    return _exec_script("docx_format_clone", rest)
+
 def cmd_renumber_fig(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("docx_renumber_figures", rest)
 
@@ -203,6 +207,7 @@ CMD_TABLE: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "bullet": cmd_bullet,
     "image-caption": cmd_image_caption,
     "template": cmd_template,
+    "format": cmd_format,
     "renumber-fig": cmd_renumber_fig,
     "text-fmt": cmd_text_fmt,
     "fix-ref": cmd_fix_ref,
