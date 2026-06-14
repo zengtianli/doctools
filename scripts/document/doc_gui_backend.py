@@ -128,6 +128,15 @@ OPS = [
         "exts": [],
         "kind": "dir",
     },
+    {
+        "id": "view",
+        "verb": "view",
+        "title": "预览",
+        "subtitle": "md → HTML 浏览器预览(2026-06-14 从 raycast doc_preview 并入)",
+        "icon": "eye",
+        "exts": ["md"],
+        "kind": "files",
+    },
 ]
 
 _OPS_BY_ID = {o["id"]: o for o in OPS}
@@ -189,6 +198,8 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[
             rc = dd.do_convert(files, target or "md")
         elif verb == "scan":
             rc = dd.do_scan(files)
+        elif verb == "view":
+            rc = dd.do_view(files)
         else:
             return 2, f"未知操作: {verb}"
     log = _strip_ansi("\n".join([buf.getvalue().rstrip(), *_CAP]).strip())
