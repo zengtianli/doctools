@@ -52,6 +52,13 @@ from text_fixes import fix_punctuation, fix_quotes, fix_units
 # ===== 配置选项 =====
 SKIP_FOOTER = True
 
+# 选择性修复开关（默认全开=向后兼容；命令行 --quotes/--punct/--units 任一指定则只做指定项）
+# 用途：中文期刊投稿(GB/T 7714 参考文献区标点须半角)只想修引号→ --quotes，不碰标点/单位
+DO_QUOTES = True
+DO_PUNCT = True
+DO_UNITS = True
+IN_PLACE = False   # True 时原地写回源文件 + 备份 .bak-时间戳（Work §1.5 协议），不另存 _fixed
+
 
 QUOTE_CHARS = {"\u201c", "\u201d"}
 QUOTE_FONT = "\u5b8b\u4f53"  # 宋体
@@ -162,10 +169,15 @@ def process_paragraph(paragraph, stats):
 
         original_text = run.text
 
-        # 应用所有转换
-        fixed_text, quote_count, quote_counter = fix_quotes(original_text, quote_counter)
-        fixed_text, punct_count = fix_punctuation(fixed_text)
-        fixed_text, unit_count = fix_units(fixed_text)
+        # 按 toggle 选择性应用转换（默认全开）
+        fixed_text = original_text
+        quote_count = punct_count = unit_count = 0
+        if DO_QUOTES:
+            fixed_text, quote_count, quote_counter = fix_quotes(fixed_text, quote_counter)
+        if DO_PUNCT:
+            fixed_text, punct_count = fix_punctuation(fixed_text)
+        if DO_UNITS:
+            fixed_text, unit_count = fix_units(fixed_text)
 
         # 更新统计
         stats["quotes"] += quote_count
@@ -175,10 +187,11 @@ def process_paragraph(paragraph, stats):
         if fixed_text != original_text:
             run.text = fixed_text
 
-        # 拆分引号为独立 run 并设置宋体
-        segments = _split_run_at_quotes(run)
-        if segments:
-            _apply_quote_split(run, segments)
+        # 拆分引号为独立 run 并设置宋体（仅在修引号时）
+        if DO_QUOTES:
+            segments = _split_run_at_quotes(run)
+            if segments:
+                _apply_quote_split(run, segments)
 
 
 def process_table(table, stats):
@@ -205,8 +218,17 @@ def process_docx(input_file):
         print("❌ 错误：文件必须是.docx格式")
         return False
 
-    # 生成输出文件名
-    output_path = input_path.parent / f"{input_path.stem}_fixed{input_path.suffix}"
+    # 生成输出文件名（--in-place 时原地写回 + 备份；否则另存 _fixed）
+    if IN_PLACE:
+        import shutil as _shutil
+        from datetime import datetime as _dt
+        bak = input_path.with_name(
+            input_path.name + ".bak-" + _dt.now().strftime("%Y%m%d-%H%M%S"))
+        _shutil.copy2(input_path, bak)
+        print(f"🗄  已备份: {bak.name}")
+        output_path = input_path
+    else:
+        output_path = input_path.parent / f"{input_path.stem}_fixed{input_path.suffix}"
 
     try:
         # 读取文档
@@ -285,8 +307,19 @@ def process_docx(input_file):
 
 
 if __name__ == "__main__":
+    # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
+    _argv = sys.argv[1:]
+    _flags = {"--quotes", "--punct", "--units", "--in-place"}
+    _sel = {a for a in _argv if a in _flags}
+    _argv = [a for a in _argv if a not in _flags]
+    if _sel & {"--quotes", "--punct", "--units"}:
+        DO_QUOTES = "--quotes" in _sel
+        DO_PUNCT = "--punct" in _sel
+        DO_UNITS = "--units" in _sel
+    IN_PLACE = "--in-place" in _sel
+
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
-    files = get_input_files(sys.argv[1:], expected_ext="docx")
+    files = get_input_files(_argv, expected_ext="docx")
 
     if not files:
         print("❌ 错误：缺少文件名参数")
