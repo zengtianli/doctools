@@ -33,7 +33,10 @@ def _run_extract(args) -> int:
 
 
 def _run_borders(args) -> int:
-    """func= handler for `table borders`（distilled 路径直接调用）。"""
+    """func= handler for `table borders`（distilled 路径直接调用）。
+
+    --center 时附带跑 set_table_align（边框+整体居中常一起要）。
+    """
     docx = getattr(args, "docx_kw", None) or getattr(args, "docx_path_pos", None)
     if not docx:
         print("[table borders] missing docx (positional or --docx)", flush=True)
@@ -46,7 +49,26 @@ def _run_borders(args) -> int:
         argv.append("--no-backup")
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
-    return _dispatch.exec_script("set_table_borders", argv)
+    rc = _dispatch.exec_script("set_table_borders", argv)
+    if rc == 0 and getattr(args, "center", False):
+        rc = _run_center(args)
+    return rc
+
+
+def _run_center(args) -> int:
+    """func= handler for `table center`（表格整体水平居中）。"""
+    docx = getattr(args, "docx_kw", None) or getattr(args, "docx_path_pos", None)
+    if not docx:
+        print("[table center] missing docx (positional or --docx)", flush=True)
+        return 2
+    argv = ["--docx", str(docx)]
+    if getattr(args, "cell_center", False):
+        argv.append("--cell-center")
+    if getattr(args, "no_backup", False):
+        argv.append("--no-backup")
+    if getattr(args, "dry_run", False):
+        argv.append("--dry-run")
+    return _dispatch.exec_script("set_table_align", argv)
 
 
 def register(subparsers) -> None:
@@ -121,9 +143,32 @@ def register(subparsers) -> None:
     sp_bd.add_argument("--space", type=int, default=0, help="边距，默认 0")
     sp_bd.add_argument("--keep-cell-borders", action="store_true",
                        help="保留 tcBorders，仅改写非实线边（默认=删 tcBorders）")
+    sp_bd.add_argument("--center", action="store_true",
+                       help="顺带把所有表格整体水平居中（= 再跑一次 table center）")
+    sp_bd.add_argument("--cell-center", action="store_true",
+                       help="配合 --center：单元格内文字也水平+垂直居中")
     sp_bd.add_argument("--no-backup", action="store_true", help="不创建 .bak-时间戳")
     sp_bd.add_argument("--dry-run", action="store_true", help="只报告不写盘")
     sp_bd.set_defaults(_sub_target="borders", func=_run_borders)
+
+    # ── center ─────────────────────────────────────────────────────────────────
+    sp_ct = subs.add_parser(
+        "center",
+        help="把所有表格整体在页面水平居中（含嵌套表）",
+        description=(
+            "把 docx 内所有表格（含嵌套表）整体在页面水平居中——写表级\n"
+            "<w:tblPr>/<w:jc w:val='center'/>（表作为块左右居中），与单元格内文字\n"
+            "对齐是两回事。--cell-center 时同时把单元格内文字水平+垂直居中。\n"
+            "原地改 + 默认备份 .bak-时间戳。"
+        ),
+    )
+    sp_ct.add_argument("docx_path_pos", nargs="?", help="(positional) docx 路径，等价 --docx")
+    sp_ct.add_argument("--docx", dest="docx_kw", help="目标 docx（原地修改）")
+    sp_ct.add_argument("--cell-center", action="store_true",
+                       help="同时把单元格内文字水平+垂直居中（默认只表格整体居中）")
+    sp_ct.add_argument("--no-backup", action="store_true", help="不创建 .bak-时间戳")
+    sp_ct.add_argument("--dry-run", action="store_true", help="只报告不写盘")
+    sp_ct.set_defaults(_sub_target="center", func=_run_center)
 
     grp.set_defaults(_group=_GROUP)
 
@@ -154,5 +199,7 @@ def handle(args: argparse.Namespace, rest: list[str]) -> int:
         return _dispatch.exec_script("extract_tables", argv)
     if target == "borders":
         return _run_borders(args)
+    if target == "center":
+        return _run_center(args)
     print(f"[table] unknown target: {target}", flush=True)
     return 1

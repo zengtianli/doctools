@@ -49,6 +49,7 @@ from . import (
     compare,
     diff,
     fix_styleset,
+    fonts,
     freeze,
     header_footer,
     health,
@@ -82,6 +83,7 @@ __all__ = [
     "compare",
     "diff",
     "fix_styleset",
+    "fonts",
     "freeze",
     "header_footer",
     "health",
@@ -126,7 +128,8 @@ def register_all(subparsers) -> None:
         section,                                                                 # section read/list (distilled from panan-rigid)
         md_merge,                                                                # md merge-into-docx (distilled from panan-rigid)
         md_merge_track,                                                          # md→track-changes 锚点前插 (上提 reclaim merge-tracked, 0-B 2026-05-29)
-        table,                                                                   # table structural ops (delete-rows, W4 2026-05-26)
+        table,                                                                   # table structural ops (delete-rows / borders / center, W4 2026-05-26)
+        fonts,                                                                    # 字体/标题色规整 normalize (distilled reclaim 节水年会征文, 2026-06-21)
         split,                                                                   # split docx by-h1 (distilled from eco-flow/taizhou-天台, W1 2026-05-26)
         fix_styleset,                                                            # style-set fix family + shape_contract gate (W13 2026-05-26)
         health_split,                                                            # one-shot health + split thin wrapper (distilled from 业务模板 SOP, 2026-05-28)
