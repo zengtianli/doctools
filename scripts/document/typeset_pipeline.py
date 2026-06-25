@@ -30,6 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DC = HERE / "docx_cli.py"
 LINE_SPACING = HERE / "sub" / "line_spacing.py"
+RESTYLE = HERE / "sub" / "restyle.py"
 
 
 def _intact(p: Path) -> bool:
@@ -76,6 +77,13 @@ def main(argv=None):
         shutil.copy2(a.docx, work)
 
     steps = []
+    # ⓪ restyle：输入若被剥样式（pStyle 全空），且 --ref 是同源 golden → 按文本把
+    #    院样式移植回来。restyle 只套「目标无 pStyle + golden 有同文本」的段，非同源
+    #    ref（别县范式）文本不匹配 → 近乎 no-op，安全。chrome 靠 pStyle 找章界，须在它前。
+    if a.ref:
+        steps.append(("⓪ restyle 重套院样式(对同源参照)",
+                      [sys.executable, str(RESTYLE), str(work),
+                       "--ref", str(a.ref), "--apply", "--no-backup"]))
     steps.append(("① styleset 样式池清理",
                   [sys.executable, str(DC), "styleset", "restore", str(work)]))
     if a.ref:
