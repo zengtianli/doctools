@@ -620,6 +620,19 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
         "empty-caption-name",
     }
     bad = [i for i in issues if i.get("type") in GATE_TYPES]
+    # 封面元数据表豁免: 封面/声明/法人/审查页的「法定代表人/编制单位」等表本就无
+    # 「表X-Y」编号, 被误报为 orphan-tbl。按首行内容白名单豁免(只豁免封面表, 真数据表
+    # 无此关键词, 仍受孤儿检查)。源: 0624 法人封面表「法定代表人：叶垭兴」误卡 gate。
+    _COVER_KW = ("法定代表人", "法人代表", "编制单位", "委托单位", "资质",
+                 "批准", "核定人", "审查", "审定", "院长", "总工程师", "项目负责")
+
+    def _is_cover_tbl(i: dict) -> bool:
+        if i.get("type") != "orphan-tbl-no-upstream-caption":
+            return False
+        cells = "".join(i.get("first_row", []) or [])
+        return any(k in cells for k in _COVER_KW)
+
+    bad = [i for i in bad if not _is_cover_tbl(i)]
     advisory = [i for i in issues if i.get("type") == "caption-name-content-mismatch"]
     base = {
         "captions": summary.get("captions", 0),
