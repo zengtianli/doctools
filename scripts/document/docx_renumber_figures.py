@@ -148,6 +148,14 @@ def _ptext(p):
     return "".join(n.text or "" for n in _visible_t_nodes(p))
 
 
+def _caption_content_len(s):
+    """题注「内容」长度 = 去掉所有空白后的字符数。
+    Word 常把题注用 tab/大段空格填满整行（表3.1-1 + 几十个空格 + 标题 + 单位），
+    raw len 可达 125 → 误超「题注 <80」阈值被漏检（节内 gap 假阳性）。按内容长度量，
+    既挡住真正的长正文段（首词碰巧是 图X.Y-N 的整句），又不冤枉空格填充的真题注。"""
+    return len(re.sub(r"\s+", "", s))
+
+
 def _center_style_ids(docx_path):
     """从 styles.xml 取「有效 jc=center」的段落样式 id 集合（含 basedOn 继承链）。"""
     try:
@@ -198,7 +206,7 @@ def _collect_captions(paras, kind):
     numbered, cap_styles = [], set()
     for idx, p in enumerate(paras):
         s = _ptext(p).strip()
-        if 0 < len(s) < 80:
+        if 0 < _caption_content_len(s) < 80:
             m = cap_re.match(s)
             if m:
                 numbered.append((idx, m.group(1), int(m.group(2))))
@@ -212,7 +220,7 @@ def _collect_captions(paras, kind):
         if idx == 0 or not _has_drawing(paras[idx - 1]):
             continue
         s = _ptext(p).strip()
-        if not s or len(s) >= 80 or cap_re.match(s) or appendix_re.match(s):
+        if not s or _caption_content_len(s) >= 80 or cap_re.match(s) or appendix_re.match(s):
             continue
         if cap_styles and _para_style(p) in cap_styles:
             unnumbered.append(idx)
@@ -406,7 +414,7 @@ def _verify_cn(out_path, kind):
     by_sec = {}
     for p in root.iter(f"{W}p"):
         s = "".join(n.text or "" for n in _visible_t_nodes(p)).strip()
-        if len(s) >= 80:
+        if _caption_content_len(s) >= 80:
             continue
         m = cap_re.match(s)
         if m:
