@@ -31,6 +31,7 @@ HERE = Path(__file__).resolve().parent
 DC = HERE / "docx_cli.py"
 LINE_SPACING = HERE / "sub" / "line_spacing.py"
 RESTYLE = HERE / "sub" / "restyle.py"
+PORT_SECT = HERE / "sub" / "port_sections.py"
 
 
 def _intact(p: Path) -> bool:
@@ -107,24 +108,23 @@ def main(argv=None):
             report.append((name, "✅ 完成", tail[:60]))
         snap.unlink(missing_ok=True)
 
-    # ④ chrome（产出 _chrome 新文件，单独处理）
+    # ④ port_sections（从同源 golden 精确移植节结构：分节符+横竖+页眉脚水印+封面无页眉）
+    #    产出 _sect 新文件，单独处理。替代 chrome —— chrome 启发式重建对数字章范式会把
+    #    整本搞横/页眉错标；有同源 golden 时按真实节锚 1:1 复刻最稳。
     if a.ref:
         snap = work.with_suffix(work.suffix + ".snap")
         shutil.copy2(work, snap)
-        ccmd = [sys.executable, str(DC), "chrome", "--raw", str(work),
-                "--template", str(a.ref)]
-        if a.county:
-            ccmd += ["--county", a.county]
-        rc, out = _run(ccmd, timeout=300)
-        chrome_out = work.with_name(work.stem + "_chrome.docx")
-        if rc == 0 and chrome_out.exists() and _intact(chrome_out):
-            chrome_out.replace(work)
-            tail = next((l for l in out.splitlines() if "节数" in l), "")
-            report.append(("④ chrome 逐章页眉装帧", "✅ 完成", tail.strip()[:60]))
+        rc, out = _run([sys.executable, str(PORT_SECT), str(work),
+                        "--ref", str(a.ref), "--no-backup"], timeout=300)
+        sect_out = work.with_name(work.stem + "_sect.docx")
+        if rc == 0 and sect_out.exists() and _intact(sect_out):
+            sect_out.replace(work)
+            tail = next((l for l in out.splitlines() if "移植" in l), "")
+            report.append(("④ port_sections 节结构移植", "✅ 完成", tail.strip()[:60]))
         else:
             shutil.copy2(snap, work)
-            chrome_out.unlink(missing_ok=True)
-            report.append(("④ chrome 逐章页眉装帧", "⚠ 跳过(回滚)",
+            sect_out.unlink(missing_ok=True)
+            report.append(("④ port_sections 节结构移植", "⚠ 跳过(回滚)",
                            out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"))
         snap.unlink(missing_ok=True)
 
