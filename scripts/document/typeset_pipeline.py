@@ -32,6 +32,7 @@ DC = HERE / "docx_cli.py"
 LINE_SPACING = HERE / "sub" / "line_spacing.py"
 RESTYLE = HERE / "sub" / "restyle.py"
 PORT_SECT = HERE / "sub" / "port_sections.py"
+CENTER_IMG = HERE / "sub" / "center_images.py"
 
 
 def _intact(p: Path) -> bool:
@@ -91,9 +92,11 @@ def main(argv=None):
         steps.append(("② spacing 固定行距(对参照)",
                       [sys.executable, str(LINE_SPACING), str(work),
                        "--fix", "--ref", str(a.ref), "--no-backup"]))
-    steps.append(("③ figs 图号重排+居中",
+    steps.append(("③ figs 图号节内重排+补无号题注",
                   [sys.executable, str(DC), "renumber-fig", "--cn-section",
                    "--fix-center", "--inplace", str(work)]))
+    steps.append(("③.5 center-img 图片显式居中+零缩进",
+                  [sys.executable, str(CENTER_IMG), str(work), "--apply", "--no-backup"]))
 
     report = []
     for name, cmd in steps:
