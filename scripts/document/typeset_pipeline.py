@@ -6,11 +6,14 @@
 失败）自动回滚该步、标 ⚠ 跳过，不连累全局。
 
 步序（从 0624 vs 0625 真实 diff 推出，高价值优先）：
-  ① styleset  样式池清理（去 TOC10 等重复后缀）      docx_cli styleset restore
-  ② spacing   正文固定行距（对参照, best-effort）     line_spacing --fix --ref
-  ③ figs      图号节内重排+补号+居中                  renumber-fig --cn-section --fix-center
-  ④ chrome    逐章页眉/水印/分节/横表（对参照复刻）    docx_cli chrome --raw --template
-  ⑤ gate      交付不变量自检（read-only 收尾）         docx_cli health gate
+  ⓪ restyle    重套院样式（对同源 golden，整段克隆 pPr+runs）   sub/restyle.py --apply
+  ① styleset   样式池清理（去 TOC10 等重复后缀）             docx_cli styleset restore
+  ② spacing    正文固定行距（对参照, best-effort）            line_spacing --fix --ref
+  ③ figs       图号节内重排+补号+居中                       renumber-fig --cn-section --fix-center
+  ③.5 center   图片显式居中+零缩进（不赌样式）               sub/center_images.py --apply
+  ④ port_sect  节结构移植（对同源 golden 1:1：分节/横竖/页眉脚水印） sub/port_sections.py
+  ④.5 sync_toc 目录同步 golden（样式表对账+整个 TOC sdt 移植）   sub/sync_toc.py --apply
+  ⑤ gate       交付不变量自检（read-only 收尾）              docx_cli health gate
 
 surgical 安全网：每步后 unzip -t 验完整性，坏了回滚 → 全程不产出损坏 docx。
 
@@ -33,6 +36,7 @@ LINE_SPACING = HERE / "sub" / "line_spacing.py"
 RESTYLE = HERE / "sub" / "restyle.py"
 PORT_SECT = HERE / "sub" / "port_sections.py"
 CENTER_IMG = HERE / "sub" / "center_images.py"
+SYNC_TOC = HERE / "sub" / "sync_toc.py"
 
 
 def _intact(p: Path) -> bool:
@@ -129,6 +133,23 @@ def main(argv=None):
             sect_out.unlink(missing_ok=True)
             report.append(("④ port_sections 节结构移植", "⚠ 跳过(回滚)",
                            out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"))
+        snap.unlink(missing_ok=True)
+
+    # ④.5 sync_toc（目录与同源 golden 同步：样式表对账 + 整个 TOC sdt 移植）
+    #     根治「扒光稿 restyle 后目录条目仍是扒光直接格式 + styleId 语义冲突 + 锚点悬空」。
+    #     restyle 把目录字段段当 special 跳过、且只改 document.xml 不动 styles.xml → 必须补这道。
+    if a.ref:
+        snap = work.with_suffix(work.suffix + ".snap")
+        shutil.copy2(work, snap)
+        rc, out = _run([sys.executable, str(SYNC_TOC), str(work),
+                        "--ref", str(a.ref), "--apply", "--no-backup"])
+        if rc != 0 or not _intact(work):
+            shutil.copy2(snap, work)
+            report.append(("④.5 sync_toc 目录同步golden", "⚠ 跳过(回滚)",
+                           out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"))
+        else:
+            tail = next((l for l in out.splitlines() if "目录块移植" in l or "覆盖" in l), "")
+            report.append(("④.5 sync_toc 目录同步golden", "✅ 完成", tail.strip()[:60]))
         snap.unlink(missing_ok=True)
 
     # ⑤ gate（read-only 收尾自检）
