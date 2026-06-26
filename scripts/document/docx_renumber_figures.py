@@ -196,15 +196,35 @@ def _para_centered(p, center_ids):
     return _para_style(p) in center_ids
 
 
+def _body_start_idx(paras):
+    """正文起始段索引 = 目录(TOC)字段之后。
+
+    封面/批准页/落款/目录都在 TOC 之前；其中院 logo 图旁的文本（日期/署名/编制单位）
+    **不是图题**，必须排除出 caption 采集——否则补号会把「二○二六年二月」误标成
+    图X.Y-N（景宁 0313 成品踩坑：日期紧跟院 logo 图、又恰好同款 caption 样式）。
+    判据 = 最后一个 TOC 字段 / PAGEREF 锚点段之后；无 TOC 则返 0（不排除，保持旧行为）。
+    """
+    last = -1
+    for idx, p in enumerate(paras):
+        instr = "".join(n.text or "" for n in p.iter(f"{W}instrText"))
+        if "TOC" in instr or "PAGEREF _Toc" in instr:
+            last = idx
+    return last + 1
+
+
 def _collect_captions(paras, kind):
     """返回 (numbered, unnumbered, cap_style_ids)。
     numbered  : [(idx, sec, old_n)]  行首匹配 图X.Y-N 的题注
     unnumbered: [idx]                紧跟图片、属 caption 样式、无号的题注段（待补号）
     caption 样式 = numbered 题注所用 pStyle 的并集（据此识别同款无号题注，排除封面 logo 的非题注后段）。
+    **前置区(封面/落款/目录)整段排除**（见 _body_start_idx）——图题只在正文。
     """
+    body0 = _body_start_idx(paras)
     cap_re = re.compile(rf'^\s*{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
     numbered, cap_styles = [], set()
     for idx, p in enumerate(paras):
+        if idx < body0:
+            continue
         s = _ptext(p).strip()
         if 0 < _caption_content_len(s) < 80:
             m = cap_re.match(s)
@@ -217,7 +237,7 @@ def _collect_captions(paras, kind):
     appendix_re = re.compile(r'^\s*附[图表]')
     unnumbered = []
     for idx, p in enumerate(paras):
-        if idx == 0 or not _has_drawing(paras[idx - 1]):
+        if idx < body0 or idx == 0 or not _has_drawing(paras[idx - 1]):
             continue
         s = _ptext(p).strip()
         if not s or _caption_content_len(s) >= 80 or cap_re.match(s) or appendix_re.match(s):
@@ -271,9 +291,10 @@ def check_cn_section(docx_path, kind="图", check_center=True):
 
     uncentered = []
     if check_center and cap_styles:   # 仅对「有题注的报告」查居中，零题注文档跳过
+        body0 = _body_start_idx(paras)   # 前置(封面/落款 logo)不算正文图，不查居中
         center_ids = _center_style_ids(docx_path)
         for idx, p in enumerate(paras):
-            if not _has_drawing(p) or _para_centered(p, center_ids):
+            if idx < body0 or not _has_drawing(p) or _para_centered(p, center_ids):
                 continue
             cap = _ptext(paras[idx + 1]).strip()[:30] if idx + 1 < len(paras) else ""
             uncentered.append(cap or f"段{idx}")
@@ -287,10 +308,13 @@ def check_cn_section(docx_path, kind="图", check_center=True):
 
 
 def center_figure_paragraphs(root, center_ids):
-    """把所有含图段落的有效对齐改为 center（已居中的跳过）。返回改动数。"""
+    """把所有含图段落的有效对齐改为 center（已居中的跳过）。返回改动数。
+    前置(封面/落款 logo)不碰——只居中正文图（见 _body_start_idx）。"""
     n = 0
-    for p in root.iter(f"{W}p"):
-        if not _has_drawing(p) or _para_centered(p, center_ids):
+    paras = list(root.iter(f"{W}p"))
+    body0 = _body_start_idx(paras)
+    for idx, p in enumerate(paras):
+        if idx < body0 or not _has_drawing(p) or _para_centered(p, center_ids):
             continue
         pPr = p.find(f"{W}pPr")
         if pPr is None:

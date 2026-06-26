@@ -38,6 +38,17 @@ def _has_image(p) -> bool:
     return p.find(".//" + q("drawing")) is not None or p.find(".//" + q("pict")) is not None
 
 
+def _body_start_idx(paras) -> int:
+    """正文起始段索引 = 目录(TOC)字段之后。封面/批准/落款的院 logo 是装帧不是正文图，
+    不该被强制居中（否则打乱落款版式）——只居中正文图。无 TOC 则返 0（保持旧行为）。"""
+    last = -1
+    for idx, p in enumerate(paras):
+        instr = "".join(n.text or "" for n in p.iter(q("instrText")))
+        if "TOC" in instr or "PAGEREF _Toc" in instr:
+            last = idx
+    return last + 1
+
+
 def _is_centered(p) -> bool:
     pPr = p.find(q("pPr"))
     if pPr is None:
@@ -82,7 +93,9 @@ def _root(docx):
 
 def _scan(docx):
     root = _root(docx)
-    imgs = [p for p in root.iter(q("p")) if _has_image(p)]
+    paras = list(root.iter(q("p")))
+    body0 = _body_start_idx(paras)
+    imgs = [p for i, p in enumerate(paras) if i >= body0 and _has_image(p)]
     centered = [p for p in imgs if _is_centered(p)]
     return root, imgs, centered
 
