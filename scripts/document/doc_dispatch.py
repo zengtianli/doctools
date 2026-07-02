@@ -159,6 +159,31 @@ def do_clean(files):  return _per_file(files, route_clean, "规范化")
 def do_split(files):  return _per_file(files, route_split, "拆分")
 
 
+def _word_textfix(out: Path) -> int:
+    """convert→word 收尾:自动文本修复(引号/标点/单位),成品就地替换,不留中间文件。
+    用户钦定:转出来的 docx 直接就是 text_format 好的,不用再手动跑一遍规范化。"""
+    if not out.exists():
+        warn(f"未找到转换产出 {out.name},跳过文本修复")
+        return 1
+    if _run(_py("docx_text_formatter.py", str(out)), "文本修复(引号/标点/单位)"):
+        return 1
+    fixed = out.with_name(f"{out.stem}_fixed{out.suffix}")
+    if not fixed.exists():
+        warn(f"文本修复未产出 {fixed.name}")
+        return 1
+    fixed.replace(out)
+    print(f"{GREEN}  ✓ 成品(已文本修复) → {out.name}{RST}")
+    return 0
+
+
+def _word_output(f: str) -> Path:
+    """convert→word 各引擎的默认产出路径。"""
+    p = Path(f)
+    if _ext(f) == "docx":
+        return p.with_name(f"{p.stem}_styled.docx")   # docx_apply_template.py
+    return p.with_suffix(".docx")                     # md_docx_template.py / soffice
+
+
 def do_convert(files, target):
     aliases = {"markdown": "md", "docx": "word", "excel": "xlsx", "text": "txt"}
     target = aliases.get(target, target)
@@ -181,7 +206,7 @@ def do_convert(files, target):
                 if nf is None:
                     rc |= 1; continue
                 if target == "word":
-                    print(f"{GREEN}  ✓ → {Path(nf).name}{RST}")
+                    rc |= _word_textfix(Path(nf))
                     continue
                 f = nf  # md:继续按 docx → md 路由
             else:
@@ -197,7 +222,10 @@ def do_convert(files, target):
             continue
         cmd, label = hit
         print(f"{GREEN}● {Path(f).name}{RST}")
-        rc |= _run(cmd, label or f"→ {target}")
+        r = _run(cmd, label or f"→ {target}")
+        rc |= r
+        if r == 0 and target == "word":
+            rc |= _word_textfix(_word_output(f))
     return rc
 
 

@@ -331,13 +331,35 @@ def is_separator_row(line):
 
 
 def clean_markdown_text(text):
-    """清理 Markdown 格式"""
-    # 去除 markdown 格式
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # **bold**
-    text = re.sub(r"\*(.+?)\*", r"\1", text)  # *italic*
+    """清理行内噪音(code/math)。**bold**/*italic* 标记保留,由 add_md_runs 渲染成真 Word run。"""
     text = re.sub(r"`(.+?)`", r"\1", text)  # `code`
     text = re.sub(r"\$(.+?)\$", r"\1", text)  # $math$ (简单处理)
     return text
+
+
+def strip_md_markers(text):
+    """整段剥掉 markdown 行内标记(标题/表名/图名本身有样式,不需要 run 级加粗)。"""
+    text = clean_markdown_text(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # **bold**
+    text = re.sub(r"\*(.+?)\*", r"\1", text)  # *italic*
+    return text
+
+
+# **bold** 或 *italic*(首字符非空格/星号,避免 3*4 这类误伤)
+_MD_INLINE = re.compile(r"(\*\*[^*]+?\*\*|\*[^*\s][^*]*?\*)")
+
+
+def add_md_runs(para, text):
+    """把 **bold**/*italic* 渲染成真 Word run —— 星号字面量绝不落进 docx。"""
+    for part in _MD_INLINE.split(clean_markdown_text(text)):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            para.add_run(part[2:-2]).bold = True
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            para.add_run(part[1:-1]).italic = True
+        else:
+            para.add_run(part)
 
 
 def parse_list_item(line):
@@ -567,12 +589,12 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
     if config and config.get("body_style_name"):
         body_style = config["body_style_name"]
 
-    # 表格内容样式
-    table_cell_style = "ZDWP表格内容"
-    # 表名样式
-    table_title_style = "ZDWP表名"
-    # 图名样式
-    figure_title_style = "ZDWP图名"
+    # 表名/表格内容/图名:优先用模板提取到的真实样式名(模板里可能带空格,如「ZDWP 表名」),
+    # 硬编码名只作 fallback —— 否则名字对不上就整体退化成正文样式。
+    styles_map = (config or {}).get("styles", {})
+    table_cell_style = styles_map.get("ZDWP3", "ZDWP表格内容")
+    table_title_style = styles_map.get("ZDWP1", "ZDWP表名")
+    figure_title_style = styles_map.get("ZDWP4", "ZDWP图名")
 
     # 检查样式是否存在
     available_styles = {s.name for s in doc.styles}
@@ -600,33 +622,38 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
         4: "Heading 4",
     }
 
+    def _styled_paragraph(text, style_name, inline=True):
+        """加一段:样式尽力套,行内 markdown 一律消化(inline=真 run 加粗;否则整段剥标记)。"""
+        try:
+            para = doc.add_paragraph(style=style_name)
+        except KeyError:
+            para = doc.add_paragraph()
+        if inline:
+            add_md_runs(para, text)
+        else:
+            para.add_run(strip_md_markers(text))
+        return para
+
     # 写入内容
     for elem in elements:
         if elem["type"] == "heading":
             level = elem["level"]
             style_name = heading_styles.get(level, "Heading 4")
+            # 标题样式自带加粗,行内标记整段剥掉
+            text = strip_md_markers(elem["text"])
             try:
-                doc.add_paragraph(elem["text"], style=style_name)
+                doc.add_paragraph(text, style=style_name)
             except KeyError:
-                doc.add_heading(elem["text"], level=level)
+                doc.add_heading(text, level=level)
 
         elif elem["type"] == "paragraph":
-            try:
-                doc.add_paragraph(elem["text"], style=body_style)
-            except KeyError:
-                doc.add_paragraph(elem["text"])
+            _styled_paragraph(elem["text"], body_style)
 
         elif elem["type"] == "table_title":
-            try:
-                doc.add_paragraph(elem["text"], style=table_title_style)
-            except KeyError:
-                doc.add_paragraph(elem["text"])
+            _styled_paragraph(elem["text"], table_title_style, inline=False)
 
         elif elem["type"] == "figure_title":
-            try:
-                doc.add_paragraph(elem["text"], style=figure_title_style)
-            except KeyError:
-                doc.add_paragraph(elem["text"])
+            _styled_paragraph(elem["text"], figure_title_style, inline=False)
 
         elif elem["type"] == "table":
             headers = elem["headers"]
@@ -651,7 +678,7 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
                 # 清空默认段落，设置样式
                 cell.text = ""
                 para = cell.paragraphs[0]
-                para.text = header
+                add_md_runs(para, header)
                 # 水平居中
                 para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 with contextlib.suppress(KeyError):
@@ -667,7 +694,7 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
                         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                         cell.text = ""
                         para = cell.paragraphs[0]
-                        para.text = cell_text
+                        add_md_runs(para, cell_text)
                         # 水平居中
                         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         with contextlib.suppress(KeyError):
