@@ -272,3 +272,119 @@ def test_word_lock_force_overrides(tmp_path):
 def test_missing_file(tmp_path):
     rc = dp.main(["locate", str(tmp_path / "nope.docx"), "x"])
     assert rc == 2
+
+
+# ─── 对抗审查回归 (2026-07-03 review) ──────────────────────────────────────
+_XMLSPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def test_edit_preserve_on_all_modified_nodes(tmp_path):
+    """跨 run 替换后, 被清片段的后续 node 若残留边缘空白, 必须补 xml:space=preserve
+    (否则 Word 吞空格) —— 不止首 node。"""
+    d = tmp_path / "x.docx"
+    # 两 run: "Hello" | "World Foo"; replace "HelloWorld"→"X" → node2 残 " Foo"(前导空格)
+    _make_docx(d, _doc(_p(_r("Hello") + _r("World Foo"), _ppr_style("Body"))))
+    rc = dp.main(["edit", str(d), "--para", "0", "--replace", "HelloWorld", "X", "--no-gate", "--no-backup"])
+    assert rc == 0
+    _, paras = _reopen_paras(d)
+    assert ds.para_text(paras[0]) == "X Foo"
+    ts = list(paras[0].iter(W + "t"))
+    tail = [t for t in ts if (t.text or "").startswith(" ")]
+    assert tail, "应有残留前导空格的 w:t"
+    assert tail[0].get(_XMLSPACE) == "preserve", "残留边缘空白 node 必须带 xml:space=preserve"
+
+
+def test_fix_ppr_preserves_target_own_sectpr(tmp_path):
+    """目标段自带 sectPr(分节标记)必须在 pPr 克隆替换后保留 —— 否则节边界丢失(HIGH)。"""
+    d = tmp_path / "x.docx"
+    src = _p(_r("源段"), _ppr_style("Body"))
+    tgt_ppr = (
+        '<w:pPr><w:pStyle w:val="Body"/><w:ind w:firstLine="0"/>'
+        '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr></w:pPr>'
+    )
+    tgt = _p(_r("横向节末段"), tgt_ppr)
+    _make_docx(d, _doc(src + tgt))
+    rc = dp.main(["fix-ppr", str(d), "--para", "1", "--clone-from", "0", "--no-gate", "--no-backup"])
+    assert rc == 0
+    _, paras = _reopen_paras(d)
+    ppr = paras[1].find(W + "pPr")
+    assert ppr is not None
+    sect = ppr.find(W + "sectPr")
+    assert sect is not None, "目标段自身 sectPr 必须保留(节边界不丢)"
+    assert sect.find(W + "pgSz").get(W + "orient") == "landscape", "sectPr 内容(横向)完整保留"
+    # 脏 ind(firstLine=0)被清(源无 ind)
+    assert ppr.find(W + "ind") is None
+
+
+def test_inspect_hint_expect_is_real_substring(tmp_path, capsys):
+    """inspect 末行 HINT 的 --expect 值必须是段文本真子串(禁 … 省略号, 否则照抄必被拦)。"""
+    import re as _re
+
+    d = tmp_path / "x.docx"
+    long_text = "这是一段需要超过十二个字符的正文内容用于测试"
+    _make_docx(
+        d,
+        _doc(
+            _p(_r("邻段甲"), _ppr_style("Body"))
+            + _p(_r(long_text), _ppr_style("Body", '<w:ind w:firstLine="0"/>'))
+            + _p(_r("邻段乙"), _ppr_style("Body"))
+        ),
+    )
+    dp.main(["inspect", str(d), "--para", "1"])
+    out = capsys.readouterr().out
+    m = _re.search(r'--expect "([^"]*)"', out)
+    assert m, out
+    expect = m.group(1)
+    assert "…" not in expect
+    _, paras = _reopen_paras(d)
+    assert expect in ds.para_text(paras[1]), f"--expect {expect!r} 必须是段文本真子串"
+
+
+def test_prune_cache_no_prefix_crossmatch(tmp_path, monkeypatch):
+    """prune 严格 <stem>-<12hex> 匹配, 不得误删 stem 为前缀的别文档缓存。"""
+    import os
+
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    monkeypatch.setattr(dp, "CACHE_ROOT", cache_root)
+    victim = cache_root / "报告-终稿-bbbbbbbbbbbb"  # 别文档, 不该被 prune "报告" 波及
+    victim.mkdir()
+    os.utime(victim, (1, 1))  # 设最旧 → 若跨匹配必首先被删
+    for k, h in enumerate(["a" * 12, "c" * 12, "d" * 12, "e" * 12, "f" * 12]):
+        p = cache_root / f"报告-{h}"
+        p.mkdir()
+        os.utime(p, (100 + k, 100 + k))
+    dp._prune_cache(tmp_path / "报告.docx", keep=3)
+    assert victim.exists(), "报告-终稿 缓存不得被 prune 报告 误删"
+    remaining = sorted(x.name for x in cache_root.iterdir() if x.name.startswith("报告-") and "终稿" not in x.name)
+    assert len(remaining) == 3, f"报告-<hex> 应保留 keep=3, 实剩 {remaining}"
+
+
+def _seed_cache(docx: Path, pages_lines: list[str]) -> None:
+    import json as _json
+
+    cd = dp._cache_dir(docx)
+    cd.mkdir(parents=True, exist_ok=True)
+    (cd / "full.pdf").write_bytes(b"%PDF-1.4\n")
+    (cd / "pages.txt").write_text("\n".join(pages_lines), encoding="utf-8")
+    (cd / "meta.json").write_text(_json.dumps({"docx": str(docx), "pages": len(pages_lines)}), encoding="utf-8")
+
+
+def test_render_no_para_no_page_clean_exit(tmp_path, monkeypatch):
+    """render 无 --para/--page/--warm(缓存已就绪)→ exit 2 干净报错, 不 TypeError 崩。"""
+    monkeypatch.setattr(dp, "CACHE_ROOT", tmp_path / "cache")
+    d = tmp_path / "x.docx"
+    _make_docx(d, _doc(_p(_r("正文"), _ppr_style("Body"))))
+    _seed_cache(d, ["正文各页不同内容一", "正文各页不同内容二"])
+    rc = dp.main(["render", str(d)])  # 无 --para/--page
+    assert rc == 2
+
+
+def test_render_header_footer_noise_not_misleading(tmp_path, monkeypatch):
+    """短段文本与每页页眉/页脚重复 → 命中大半页 → exit 3 明确报不可定位, 不渲误导首页。"""
+    monkeypatch.setattr(dp, "CACHE_ROOT", tmp_path / "cache")
+    d = tmp_path / "x.docx"
+    _make_docx(d, _doc(_p(_r("页眉文字"), _ppr_style("Body"))))
+    _seed_cache(d, ["页眉文字第%d页正文" % k for k in range(10)])  # 每页都含"页眉文字"
+    rc = dp.main(["render", str(d), "--para", "0"])
+    assert rc == 3

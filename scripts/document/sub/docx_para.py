@@ -347,7 +347,10 @@ def cmd_inspect(args) -> int:
             dirty.append(f"DIRTY jc: 本段 jc={my_jc} ≠ 同样式模态 jc={modal_jc}")
     for d in dirty:
         print(d)
-    print(f'HINT: docx_cli.py para fix-ppr {docx} --para {i} --clone-from prev --expect "{_snippet(p, 12)}"')
+    # --expect 值必须是 ds.para_text(p) 的真子串 → 用纯前缀(禁 _snippet 的 … 追加,
+    # 否则用户照抄的 fix-ppr 命令必被 --expect 判定拦下)。
+    expect = ds.para_text(p).strip()[:12]
+    print(f'HINT: docx_cli.py para fix-ppr {docx} --para {i} --clone-from prev --expect "{expect}"')
     return 3 if dirty else 0
 
 
@@ -426,11 +429,13 @@ def cmd_edit(args) -> int:
         if not first_done:
             node.text = txt[:ls] + new + txt[le:]
             first_done = True
-            nt = node.text or ""
-            if nt[:1].isspace() or nt[-1:].isspace():
-                node.set(XML_SPACE, "preserve")
         else:
-            node.text = txt[:ls] + txt[le:]
+            node.text = txt[:ls] + txt[le:]  # 后续被覆盖 node 清掉命中片段
+        # 每个被改的 node 都判 preserve：清片段后残留首/尾空白的 node 若不设 preserve,
+        # Word/WPS 按 OOXML 裁剪 w:t 首尾空白 → 吞掉可见空格(不止首 node)。
+        nt = node.text or ""
+        if nt[:1].isspace() or nt[-1:].isspace():
+            node.set(XML_SPACE, "preserve")
     if not first_done:
         print("内部错误: 命中定位但无 w:t 覆盖", file=sys.stderr)
         return 1
@@ -489,22 +494,31 @@ def cmd_fix_ppr(args) -> int:
 
     tgt_style = _pstyle_of(p)
     before = _ppr_summary(p)
+    old = p.find(qn("w:pPr"))
+    # 目标段自带的 sectPr(分节标记)定义本段结束处的节属性(横向/页边距/页眉页脚边界)。
+    # 整段 pPr 克隆替换会连它一起吞掉(cloned 又被 _clone_ppr 剥了 sectPr)→ 节边界消失、
+    # 横向节并入纵向。必须把目标自身的 sectPr 保留下来回挂(schema: sectPr 近 pPr 末尾)。
+    own_sectpr = deepcopy(old.find(qn("w:sectPr"))) if old is not None else None
     src_pPr = src_p.find(qn("w:pPr"))
     note_numpr = False
     cloned_style = None
     if src_pPr is None:
-        # 源无 pPr → 删目标 pPr = 回归纯样式继承
-        old = p.find(qn("w:pPr"))
+        # 源无 pPr → 删目标 pPr = 回归纯样式继承(但保留目标自身 sectPr)
         if old is not None:
             p.remove(old)
+        if own_sectpr is not None:
+            keep = etree.Element(qn("w:pPr"))
+            keep.append(own_sectpr)
+            p.insert(0, keep)
     else:
         cloned = _clone_ppr(src_pPr)
         note_numpr = cloned.find(qn("w:numPr")) is not None
         cs = cloned.find(qn("w:pStyle"))
         cloned_style = cs.get(qn("w:val")) if cs is not None else None
-        old = p.find(qn("w:pPr"))
         if old is not None:
             p.remove(old)
+        if own_sectpr is not None:
+            cloned.append(own_sectpr)  # 回挂目标自身 sectPr 到克隆 pPr 末尾
         p.insert(0, cloned)
     after = _ppr_summary(p)
 
@@ -523,6 +537,8 @@ def cmd_fix_ppr(args) -> int:
         )
     if note_numpr:
         print("NOTE: numbering cloned (numPr 随整体克隆一并搬入, 属预期语义)")
+    if own_sectpr is not None:
+        print("NOTE: 目标段自带 sectPr(分节标记), 已保留(节边界/横向/页边距不动)")
     if bak:
         print(f"BACKUP {bak.name}")
     return _finish_gate(docx, bak, args)
@@ -613,9 +629,15 @@ def _cache_dir(docx: Path) -> Path:
 
 
 def _prune_cache(docx: Path, keep: int = 3) -> None:
-    prefix = docx.stem + "-"
+    # 严格匹配 <stem>-<12位hex hash>,禁 glob 前缀跨匹配(否则 prune "报告" 会误删 "报告-终稿"
+    # 的缓存 —— stem 是另一文档 stem 前缀时 fnmatch 会命中)。
+    if not CACHE_ROOT.exists():
+        return
+    pat = re.compile(rf"^{re.escape(docx.stem)}-[0-9a-f]{{12}}$")
     dirs = sorted(
-        [d for d in CACHE_ROOT.glob(prefix + "*") if d.is_dir()], key=lambda d: d.stat().st_mtime, reverse=True
+        [d for d in CACHE_ROOT.iterdir() if d.is_dir() and pat.match(d.name)],
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
     )
     for d in dirs[keep:]:
         shutil.rmtree(d, ignore_errors=True)
@@ -671,6 +693,13 @@ def _warm(docx: Path, cache_dir: Path) -> int:
     return 0
 
 
+def _cache_page_count(cache_dir: Path) -> int:
+    try:
+        return int(json.loads((cache_dir / "meta.json").read_text("utf-8")).get("pages", 0))
+    except Exception:
+        return 0
+
+
 def _page_of_para(para_text_norm: str, cache_dir: Path) -> list[int]:
     lines = (cache_dir / "pages.txt").read_text(encoding="utf-8").split("\n")
     t = para_text_norm
@@ -705,6 +734,9 @@ def cmd_render(args) -> int:
     if args.page:
         pages = [args.page]
     else:
+        if args.para is None:
+            print("render 需 --para <i> 或 --page N (缓存已就绪)", file=sys.stderr)
+            return 2
         root = ds.parse_document(docx)
         paras = ds.iter_paras(root)
         i = _validate_para_idx(paras, args.para)
@@ -718,6 +750,15 @@ def cmd_render(args) -> int:
         if not pages:
             print(f"未能把段 {i} 映射到页 (缓存或与当前 docx hash 不符?)", file=sys.stderr)
             return 1
+        total = _cache_page_count(cache_dir)
+        if total and len(pages) > max(3, total // 2):
+            # 命中大半页 = 段文本疑与页眉/页脚重复 → 别渲误导的首页, 明确报不可唯一定位
+            print(
+                f"段 {i} 文本疑与页眉/页脚重复, 命中 {len(pages)}/{total} 页 —— 无法唯一定位; "
+                f"请用更长/更独特的 locate 文本, 或 --page N 直接指定。",
+                file=sys.stderr,
+            )
+            return 3
 
     out_dir = Path(args.out_dir) if args.out_dir else docx.parent / (docx.stem + "_页检")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -741,7 +782,9 @@ def cmd_render(args) -> int:
             ],
             capture_output=True,
         )
-        produced = sorted(out_dir.glob(f"p{pg:03d}*.png"))
+        # 带 '-' 的 glob 防跨页号误取: pdftoppm 输出名 = p{pg:03d}-<页号>.png, 'p031-*'
+        # 不会误匹配 'p0310-*'(0310 后是 '0' 非 '-')。
+        produced = sorted(out_dir.glob(f"p{pg:03d}-*.png"))
         if produced:
             print(f"PAGE {pg} | PNG {produced[-1]}")
             printed.append(pg)
