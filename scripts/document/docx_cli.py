@@ -369,6 +369,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "chapters-sync",  # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
         "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
         "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
+        "para",       # 段落级 查-改-验 工作台: locate/inspect/edit/fix-ppr/scan-ppr/render (context11 distill, 2026-07-03)
     }
     while i < len(raw):
         tok = raw[i]

@@ -48,6 +48,7 @@ from . import (
     combine,
     compare,
     diff,
+    docx_para,
     fix_styleset,
     fonts,
     freeze,
@@ -82,6 +83,7 @@ __all__ = [
     "combine",
     "compare",
     "diff",
+    "docx_para",
     "fix_styleset",
     "fonts",
     "freeze",
@@ -119,6 +121,7 @@ def register_all(subparsers) -> None:
     # Order: unique-group first, then shared-group contributors
     for mod in (
         audit, audit_styleset, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
+        docx_para,                                                               # 段落级 查-改-验 工作台 (locate/inspect/edit/fix-ppr/scan-ppr/render, 2026-07-03)
         combine,                                                                 # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
         chapters_sync,                                                           # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
         chrome,                                                                  # 院报告版面装帧(逐章分节+横向节, distilled eco-flow 2026-06-04)
