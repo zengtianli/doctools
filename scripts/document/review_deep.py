@@ -235,8 +235,8 @@ def main():
                         help="规则名称（默认: eco-flow-report）")
     parser.add_argument("--dim", nargs="*",
                         help="指定检查维度（completeness/structure/tone/consistency），默认全部")
-    parser.add_argument("--model", default="haiku",
-                        help="LLM 模型（haiku/sonnet/opus，默认: haiku）")
+    parser.add_argument("--model", default="fable",
+                        help="LLM 模型（fable/haiku/sonnet/opus，默认: fable;批量省额度可显式 haiku）")
     parser.add_argument("--list-rules", action="store_true",
                         help="列出可用规则")
     parser.add_argument("--dry-run", action="store_true",
