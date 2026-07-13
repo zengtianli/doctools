@@ -49,6 +49,9 @@ from finder import get_input_files
 from progress import ProgressTracker
 from text_fixes import fix_punctuation, fix_quotes, fix_units
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
+
 # ===== 配置选项 =====
 SKIP_FOOTER = True
 
@@ -219,6 +222,7 @@ def process_docx(input_file):
         return False
 
     # 生成输出文件名（--in-place 时原地写回 + 备份；否则另存 _fixed）
+    write_gate = WriteGate(input_path) if IN_PLACE else None  # 读入前 capture 基线
     if IN_PLACE:
         import shutil as _shutil
         from datetime import datetime as _dt
@@ -279,6 +283,8 @@ def process_docx(input_file):
 
         # 保存文件
         print("💾 正在保存文件...")
+        if write_gate is not None:
+            write_gate.assert_unchanged()  # 源文件被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
         try:
             doc.save(output_path)
             clear_quarantine(output_path)

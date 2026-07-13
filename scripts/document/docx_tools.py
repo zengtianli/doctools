@@ -44,6 +44,9 @@ from lxml import etree
 from docx_xml import R_NS, REL_COMMENTS, W, qn
 from file_ops import clear_quarantine
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  extract — 文本提取
@@ -933,6 +936,7 @@ class DocxReviewer:
 
     def __init__(self, docx_path: str, author: str = "CC审阅"):
         self.docx_path = docx_path
+        self._write_gate = WriteGate(docx_path)  # 读入时 capture,save 回源文件前 assert
         self.author = author
         self.date = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.comment_id_counter = 0
@@ -1230,6 +1234,8 @@ class DocxReviewer:
         self._write_comments_xml()
 
         output_path = os.path.abspath(output_path)
+        if output_path == os.path.abspath(self.docx_path):
+            self._write_gate.assert_unchanged()  # 原地写回:源被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, _dirs, files in os.walk(self.tmpdir):
                 for fn in files:

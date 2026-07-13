@@ -27,7 +27,11 @@ CLI:
 退出码：0 成功且重编号后 captions 连续 1..N；2 检测到重复图号（引用无法安全remap）。
 """
 import argparse, re, shutil, sys, zipfile
+from pathlib import Path
 from lxml import etree
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -465,6 +469,7 @@ def main():
     ap.add_argument("--fix-center", action="store_true",
                     help="--cn-section 重排时顺带把含图段落居中")
     a = ap.parse_args()
+    write_gate = WriteGate(a.docx) if a.inplace else None  # 读入前 capture 基线
 
     # 只读机检模式（gate / report figs 调用入口）
     if a.check:
@@ -494,6 +499,7 @@ def main():
             return
         out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
         if a.inplace:
+            write_gate.assert_unchanged()  # 源被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
             shutil.copy2(a.docx, a.docx + ".bak")
             _write(a.docx + ".bak", root, out)   # 从 .bak 读、写回原文件，避免读写同路径截断
         else:
@@ -519,6 +525,7 @@ def main():
 
     out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
     if a.inplace:
+        write_gate.assert_unchanged()  # 源被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
         shutil.copy2(a.docx, a.docx + ".bak")
         _write(a.docx + ".bak", root, out)   # 从 .bak 读、写回原文件，避免读写同路径截断
     else:
