@@ -435,14 +435,14 @@ def parse_markdown(md_content):
             i += 1
             continue
 
-        # 表名：以 "表" + 数字 开头
-        if re.match(r"^表\d+", stripped):
+        # 表名：以 "表" + 数字 开头（允许"表 6.5-1"式空格间隔——中文题注主流写法）
+        if re.match(r"^表\s?\d", stripped):
             elements.append({"type": "table_title", "text": stripped})
             i += 1
             continue
 
-        # 图名：以 "图" + 数字 开头
-        if re.match(r"^图\d+", stripped):
+        # 图名：以 "图" + 数字 开头（允许"图 6.5-1"式空格间隔）
+        if re.match(r"^图\s?\d", stripped):
             elements.append({"type": "figure_title", "text": stripped})
             i += 1
             continue
