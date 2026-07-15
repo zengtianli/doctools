@@ -66,7 +66,7 @@ pip3 install -r requirements.txt
 - 子命令完整能力清单: `~/Dev/tools/dev/lib/tools/report/hq_capabilities.yaml` doctools.sub_capabilities
 - 样式族 profile SSOT: `~/Dev/tools/doctools/config/styles_registry.yaml` (zdwp / eco-flow / generic)
 - JSON schemas: `~/Dev/tools/doctools/schemas/{plan,decision,patch}.schema.json`
-- distill 详情: `~/Dev/tools/doctools/handoffs/2026-05-25-qual-supply-distill.md`
+- distill 详情: `~/Dev/tools/doctools/handoffs/_archive/2026-07-02-2026-05-25-qual-supply-distill.md`
 
 **调用示例**:
 

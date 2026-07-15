@@ -287,7 +287,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  docx_cli.py style body X.docx --profile zdwp\n"
             "  docx_cli.py renumber h4-figures X.docx --profile eco-flow\n"
             "  docx_cli.py --batch tasks.jsonl --workers 8 extract\n"
-            "\n详见 GOAL: ~/Dev/tools/cc-home/goals/script-consolidation/GOAL.md\n"
+            "\n详见 (script-consolidation GOAL 已随 goals/ 注册表 2026-07-10 退役):\n"
             "  hq_capabilities.yaml doctools.sub_capabilities (子命令清单)"
         ),
     )
