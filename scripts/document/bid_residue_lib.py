@@ -53,6 +53,7 @@ NUM_RE = re.compile(r"[0-9０-９]+(?:[.．][0-9０-９]+)?%?")
 CAT_NAMES = {
     1: "协作标记", 2: "拟hedge", 3: "评分脚手架", 4: "内部编号",
     5: "二次残渣", 6: "断裂引用", 7: "口径meta", 8: "身份泄漏",
+    9: "交叉引用耦合",
 }
 CAT_ADVICE = {
     1: "整段删标记+去协作署名，正文能自立才算删完",
@@ -63,7 +64,17 @@ CAT_ADVICE = {
     6: "题注按正文出现序重编号/修指向（占位法防连环替换）",
     7: "改成正常引用口径或删；带数据的改写守数据红线",
     8: "交 bid_identity_gate 处理：去公司名/院自指/业绩归属，清 docProps 元数据",
+    9: "交 bid_deref 去耦合（陪标合稿人会删/调章节，正文写死编号=断链）：括号引用删/动词句删/号→标题名；题注本体编号保留",
 }
+
+# 类9 交叉引用耦合（pei 专属；2026-07-16 用户钦定「标书里不要交叉引用，合稿人会调整」）
+XREF_PATS = [
+    re.compile(r"（\s*(?:详见|参见|见)?\s*\d+\.\d[\d.]*(?:\s*[、，/／]\s*\d+\.\d[\d.]*)*\s*(?:节|章)?\s*）"),
+    re.compile(r"(?:详见|参见|承接|支撑|衔接|对应|落地到)\s*\d+\.\d"),
+    re.compile(r"第\s*[3-9]\s*章"),
+    re.compile(r"(?:见|如|详见)\s*(?:表|图)\s*\d+[\.\-－]\d"),
+]
+XREF_SKIP = re.compile(r"^(?:\d+(?:\.\d+){0,3}|(?:图|表)\s*[\d\.\-－]+)[ 　]")
 
 
 # ── docx 读取 / 段落工具 ─────────────────────────────────────────
@@ -214,7 +225,7 @@ def scan_parts(parts, mode="pei", rules=None, cats=None):
           仍报工具痕迹）。cats: 只扫指定类别集合（None=全部 1-8）。
     """
     rules = rules or load_rules(None)
-    cats = set(cats) if cats else set(range(1, 9))
+    cats = set(cats) if cats else set(range(1, 10))
     terms = protect_terms(rules)
     root = parse_document(parts)
     paras = paragraphs(root)
@@ -248,6 +259,11 @@ def scan_parts(parts, mode="pei", rules=None, cats=None):
                 marks.append("delete_exact 裸句")
             if marks:
                 findings.append(_mk(3, i, st, marks))
+        # 9 交叉引用耦合（pei 专属；标题/题注本体豁免）
+        if 9 in cats and mode == "pei" and not (XREF_SKIP.match(st) and len(st) < 60):
+            marks = [m for pat in XREF_PATS for m in pat.findall(st)]
+            if marks:
+                findings.append(_mk(9, i, st, marks))
         # 4 内部编号
         if 4 in cats:
             marks = E_RE.findall(st) + [t for t in INTERNAL_TOKENS if t in st] + SEG_RE.findall(st)
