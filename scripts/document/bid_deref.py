@@ -193,6 +193,15 @@ def frag_scan(text, loc):
     return probs
 
 
+def frag_scan_pair(old, new, loc):
+    """成对断句检测：旧文以句号收、新文以逗号类悬尾 = 删句吃掉句号（自愈后不应再现）。"""
+    probs = frag_scan(new, loc)
+    ns, os_ = new.rstrip(), old.rstrip()
+    if os_ and ns and os_[-1] in "。！？" and ns[-1] in "，、；：":
+        probs.append((loc, f"删句吃句号(段尾悬「{ns[-1]}」): …{ns[-30:]}"))
+    return probs
+
+
 def ooxml_scan(root):
     """OOXML 语义扫：空 tc/tr/tbl（Word「无法读取的内容」修复弹窗触发点）。"""
     probs = []
@@ -245,6 +254,10 @@ def run_docx(docx: Path, check: bool, manual_pairs_path=None):
         else:
             new = deref_text(cur, sec, caps, i, manual, f"P{i:04d}")
         if new != old:
+            # 尾标点自愈：删句吃掉了句号（旧文以句号收、新文以逗号/顿号/分号悬尾）→ 补回句号
+            ns, os_ = new.rstrip(), old.rstrip()
+            if os_ and ns and os_[-1] in "。！？" and ns[-1] in "，、；：":
+                new = ns[:-1] + "。"
             changes.append((i, old, new))
 
     # 护栏：数字差异必须全部是章节/表图号 token（或其连字符拆分组件）
@@ -271,10 +284,10 @@ def run_docx(docx: Path, check: bool, manual_pairs_path=None):
                 continue  # 单元格号→标题名带出的下级号（标题文本自身含号已被 build_maps 排除，此处放行映射产物）
             removed_bad.append((f"P{i:04d}", f"新增数字 {tok}x{cnt}"))
 
-    # 断句残渣预扫：每条改动的新文本过 frag_scan（check 模式即可见,apply 模式硬拦）
+    # 断句残渣预扫：每条改动的新文本过 frag_scan_pair（check 模式即可见,apply 模式硬拦）
     frags = []
     for i, old, new in changes:
-        frags.extend(frag_scan(new, f"P{i:04d}"))
+        frags.extend(frag_scan_pair(old, new, f"P{i:04d}"))
 
     print(f"改动段 {len(changes)} · 删除编号 token {removed_ok} · MANUAL {len(manual)}")
     for i, old, new in changes:
