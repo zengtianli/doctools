@@ -174,6 +174,40 @@ def deref_text(text, sec, caps, para_idx, manual, loc):
     return smooth(t)
 
 
+def frag_scan(text, loc):
+    """删句/删号后断句残渣检测：括号失衡、（，、空括号、已在…详述类断句。"""
+    probs = []
+    d = 0; broken = False
+    for ch in text:
+        if ch == "（": d += 1
+        elif ch == "）":
+            d -= 1
+            if d < 0: broken = True; break
+    if broken or d != 0:
+        probs.append((loc, "括号失衡: " + text[:60]))
+    for pat, msg in (("（，", "（，残渣"), ("，）", "，）残渣"), ("（）", "空括号")):
+        if pat in text:
+            probs.append((loc, msg + ": " + text[:60]))
+    if re.search(r"已在[ 　]*[、，]?[ 　]*详述", text):
+        probs.append((loc, "断句(已在…详述): " + text[:60]))
+    return probs
+
+
+def ooxml_scan(root):
+    """OOXML 语义扫：空 tc/tr/tbl（Word「无法读取的内容」修复弹窗触发点）。"""
+    probs = []
+    for tc in root.iter(w("tc")):
+        if not [c for c in tc if c.tag in (w("p"), w("tbl"))]:
+            probs.append(("tc", "空单元格（Word 修复弹窗触发,CT_Tc 必须含块级元素）"))
+    for tr in root.iter(w("tr")):
+        if not tr.findall(w("tc")):
+            probs.append(("tr", "空表行"))
+    for tbl in root.iter(w("tbl")):
+        if not [c for c in tbl if c.tag == w("tr")]:
+            probs.append(("tbl", "空表格"))
+    return probs
+
+
 def run_docx(docx: Path, check: bool, manual_pairs_path=None):
     with zipfile.ZipFile(str(docx)) as z:
         names = z.namelist(); parts = {n: z.read(n) for n in names}
@@ -237,6 +271,11 @@ def run_docx(docx: Path, check: bool, manual_pairs_path=None):
                 continue  # 单元格号→标题名带出的下级号（标题文本自身含号已被 build_maps 排除，此处放行映射产物）
             removed_bad.append((f"P{i:04d}", f"新增数字 {tok}x{cnt}"))
 
+    # 断句残渣预扫：每条改动的新文本过 frag_scan（check 模式即可见,apply 模式硬拦）
+    frags = []
+    for i, old, new in changes:
+        frags.extend(frag_scan(new, f"P{i:04d}"))
+
     print(f"改动段 {len(changes)} · 删除编号 token {removed_ok} · MANUAL {len(manual)}")
     for i, old, new in changes:
         print(f"--- P{i:04d}")
@@ -249,14 +288,32 @@ def run_docx(docx: Path, check: bool, manual_pairs_path=None):
         print("== 护栏红（非章节号数字变动，拒绝落盘）==")
         for loc, tok in removed_bad: print(f"  {loc}: {tok}")
         sys.exit(2)
+    if frags:
+        print("== 断句残渣红（删句留尾巴，拒绝落盘；改 manual-pairs 后重跑）==")
+        for loc, msg in frags: print(f"  {loc}: {msg}")
+        if not check: sys.exit(2)
     if check:
-        print("[CHECK] 未落盘"); sys.exit(2 if manual else 0)
+        print("[CHECK] 未落盘"); sys.exit(2 if (manual or frags) else 0)
 
     for i, old, new in changes:
         if new.strip():
             assert replace_span(paras[i], old, new), f"P{i} 替换失败"
         else:
-            paras[i].getparent().remove(paras[i])
+            par = paras[i].getparent()
+            siblings = [c for c in par if c.tag in (w("p"), w("tbl"))]
+            if par.tag == w("tc") and len(siblings) <= 1:
+                # tc 内唯一块级元素禁删光（空 tc = Word 修复弹窗）,清 run 留空段
+                for r_ in list(paras[i].findall(w("r"))):
+                    paras[i].remove(r_)
+            else:
+                par.remove(paras[i])
+
+    # apply 后 OOXML 语义复扫,红则不写盘
+    oox = ooxml_scan(root)
+    if oox:
+        print("== OOXML 语义红（拒绝落盘）==")
+        for loc, msg in oox: print(f"  {loc}: {msg}")
+        sys.exit(2)
     bak = str(docx) + ".bak-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     shutil.copy2(str(docx), bak)
     parts["word/document.xml"] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

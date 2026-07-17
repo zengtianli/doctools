@@ -45,7 +45,20 @@ SCORE_RE = re.compile(r"评分表|评分子项|评分点|评委|技术分(?![析
 E_RE = re.compile(r"〔E-[^〕]*〕")
 INTERNAL_TOKENS = ["worklib#"]
 SEG_RE = re.compile(r"(?<![0-9])(?:招标)?段4\d\d(?![0-9])")  # 招标 python-docx 段号=内部码；公文文号〔2025〕不在此列
-DEBRIS_TOKENS = ["，此处）", "，本处）", "（）", "，）", "、）"]
+DEBRIS_TOKENS = ["，此处）", "，本处）", "（）", "，）", "、）", "（，", "（、", "不复写"]
+
+
+def paren_unbalanced(text):
+    """段内全角括号失衡（删句留尾巴的典型形态,如「本章不复写）：」）。"""
+    d = 0
+    for ch in text:
+        if ch == "（":
+            d += 1
+        elif ch == "）":
+            d -= 1
+            if d < 0:
+                return True
+    return d != 0
 META_TOKENS = ["原件待核", "二手转述", "待核定占位", "可假定占位", "待台账", "待核实", "TODO", "TBD"]
 CAPTION_RE = re.compile(r"([表图])\s?(\d+(?:\.\d+)?)-(\d+)")
 NUM_RE = re.compile(r"[0-9０-９]+(?:[.．][0-9０-９]+)?%?")
@@ -272,6 +285,10 @@ def scan_parts(parts, mode="pei", rules=None, cats=None):
         # 5 二次残渣
         if 5 in cats:
             marks = [t for t in DEBRIS_TOKENS if t in st]
+            if paren_unbalanced(st):
+                marks.append("段内（）失衡")
+            if re.search(r"已在[ 　]*[、，]?[ 　]*详述", st):
+                marks.append("断句(已在…详述)")
             if marks:
                 findings.append(_mk(5, i, st, marks))
         # 7 口径meta

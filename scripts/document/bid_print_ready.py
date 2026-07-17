@@ -129,6 +129,43 @@ def check(docx: Path, mode: str, rules: dict):
         fatal.append(f"word/document.xml 不可解析: {e}")
         return fatal, warn
 
+    # ── fatal ⑥ OOXML 语义（Word「无法读取的内容」修复弹窗触发点）──
+    with zipfile.ZipFile(str(docx)) as zf2:
+        for n in names:
+            if n == "word/document.xml" or not n.endswith((".xml", ".rels")):
+                continue
+            try:
+                etree.fromstring(zf2.read(n))
+            except etree.XMLSyntaxError as e:
+                fatal.append(f"part 不可解析: {n}: {e}")
+        rels_bytes = zf2.read("word/_rels/document.xml.rels") if "word/_rels/document.xml.rels" in names else b""
+    for tc in root.iter(w("tc")):
+        if not [c for c in tc if ln(c) in ("p", "tbl", "sdt", "altChunk")]:
+            row = ["".join(t.text or "" for t in c.iter(w("t")))[:20]
+                   for c in tc.getparent().findall(w("tc"))] if tc.getparent() is not None else []
+            fatal.append(f"空表格单元格（CT_Tc 必须含块级元素,Word 必弹修复）· 行内容 {row[:3]}")
+    for tr in root.iter(w("tr")):
+        if not tr.findall(w("tc")) and tr.find(w("sdt")) is None:
+            fatal.append("空表行（tr 无 tc）")
+    for tb in root.iter(w("tbl")):
+        if not [c for c in tb if ln(c) == "tr"]:
+            fatal.append("空表格（tbl 无 tr）")
+    _bs = [b.get(w("id")) for b in root.iter(w("bookmarkStart"))]
+    _be = [b.get(w("id")) for b in root.iter(w("bookmarkEnd"))]
+    _um = set(_bs) ^ set(_be)
+    if _um:
+        warn.append(f"书签起止不配对 id={sorted(_um)}")
+    _dp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr"
+    _ids = [d.get("id") for d in root.iter(_dp)]
+    _dup = [i for i in set(_ids) if _ids.count(i) > 1]
+    if _dup:
+        fatal.append(f"docPr id 重复: {_dup}")
+    _used = set(re.findall(rb'r:(?:id|embed)="(rId\d+)"', doc_bytes))
+    _defined = set(re.findall(rb'Id="(rId\d+)"', rels_bytes))
+    _undef = _used - _defined
+    if _undef:
+        fatal.append(f"引用了未定义的 rId: {sorted(x.decode() for x in _undef)}")
+
     body = root.find(w("body"))
     kids = list(body) if body is not None else []
     all_paras = list(root.iter(w("p")))
