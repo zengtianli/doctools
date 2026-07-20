@@ -20,6 +20,8 @@ CLI 契约（终稿管线统一）：
   stdout 最后一行必为 "PASS" 或 "FAIL <n> findings"（n = fatal 数；仅 warn → PASS）
   --mode 默认 pei（本门为只读校验，两模式检查项相同，仅记录在报告头）
   --rules 项目级 YAML 增补：identity_banned 命中在本门降级为 warn 提示（fatal 归身份门）
+          caption_restart_heading: 正则，命中的标题开启新作用域，题注编号在作用域内重启
+          （分节交付的标书每节自成编号体系时用，跨节允许同号）
 
 题注校验参考 shaoxing normalize_captions.py（相邻图/表判定）与 finalize2.py（重编号段）。
 只用 stdlib + lxml；零写操作，无备份需求。
@@ -194,12 +196,25 @@ def check(docx: Path, mode: str, rules: dict):
         return ln(e) == "p" and (
             e.find(f".//{w('drawing')}") is not None or e.find(f".//{w('pict')}") is not None)
 
-    groups = {}  # (kind, chapter) -> [(num, P段号, 题注文本)]
+    # rules: caption_restart_heading = 正则；命中的段落开启新作用域，题注编号在此重启
+    # （投标文件分节交付时常见：每节自成编号体系，跨节允许同号）
+    restart_rx = None
+    _rr = rules.get("caption_restart_heading") or []
+    if _rr:
+        try:
+            restart_rx = re.compile(_rr[0])
+        except re.error:
+            restart_rx = None
+
+    groups = {}  # (kind, chapter, scope) -> [(num, P段号, 题注文本)]
     fig_caps = 0
+    scope = 0
     for i, e in enumerate(kids):
         if ln(e) != "p":
             continue
         st = ptext(e).strip()
+        if restart_rx is not None and st and restart_rx.match(st):
+            scope += 1
         m = CAP_RE.match(st)
         if not m:
             continue
@@ -214,13 +229,14 @@ def check(docx: Path, mode: str, rules: dict):
             continue  # 图目录/表目录/正文引用行，不计
         if kind == "图":
             fig_caps += 1
-        groups.setdefault((kind, chap), []).append((num, pno[id(e)], st[:30]))
-    for (kind, chap), items in sorted(groups.items()):
+        groups.setdefault((kind, chap, scope), []).append((num, pno[id(e)], st[:30]))
+    for (kind, chap, sc), items in sorted(groups.items()):
         seq = [n for n, _, _ in items]
         want = list(range(1, len(seq) + 1))
         if seq != want:
             where = " ".join(f"{kind}{chap}-{n}@P{pn}" for n, pn, _ in items)
-            fatal.append(f"题注编号断裂: 「{kind} {chap}-」出现序 {seq} ≠ 期望 {want} · {where}")
+            tag = f"（作用域 {sc}）" if restart_rx is not None else ""
+            fatal.append(f"题注编号断裂: 「{kind} {chap}-」{tag}出现序 {seq} ≠ 期望 {want} · {where}")
 
     # ── fatal ⑤ 孤立标点残渣 ───────────────────────────────────
     for p in all_paras:
