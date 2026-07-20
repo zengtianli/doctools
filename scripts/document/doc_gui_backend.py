@@ -80,9 +80,9 @@ OPS = [
         "id": "convert",
         "verb": "convert",
         "title": "格式转换",
-        "subtitle": "源格式自动识别 → 目标格式",
+        "subtitle": "源格式自动识别 → 目标格式（含 PDF → 可编辑 Word）",
         "icon": "arrow.triangle.2.circlepath",
-        "exts": ["docx", "doc", "pptx", "ppt", "md", "csv", "txt", "xls", "xlsx", "xlsm"],
+        "exts": ["pdf", "docx", "doc", "pptx", "ppt", "md", "csv", "txt", "xls", "xlsx", "xlsm"],
         "kind": "files",
         "targets": [
             {"id": "md", "title": "Markdown"},

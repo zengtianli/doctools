@@ -388,6 +388,29 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 # 8. decrypt
 # ═══════════════════════════════════════════════════════════════════════
 
+def _cmd_convert_to_docx(args: argparse.Namespace) -> int:
+    """PDF → 可编辑 Word。引擎在 pdf_to_docx.py（结构提取路线，见该文件头注）。"""
+    from pdf_to_docx import convert as _pdf2docx
+
+    r = _pdf2docx(
+        Path(args.pdf),
+        Path(args.out) if args.out else None,
+        with_images=args.images,
+        with_tables=not args.no_tables,
+        norm_width=not args.keep_fullwidth,
+    )
+    if not r["ok"]:
+        print(f"ERROR: {r['error']}", file=sys.stderr)
+        return 1
+    bits = [f"{r['pages']}p", f"{r['paragraphs']} paras"]
+    if r["tables"]:
+        bits.append(f"{r['tables']} tables")
+    if r["images"]:
+        bits.append(f"{r['images']} images")
+    print(f"✓ {r['output']}  ({', '.join(bits)})")
+    return 0
+
+
 def _cmd_decrypt(args: argparse.Namespace) -> int:
     pdf_path = Path(args.pdf).resolve()
     if not pdf_path.is_file():
@@ -636,6 +659,20 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="explicit password (qpdf direct)")
     dp.add_argument("--out", default=None, help="output path")
     dp.set_defaults(func=_cmd_decrypt)
+
+    # convert group
+    cp = sub.add_parser("convert", help="convert PDF to other formats")
+    cp_sub = cp.add_subparsers(dest="convert_cmd", metavar="<cmd>")
+    cp.set_defaults(func=lambda a: (cp.print_help() or 0))
+
+    ctd = cp_sub.add_parser("to-docx", help="PDF → editable Word (structure extraction)")
+    ctd.add_argument("pdf")
+    ctd.add_argument("-o", "--out", default=None, help="output .docx (default: alongside)")
+    ctd.add_argument("--images", action="store_true", help="append embedded images")
+    ctd.add_argument("--no-tables", action="store_true", help="skip table detection")
+    ctd.add_argument("--keep-fullwidth", action="store_true",
+                     help="keep full-width latin/digits (default: convert to half-width)")
+    ctd.set_defaults(func=_cmd_convert_to_docx)
 
     # pipeline group
     pp = sub.add_parser("pipeline", help="multi-step + multi-PDF pipeline")

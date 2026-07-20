@@ -29,6 +29,17 @@ DOC = Path(__file__).resolve().parent            # scripts/document
 DATA = DOC.parent / "data"                       # scripts/data
 PY = sys.executable                              # uv 环境的 python
 
+# pdf 系引擎（pdf_to_docx.py）依赖 pdfplumber/pypdf，**只装在 homebrew python3**，
+# 不在 ~/Dev/.venv —— 而 GUI 经 `uv run --project ~/Dev` 调本文件时 sys.executable
+# 正是 .venv/bin/python。用 PY 跑会 ModuleNotFoundError，必须写死绝对路径
+# （同 pdf_cli.py 的既定运行解释器）。
+PY_PDF = "/opt/homebrew/bin/python3"
+
+# 同理:GUI .app 不继承 shell PATH,spawn 的 CLI 一律解析成绝对路径再调
+# (markitdown 是 uv tool,装在 ~/.local/bin,GUI 下裸名必 not found)。
+_MARKITDOWN = shutil.which("markitdown") or str(Path.home() / ".local/bin/markitdown")
+_PDFTOTEXT = shutil.which("pdftotext") or "/opt/homebrew/bin/pdftotext"
+
 # 兜底 PYTHONPATH:有些引擎(如 md_docx_template.py)只加了 doctools/lib、漏了 dev/lib，
 # 直接子进程调用会 ModuleNotFoundError(file_ops 等)。这里统一补齐,覆盖所有引擎。
 _LIBS = [
@@ -113,6 +124,14 @@ def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
     # docx→md 走 shell 引擎,特判
     if e == "docx" and target == "md":
         return ["bash", str(DOC / "docx_to_md.sh"), f], "docx → Markdown(markitdown)"
+    # pdf 系:结构提取路线(pdfplumber+python-docx),必须用 homebrew python3
+    if e == "pdf":
+        if target == "word":
+            return [PY_PDF, str(DOC / "pdf_to_docx.py"), f], "PDF → Word(段落重组 + 真表格)"
+        if target == "md":
+            return [_MARKITDOWN, f, "-o", str(Path(f).with_suffix(".md"))], "PDF → Markdown"
+        if target == "txt":
+            return [_PDFTOTEXT, "-layout", f], "PDF → 纯文本(保排版)"
     hit = M.get((e, target))
     return (hit[0], hit[1]) if hit else None
 
