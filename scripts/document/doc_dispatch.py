@@ -14,6 +14,7 @@
   doc_dispatch.py view     <files...>                 预览(md → HTML 浏览器)
   doc_dispatch.py scan     <dir>                      敏感词扫描(目录里 md/docx)
   doc_dispatch.py renum    [--to all|tabfig|headings] <files...>   序号修正(docx 标题/图/表编号重排,产出 _序号修正.docx)
+  doc_dispatch.py bidfinal [--to pei|main] <files...>              标书终稿门检(残留/身份/打印就绪 三道门干跑,只诊断不改文件)
 
 # 实现：doc_dispatch <verb> @ ~/Dev/tools/doctools/scripts/document/doc_dispatch.py
 """
@@ -299,6 +300,9 @@ def main() -> int:
     pr = sub.add_parser("renum")
     pr.add_argument("--to", default="all", dest="target", choices=["all", "tabfig", "headings"])
     pr.add_argument("files", nargs="+")
+    pb = sub.add_parser("bidfinal")
+    pb.add_argument("--to", default="pei", dest="target", choices=["pei", "main"])
+    pb.add_argument("files", nargs="+")
     a = ap.parse_args()
 
     if a.verb == "clean":   return do_clean(a.files)
@@ -309,6 +313,7 @@ def main() -> int:
     if a.verb == "convert": return do_convert(a.files, a.target)
     if a.verb == "typeset": return do_typeset(a.files)
     if a.verb == "renum":   return do_renum(a.files, a.target)
+    if a.verb == "bidfinal": return do_bidfinal(a.files, a.target)
     return 1
 
 
@@ -413,6 +418,37 @@ def do_renum(files, target: str = "all") -> int:
             rc |= 1
         else:
             print(f"{GREEN}  ✓ 序号修正 → {out.name}{RST}")
+    return rc
+
+
+# ───────────────────────────────────────────── bidfinal(标书终稿门检,只诊断不改)
+
+def do_bidfinal(files, target: str = "pei") -> int:
+    """标书终稿门检:bid_final.py 干跑三道门(残留8类/身份/打印就绪),只诊断不改文件。
+    分工钉死:门检(确定性)→ GUI/cockpit;红门修复(人判改写)→ 终端 CC。
+    mode: pei=陪标·通用稿(含身份零泄漏门) / main=主标·实名(只查过程稿标记)。
+    项目若有 scripts/bidfinal_rules.yaml(按 docx 路径向上找)自动带上。
+    """
+    rc = 0
+    for f in files:
+        p = Path(f)
+        if not p.exists():
+            warn(f"文件不存在,跳过: {f}"); continue
+        if _ext(f) != "docx":
+            warn(f"{p.name}: 终稿门检只吃 docx,跳过"); continue
+        print(f"{GREEN}● {p.name}{RST}")
+        args = [str(p), "--mode", target]
+        for anc in (p.parent, p.parent.parent, p.parent.parent.parent):
+            rules = anc / "scripts" / "bidfinal_rules.yaml"
+            if rules.exists():
+                args += ["--rules", str(rules)]
+                break
+        r = _run(_py("bid_final.py", *args), f"终稿门检({target})")
+        if r:
+            warn(f"{p.name}: 有红门,是半成品,禁交付(详见上方门控汇总)")
+            rc |= 1
+        else:
+            print(f"{GREEN}  ✓ 四门全绿,可交付{RST}")
     return rc
 
 

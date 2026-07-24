@@ -134,6 +134,19 @@ OPS = [
         ],
     },
     {
+        "id": "bidfinal",
+        "verb": "bidfinal",
+        "title": "标书终稿门检",
+        "subtitle": "残留8类/身份泄漏/打印就绪 三道门干跑体检,只诊断不改文件;红门=半成品禁交付",
+        "icon": "checkmark.seal",
+        "exts": ["docx"],
+        "kind": "files",
+        "targets": [
+            {"id": "pei", "title": "陪标·通用稿"},
+            {"id": "main", "title": "主标·实名"},
+        ],
+    },
+    {
         "id": "scan",
         "verb": "scan",
         "title": "敏感词扫描",
@@ -212,6 +225,8 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[
             rc = dd.do_convert(files, target or "md")
         elif verb == "renum":
             rc = dd.do_renum(files, target or "all")
+        elif verb == "bidfinal":
+            rc = dd.do_bidfinal(files, target or "pei")
         elif verb == "scan":
             rc = dd.do_scan(files)
         elif verb == "view":
