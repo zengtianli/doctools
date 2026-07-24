@@ -13,6 +13,7 @@
   doc_dispatch.py split    <files...>                 拆分(md 按标题 / xlsx 按 sheet)
   doc_dispatch.py view     <files...>                 预览(md → HTML 浏览器)
   doc_dispatch.py scan     <dir>                      敏感词扫描(目录里 md/docx)
+  doc_dispatch.py renum    [--to all|tabfig|headings] <files...>   序号修正(docx 标题/图/表编号重排,产出 _序号修正.docx)
 
 # 实现：doc_dispatch <verb> @ ~/Dev/tools/doctools/scripts/document/doc_dispatch.py
 """
@@ -295,6 +296,9 @@ def main() -> int:
     pc = sub.add_parser("convert")
     pc.add_argument("--to", required=True, dest="target")
     pc.add_argument("files", nargs="+")
+    pr = sub.add_parser("renum")
+    pr.add_argument("--to", default="all", dest="target", choices=["all", "tabfig", "headings"])
+    pr.add_argument("files", nargs="+")
     a = ap.parse_args()
 
     if a.verb == "clean":   return do_clean(a.files)
@@ -304,6 +308,7 @@ def main() -> int:
     if a.verb == "merge":   return do_merge(a.files)
     if a.verb == "convert": return do_convert(a.files, a.target)
     if a.verb == "typeset": return do_typeset(a.files)
+    if a.verb == "renum":   return do_renum(a.files, a.target)
     return 1
 
 
@@ -350,6 +355,64 @@ def do_typeset(files) -> int:
         if bak.exists():
             bak.unlink()
         print(f"{GREEN}  ✓ 成品 → {final.name}{RST}")
+    return rc
+
+
+# ───────────────────────────────────────────── renum(docx 序号修正:标题/图/表)
+
+def _renum_has_en_figures(docx: str) -> bool:
+    """document.xml 里有英文 Figure N 引用、且没有中文 图/表 X-Y 题注 → 走英文模式。"""
+    import re as _re
+    import zipfile as _zip
+    try:
+        xml = _zip.ZipFile(docx).read("word/document.xml").decode("utf-8", "ignore")
+    except Exception:
+        return False
+    cn = _re.search(r"[图表]\s*\d+(?:\.\d+)?\s*[-－—–]\s*\d+", xml)
+    en = _re.search(r"(?:Figure|Fig\.?)\s*\d+", xml)
+    return bool(en and not cn)
+
+
+def do_renum(files, target: str = "all") -> int:
+    """序号修正:docx 的标题号/图号/表号 断号·错号·缺号 一键重排,产出 <stem>_序号修正.docx(原件不动)。
+
+    纯路由,组合单一职责引擎(引擎零改):
+      标题号 = sub/renumber_headings.py       (按段落物理顺序重编 H1/H2/H3)
+      图号   = docx_renumber_figures.py --cn-section --kind 图 (节内重排+补号+正文引用同步)
+      表号   = 同上 --kind 表
+      英文稿 = 无中文题注但有 Figure N → docx_renumber_figures.py 英文模式(1..N+引用同步)
+    """
+    rc = 0
+    for f in files:
+        p = Path(f)
+        if not p.exists():
+            warn(f"文件不存在,跳过: {f}"); continue
+        if _ext(f) != "docx":
+            warn(f"{p.name}: 序号修正只吃 docx,跳过"); continue
+        print(f"{GREEN}● {p.name}{RST}")
+        out = p.with_name(f"{p.stem}_序号修正.docx")
+        shutil.copy2(p, out)
+        failed = False
+        if target in ("all", "headings"):
+            if _run(_py("sub/renumber_headings_seq.py", str(out), "--no-backup"), "标题号重排(按现有深度)"):
+                failed = True
+        if not failed and target in ("all", "tabfig"):
+            if _renum_has_en_figures(str(out)):
+                if _run(_py("docx_renumber_figures.py", str(out), "--inplace"), "Figure 号重排(英文)"):
+                    failed = True
+            else:
+                for kind in ("图", "表"):
+                    if _run(_py("docx_renumber_figures.py", str(out),
+                                "--cn-section", "--kind", kind, "--inplace"), f"{kind}号重排"):
+                        failed = True; break
+        bak = Path(str(out) + ".bak")
+        if bak.exists():
+            bak.unlink()  # 工作副本的中间备份,原件本身就是备份
+        if failed:
+            warn(f"{p.name}: 序号修正未全绿,产出保留供检查 → {out.name}")
+            rc |= 1
+        else:
+            print(f"{GREEN}  ✓ 序号修正 → {out.name}{RST}")
     return rc
 
 

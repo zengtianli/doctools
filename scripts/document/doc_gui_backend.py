@@ -120,6 +120,20 @@ OPS = [
         "kind": "files",
     },
     {
+        "id": "renum",
+        "verb": "renum",
+        "title": "序号修正",
+        "subtitle": "标题/图/表编号断号·错号·缺号一键重排(产出 _序号修正.docx,原件不动)",
+        "icon": "list.number",
+        "exts": ["docx"],
+        "kind": "files",
+        "targets": [
+            {"id": "all", "title": "全部（标题+图+表）"},
+            {"id": "tabfig", "title": "仅图表号"},
+            {"id": "headings", "title": "仅标题号"},
+        ],
+    },
+    {
         "id": "scan",
         "verb": "scan",
         "title": "敏感词扫描",
@@ -196,6 +210,8 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[
             rc = dd.do_typeset(files)
         elif verb == "convert":
             rc = dd.do_convert(files, target or "md")
+        elif verb == "renum":
+            rc = dd.do_renum(files, target or "all")
         elif verb == "scan":
             rc = dd.do_scan(files)
         elif verb == "view":

@@ -153,9 +153,18 @@ def rewrite_paragraph_with_prefix(p, new_prefix: str) -> None:
     _ = new_text_for_first_nonempty  # placeholder, unused
 
 
-def plan_renumber(doc) -> tuple[list[dict], list[dict], dict]:
-    """扫一遍, 返回 (before, after, stats). 不改 doc."""
-    h1 = 0
+def detect_h1_base(doc) -> int:
+    """auto 基准: 第一个 H1 段现有的前导数字(如标书从 10 起);无 → 1。"""
+    for p in doc.paragraphs:
+        if get_style_name(p) == "Heading 1":
+            m = re.match(r"^\s*(\d+)", get_paragraph_text(p))
+            return int(m.group(1)) if m else 1
+    return 1
+
+
+def plan_renumber(doc, h1_base: int = 1) -> tuple[list[dict], list[dict], dict]:
+    """扫一遍, 返回 (before, after, stats). 不改 doc. h1_base=首个 H1 的目标编号(默认 1)."""
+    h1 = h1_base - 1
     h2 = 0
     h3 = 0
     tbl = 0  # H1 章内表序
@@ -232,19 +241,19 @@ def apply_renumber(doc, after_plan: list[dict]) -> None:
         rewrite_paragraph_with_prefix(p, new_prefix)
 
 
-def verify_strict_sequence(doc) -> tuple[bool, list[str]]:
+def verify_strict_sequence(doc, h1_base: int = 1) -> tuple[bool, list[str]]:
     """重读后, 验证 H1/H2/H3 段 text 开头编号严格递增连贯.
 
     返回 (ok, errors).
     """
     errors: list[str] = []
-    h1_seen = 0
     # 跟踪 (cur_h1) 下的 h2 序; (cur_h1, cur_h2) 下的 h3 序
     h2_in_h1: dict[int, int] = {}
     h3_in_h2: dict[tuple[int, int], int] = {}
     tbl_in_h1: dict[int, int] = {}
     cur_h1 = 0
     cur_h2 = 0
+    h1_seen = h1_base - 1
 
     for idx, p in enumerate(doc.paragraphs):
         sname = get_style_name(p)
@@ -325,6 +334,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="只输出 plan, 不动 docx")
     ap.add_argument("--no-backup", action="store_true", help="不生成 .bak 备份")
     ap.add_argument("--report", default=None, help="写 JSON 报告到该路径")
+    ap.add_argument("--h1-base", default="1",
+                    help="首个 H1 的目标编号: 整数 或 auto(沿用文档第一个 H1 现有编号,适配从第10章起的标书)")
     args = ap.parse_args(argv)
 
     docx_path = Path(args.docx_path)
@@ -333,7 +344,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     doc = Document(str(docx_path))
-    before, after, stats = plan_renumber(doc)
+    h1_base = detect_h1_base(doc) if args.h1_base == "auto" else int(args.h1_base)
+    if h1_base != 1:
+        print(f"[base] H1 从 {h1_base} 起编")
+    before, after, stats = plan_renumber(doc, h1_base)
 
     print(f"[plan] H1={stats['h1_count']} H2(max-in-section)={stats['h2_count']} "
           f"H3(max-in-section)={stats['h3_count']} 表={stats['table_count']}")
@@ -370,7 +384,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"ERROR: 重读失败 (OOXML 可能损坏): {e}", file=sys.stderr)
         return 3
 
-    ok, errors = verify_strict_sequence(doc2)
+    ok, errors = verify_strict_sequence(doc2, h1_base)
     if not ok:
         print("[verify] 编号序列检测失败:", file=sys.stderr)
         for e in errors[:20]:
