@@ -252,7 +252,7 @@ def generate_chapter(chapter_config: dict, ref_dir: str, data_dir: str,
     ch_id = chapter_config["id"]
     strategy = chapter_config["strategy"]
     title = chapter_config["title"]
-    model = chapter_config.get("model", "haiku")
+    model = chapter_config.get("model")   # None → 不指定,继承默认(铁律 #16)
 
     if strategy == "skip":
         print(f"  [跳过] {title}")

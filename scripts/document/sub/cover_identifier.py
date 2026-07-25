@@ -118,7 +118,7 @@ def _validate_idx(val, scan_n: int) -> Optional[int]:
 
 # ─── public: LLM-driven identify ───────────────────────────────────────
 def identify_cover_roles(docx_path: Path, scan_first_n: int = 30,
-                         model: str = "haiku", timeout: int = 60) -> dict:
+                         model: str | None = None, timeout: int = 60) -> dict:
     """LLM-driven cover role identification (4 idx, 0-based in doc.paragraphs).
 
     Returns: {primary_title_idx, subtitle_idx, author_idx, date_idx} all int|None.

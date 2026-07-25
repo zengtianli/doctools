@@ -123,7 +123,7 @@ def parse_llm_response(response: str) -> list[dict]:
 
 def review_chapter(chapter: dict, dimensions: dict, doc_name: str,
                    target_dims: list[str] | None = None,
-                   model: str = "haiku") -> list[dict]:
+                   model: str | None = None) -> list[dict]:
     """对单个章节执行多维度检查（串行，保留向后兼容）。"""
     all_issues = []
 
@@ -147,7 +147,7 @@ def review_chapter(chapter: dict, dimensions: dict, doc_name: str,
 
 def review_all(chapters: list[dict], dimensions: dict, doc_name: str,
                target_dims: list[str] | None = None,
-               model: str = "haiku") -> list[dict]:
+               model: str | None = None) -> list[dict]:
     """章 × 维度笛卡尔积全独立 → 扁平成 task 列表一次性并发检查。
 
     所有 (chapter, dimension) 组合互不依赖，一次 chat_many 并发；保序回填后
@@ -235,8 +235,8 @@ def main():
                         help="规则名称（默认: eco-flow-report）")
     parser.add_argument("--dim", nargs="*",
                         help="指定检查维度（completeness/structure/tone/consistency），默认全部")
-    parser.add_argument("--model", default="fable",
-                        help="LLM 模型（fable/haiku/sonnet/opus，默认: fable;批量省额度可显式 haiku）")
+    parser.add_argument("--model", default=None,
+                        help="LLM 模型（留空=不指定,继承默认·铁律 #16；要钉档只在 fable/opus 两档间选，优先 fable）")
     parser.add_argument("--list-rules", action="store_true",
                         help="列出可用规则")
     parser.add_argument("--dry-run", action="store_true",
@@ -264,7 +264,7 @@ def main():
     print(f"文档: {args.input}")
     print(f"规则: {args.rules} ({rules_config.get('description', '')})")
     print(f"维度: {', '.join(args.dim) if args.dim else '全部'}")
-    print(f"模型: {args.model}")
+    print(f"模型: {args.model or '默认(继承)'}")
     print()
 
     # 提取章节
