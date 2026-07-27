@@ -30,6 +30,14 @@
 4. 单位上标格式化
    m2 → m²、m3 → m³、km2 → km²、km3 → km³
 
+覆盖范围（2026-07-26 扩齐）：
+   正文 + 表格（含嵌套表）+ 文本框 + 超链接 + **审阅修订（w:ins 插入态 / w:del 删除态）**
+   + **批注 comments.xml** + **脚注 / 尾注** + 页眉页脚（SKIP_FOOTER=False 时）。
+   原先走 python-docx 的 `Document.paragraphs` / `Paragraph.runs`，那两个 API 只认
+   直接子节点，带修订的稿子里 w:ins/w:del 段一个字都改不到（实测某审阅稿 24 个 run /
+   3101 字全漏），批注与脚注更是整个 part 没碰。现统一走 docx_xml 的元素级遍历。
+   删除态文本改的是 w:delText（不退化成 w:t，修订结构原样保留）。
+
 使用方法：
     python3 text_formatter_docx.py 文件名.docx
 """
@@ -44,6 +52,16 @@ from docx.oxml.ns import qn
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
+from docx_xml import (
+    in_deleted,
+    in_inserted,
+    iter_paragraphs,
+    iter_text_roots,
+    para_own_runs,
+    run_text,
+    set_run_text,
+    text_tag_for,
+)
 from file_ops import clear_quarantine
 from finder import get_input_files
 from progress import ProgressTracker
@@ -83,12 +101,11 @@ def _set_run_font_songti(run_element):
     rFonts.set(qn("w:hint"), "eastAsia")
 
 
-def _split_run_at_quotes(run):
+def _split_text_at_quotes(text):
     """
-    将 run 在引号位置拆分，返回 [(text, is_quote), ...] 片段列表。
+    将文本在引号位置切片，返回 [(text, is_quote), ...] 片段列表。
     如果没有引号，返回 None。
     """
-    text = run.text
     if not text or not any(c in QUOTE_CHARS for c in text):
         return None
 
@@ -107,27 +124,30 @@ def _split_run_at_quotes(run):
     return segments
 
 
-def _apply_quote_split(run, segments):
+def _apply_quote_split(r, segments):
     """
-    根据 segments 拆分 run：第一段复用原 run，后续段插入新 run。
-    引号段设置宋体。
+    根据 segments 拆分 run 元素 r：第一段复用原 run，后续段插入新 run。
+    引号段设置宋体。删除态 run（w:del 内）新建的文本元素仍是 w:delText。
     """
-    parent = run._element.getparent()
+    parent = r.getparent()
+    text_tag = text_tag_for(r)          # w:del / w:moveFrom 内必须继续用 w:delText
 
     # 第一段复用原 run
     first_text, first_is_quote = segments[0]
-    run.text = first_text
+    set_run_text(r, first_text)
     if first_is_quote:
-        _set_run_font_songti(run._element)
+        _set_run_font_songti(r)
 
     # 后续段：复制原 run 的格式，插入到原 run 之后
-    insert_after = run._element
+    insert_after = r
     for seg_text, is_quote in segments[1:]:
-        new_r = copy.deepcopy(run._element)
-        # 设置文本（清除 deepcopy 带来的旧文本）
-        for t_elem in new_r.findall(qn("w:t")):
-            new_r.remove(t_elem)
-        t_elem = OxmlElement("w:t")
+        new_r = copy.deepcopy(r)
+        # 只留 rPr：deepcopy 带来的旧文本、以及 drawing/footnoteReference 等
+        # 一次性载荷都必须清掉，否则拆一次 run 就把图片/脚注引用复制一份出来
+        for child in list(new_r):
+            if child.tag != qn("w:rPr"):
+                new_r.remove(child)
+        t_elem = OxmlElement(text_tag)
         t_elem.text = seg_text
         # 保留空格
         t_elem.set(qn("xml:space"), "preserve")
@@ -140,7 +160,7 @@ def _apply_quote_split(run, segments):
             rPr = new_r.find(qn("w:rPr"))
             if rPr is not None:
                 rFonts = rPr.find(qn("w:rFonts"))
-                orig_rPr = run._element.find(qn("w:rPr"))
+                orig_rPr = r.find(qn("w:rPr"))
                 orig_rFonts = orig_rPr.find(qn("w:rFonts")) if orig_rPr is not None else None
                 if rFonts is not None and orig_rFonts is not None:
                     # 用原始字体信息覆盖
@@ -152,25 +172,39 @@ def _apply_quote_split(run, segments):
         insert_after = new_r
 
 
-def process_paragraph(paragraph, stats):
+def _tally(stats, scope, r, n):
+    """按域记账：修订态单独计，好让用户看见「审阅段确实改到了」。"""
+    if not n:
+        return
+    key = scope
+    if scope == "正文":
+        if in_deleted(r):
+            key = "修订·删除态"
+        elif in_inserted(r):
+            key = "修订·插入态"
+    stats["scopes"][key] = stats["scopes"].get(key, 0) + n
+
+
+def process_paragraph_element(p, stats, scope="正文"):
     """
-    处理段落中的文本，逐run处理以保持每个run的字体格式。
-    引号拆分为独立run并设置宋体。
+    处理一个 w:p 元素内的文本，逐 run 处理以保持每个 run 的字体格式。
+    引号拆分为独立 run 并设置宋体。
+
+    走 para_own_runs 而非 python-docx 的 `Paragraph.runs`：后者只认 `./w:r`，
+    审阅修订（w:ins/w:del）、超链接、smartTag 里的 run 会被静默跳过。
     """
-    if not paragraph.runs:
+    # 先收集需要处理的 runs（遍历中会插入新 run，所以先快照）
+    original_runs = para_own_runs(p)
+    if not original_runs:
         return
 
     # 引号计数器跨run维护，保证配对正确
     quote_counter = 0
 
-    # 先收集需要处理的 runs（遍历中会插入新 run，所以先快照）
-    original_runs = list(paragraph.runs)
-
-    for run in original_runs:
-        if not run.text:
+    for r in original_runs:
+        original_text = run_text(r)
+        if not original_text:
             continue
-
-        original_text = run.text
 
         # 按 toggle 选择性应用转换（默认全开）
         fixed_text = original_text
@@ -186,25 +220,26 @@ def process_paragraph(paragraph, stats):
         stats["quotes"] += quote_count
         stats["punctuation"] += punct_count
         stats["units"] += unit_count
+        _tally(stats, scope, r, quote_count + punct_count + unit_count)
 
         if fixed_text != original_text:
-            run.text = fixed_text
+            set_run_text(r, fixed_text)
 
         # 拆分引号为独立 run 并设置宋体（仅在修引号时）
         if DO_QUOTES:
-            segments = _split_run_at_quotes(run)
+            segments = _split_text_at_quotes(run_text(r))
             if segments:
-                _apply_quote_split(run, segments)
+                _apply_quote_split(r, segments)
 
 
-def process_table(table, stats):
+def process_root(root, stats, scope="正文"):
+    """处理一个 XML 根（正文 body / 批注 / 脚注 / 页眉…）下的全部段落。
+
+    `iter_paragraphs` 递归到嵌套表格、文本框、修订块里的 w:p；`para_own_runs`
+    在嵌套 w:p 处剪枝，所以每个 run 恰好被处理一次。
     """
-    处理表格中的文本
-    """
-    for row in table.rows:
-        for cell in row.cells:
-            for paragraph in cell.paragraphs:
-                process_paragraph(paragraph, stats)
+    for p in list(iter_paragraphs(root)):
+        process_paragraph_element(p, stats, scope)
 
 
 def process_docx(input_file):
@@ -239,18 +274,19 @@ def process_docx(input_file):
         print(f"📖 正在读取文件: {input_path.name}")
         doc = Document(input_path)
 
-        # 统计信息
-        stats = {"quotes": 0, "punctuation": 0, "units": 0}
+        # 统计信息（scopes 分域记账：正文 / 修订·插入态 / 修订·删除态 / 批注 / 脚注…）
+        stats = {"quotes": 0, "punctuation": 0, "units": 0, "scopes": {}}
 
-        # 处理所有段落
-        print("🔄 正在处理段落...")
-        for paragraph in doc.paragraphs:
-            process_paragraph(paragraph, stats)
-
-        # 处理所有表格
-        print("🔄 正在处理表格...")
-        for table in doc.tables:
-            process_table(table, stats)
+        # 处理所有承载文本的 part：正文（含表格/嵌套表/文本框/超链接/审阅修订）
+        # + 批注 comments.xml + 脚注 + 尾注（+ 页眉页脚，仅 SKIP_FOOTER=False 时）
+        print("🔄 正在处理正文 / 表格 / 修订 / 批注 / 脚注...")
+        flushes = []
+        for label, root, flush in iter_text_roots(doc, include_headers=not SKIP_FOOTER):
+            process_root(root, stats, label)
+            if flush is not None:
+                flushes.append(flush)
+        for flush in flushes:          # 通用 Part（脚注/尾注）改完必须回写 blob
+            flush()
 
         # 处理页眉页脚
         if SKIP_FOOTER:
@@ -266,20 +302,6 @@ def process_docx(input_file):
                 # 删除所有页脚引用
                 for footerRef in sectPr.findall(qn("w:footerReference")):
                     sectPr.remove(footerRef)
-        else:
-            # 处理页眉页脚（格式修复）
-            print("🔄 正在处理页眉页脚...")
-            for section in doc.sections:
-                if section.header:
-                    for paragraph in section.header.paragraphs:
-                        process_paragraph(paragraph, stats)
-                    for table in section.header.tables:
-                        process_table(table, stats)
-                if section.footer:
-                    for paragraph in section.footer.paragraphs:
-                        process_paragraph(paragraph, stats)
-                    for table in section.footer.tables:
-                        process_table(table, stats)
 
         # 保存文件
         print("💾 正在保存文件...")
@@ -300,6 +322,9 @@ def process_docx(input_file):
         print(f"   - 共替换了 {stats['quotes']} 个引号")
         print(f"   - 共替换了 {stats['punctuation']} 个标点符号")
         print(f"   - 共转换了 {stats['units']} 个单位")
+        extra = {k: v for k, v in stats["scopes"].items() if k != "正文"}
+        if extra:
+            print("   - 非正文域命中: " + "  ".join(f"{k} {v} 处" for k, v in extra.items()))
         print(f"   - 输出文件: {output_path.name}")
 
         return True
@@ -315,14 +340,21 @@ def process_docx(input_file):
 if __name__ == "__main__":
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = sys.argv[1:]
-    _flags = {"--quotes", "--punct", "--units", "--in-place"}
+    _flags = {"--quotes", "--punct", "--units", "--in-place", "--keep-headers"}
     _sel = {a for a in _argv if a in _flags}
+    _unknown = [a for a in _argv if a.startswith("--") and a not in _flags]
+    if _unknown:   # 未知 flag 不得被当成文件名静默吞掉→曾致 --help 直接跑全量改写
+        print(f"❌ 未知参数：{' '.join(_unknown)}")
+        print(f"   可用：{' '.join(sorted(_flags))}")
+        sys.exit(2)
     _argv = [a for a in _argv if a not in _flags]
     if _sel & {"--quotes", "--punct", "--units"}:
         DO_QUOTES = "--quotes" in _sel
         DO_PUNCT = "--punct" in _sel
         DO_UNITS = "--units" in _sel
     IN_PLACE = "--in-place" in _sel
+    if "--keep-headers" in _sel:
+        SKIP_FOOTER = False    # 保留页眉页脚引用（默认 True=删，供 md2word 新建链用）
 
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
     files = get_input_files(_argv, expected_ext="docx")

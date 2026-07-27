@@ -2,6 +2,13 @@
 Word XML namespace 常量与工具函数
 
 供 docx_track_changes / docx_extract / md_docx_template 共用
+
+⚠ 「全文改写」类工具必读（2026-07-26）：python-docx 的 `Document.paragraphs` 只认
+   `w:body/./w:p`、`Paragraph.runs` 只认 `./w:r`（`CT_P.r = ZeroOrMore("w:r")`），
+   **静默漏掉审阅修订（`w:ins`/`w:del`）、`w:hyperlink`、`w:smartTag`、文本框
+   （`w:txbxContent`）、嵌套表格里的 run**；批注（comments.xml）/脚注/尾注更是整个
+   part 都碰不到。凡「把全文某类字符改一遍」的工具都必须走本模块 §run 遍历，
+   否则带修订的稿子看着跑绿了，修订段其实一个字没改。
 """
 
 # ── WordprocessingML 命名空间 ─────────────────────────────────
@@ -26,3 +33,150 @@ def qn(tag: str) -> str:
     """将 'w:t' 转换为 '{namespace}t' 格式"""
     prefix, local = tag.split(":")
     return f"{{{NSMAP[prefix]}}}{local}"
+
+
+# ── run / 文本元素级遍历（绕开 python-docx 漏修订的坑）────────────
+
+TEXT_TAGS = (qn("w:t"), qn("w:delText"))   # 正常文本 / 修订删除态文本
+_NESTED = (qn("w:p"),)                     # 嵌套段落（文本框、嵌套表）自成一段
+
+
+def iter_paragraphs(root):
+    """root 下所有 w:p，文档顺序（含表格 / 文本框 / 修订块里的嵌套段落）。"""
+    return root.iter(qn("w:p"))
+
+
+def para_own_runs(p) -> list:
+    """段落 p 自己的 w:r 列表（文档顺序）。
+
+    含：直接子 run + `w:ins`/`w:del`/`w:hyperlink`/`w:smartTag`/`w:sdt` 等包装层里的 run。
+    不含：嵌套 `w:p`（文本框 `w:txbxContent`、嵌套表格单元格）里的 run —— 那些由
+    `iter_paragraphs` 各自迭代到，在此剪掉才不会被处理两遍（引号配对会算错）。
+    """
+    out: list = []
+
+    def walk(el):
+        for child in el:
+            if child.tag in _NESTED:
+                continue
+            if child.tag == qn("w:r"):
+                out.append(child)
+            walk(child)
+
+    walk(p)
+    return out
+
+
+_DEL_ANCESTORS = (qn("w:del"), qn("w:moveFrom"))   # 删除态 / 移动走的原位置
+
+
+def in_deleted(el) -> bool:
+    """el 位于删除态（`w:del` 审阅删除 / `w:moveFrom` 审阅移出）内。
+
+    删除态的文本载体是 `w:delText` 而非 `w:t` —— 写成 `w:t` 会让删除的文字变成正文。
+    """
+    return any(a.tag in _DEL_ANCESTORS for a in el.iterancestors())
+
+
+def in_inserted(el) -> bool:
+    """el 位于 `w:ins`（审阅插入态）内。"""
+    return any(a.tag == qn("w:ins") for a in el.iterancestors())
+
+
+def text_elems(r) -> list:
+    """run 的文本子元素（`w:t` / `w:delText`），文档顺序。"""
+    return [c for c in r if c.tag in TEXT_TAGS]
+
+
+def run_text(r) -> str:
+    """run 的文本（含删除态）。不含 `w:instrText`（域代码）/ `w:tab` / `w:br`。"""
+    return "".join(c.text or "" for c in text_elems(r))
+
+
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _mark_space(el) -> None:
+    """首尾空白必须 `xml:space="preserve"`，否则 Word 吃掉空格。"""
+    s = el.text or ""
+    if s != s.strip():
+        el.set(XML_SPACE, "preserve")
+
+
+def set_run_text(r, s: str) -> None:
+    """写回 run 文本。
+
+    保持原文本元素类型（`w:delText` 不退化成 `w:t`，否则修订删除态会变成正文）
+    与同级非文本子节点（`w:br`/`w:tab`/`w:drawing` 原位保留）—— 这两点是
+    python-docx `Run.text` setter 做不到的（它把 run 内容清空重建成单个 `w:t`）。
+    """
+    elems = text_elems(r)
+    if not elems:
+        if not s:
+            return
+        r.append(new_text_elem(r, s))
+        return
+    elems[0].text = s
+    _mark_space(elems[0])
+    for extra in elems[1:]:        # 多 w:t 的 run：文本已合并进首个，其余删掉
+        r.remove(extra)
+
+
+def text_tag_for(r) -> str:
+    """该 run 应该用哪种文本元素：优先看它现有的（`w:delText` 就继续 delText），
+    否则按修订态推断。`w:moveFrom`/`w:del` 里写成 `w:t` = 把删掉的字变回正文。"""
+    elems = text_elems(r)
+    if elems:
+        return "w:delText" if elems[0].tag == qn("w:delText") else "w:t"
+    return "w:delText" if in_deleted(r) else "w:t"
+
+
+def new_text_elem(r, s: str):
+    """按 run 所处修订态建对应文本元素（删除态 → `w:delText`）。"""
+    from docx.oxml import OxmlElement  # 惰性导入：zip 级工具不必装 python-docx
+
+    el = OxmlElement(text_tag_for(r))
+    el.text = s
+    _mark_space(el)
+    return el
+
+
+def iter_text_roots(doc, *, include_headers: bool = True):
+    """遍历一个 python-docx Document 里**所有承载正文文本的 XML part**。
+
+    yield `(label, root, flush)`：
+      - `label` 中文域名（正文 / 批注 / 脚注 / 尾注 / 页眉 / 页脚），用于分域统计
+      - `root`  该 part 的 lxml 根（正文给 `w:body`）
+      - `flush` 收尾回写回调；`None` 表示该 part 由 python-docx 自己序列化
+
+    脚注 / 尾注在 python-docx 里是**没有 `.element` 的通用 Part**（只有 `_blob` 字节），
+    所以必须解析 blob 再回写；批注是 `CommentsPart`（有 `.element`）直接改。
+    """
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.opc.oxml import serialize_part_xml
+    from docx.oxml import parse_xml
+
+    yield ("正文", doc.element.body, None)
+
+    wanted = {RT.COMMENTS: "批注", RT.FOOTNOTES: "脚注", RT.ENDNOTES: "尾注"}
+    if include_headers:
+        wanted[RT.HEADER] = "页眉"
+        wanted[RT.FOOTER] = "页脚"
+
+    for rel in doc.part.rels.values():
+        if rel.is_external:
+            continue
+        label = wanted.get(rel.reltype)
+        if not label:
+            continue
+        part = rel.target_part
+        elm = getattr(part, "element", None)
+        if elm is not None:
+            yield (label, elm, None)
+            continue
+        root = parse_xml(part.blob)
+
+        def _flush(_part=part, _root=root):
+            _part._blob = serialize_part_xml(_root)
+
+        yield (label, root, _flush)

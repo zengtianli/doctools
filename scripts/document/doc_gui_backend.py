@@ -171,16 +171,21 @@ _OPS_BY_ID = {o["id"]: o for o in OPS}
 
 # ───────────────────────────────────────────── 产出探测(目录树快照差分)
 
-def _snapshot(roots: list[Path]) -> set[str]:
-    """收集 roots 下(含子目录)所有现存路径,用于跑前/跑后差分。"""
-    seen: set[str] = set()
+def _snapshot(roots: list[Path]) -> dict[str, tuple]:
+    """收集 roots 下(含子目录)所有现存路径 → (mtime_ns, size),用于跑前/跑后差分。
+
+    带指纹而非只带路径:同名产出已存在时(同一文件跑第二遍,_fixed.docx 覆盖旧的),
+    纯路径差分为空 → GUI 会把成功的跑报成「未产出」。"""
+    seen: dict[str, tuple] = {}
     for r in roots:
         if not r.exists():
             continue
-        seen.add(str(r))
-        if r.is_dir():
-            for p in r.rglob("*"):
-                seen.add(str(p))
+        for p in [r, *(r.rglob("*") if r.is_dir() else [])]:
+            try:
+                st = p.stat()
+                seen[str(p)] = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                seen[str(p)] = ()
     return seen
 
 
@@ -193,9 +198,14 @@ def _scan_roots(files: list[str]) -> list[Path]:
     return list(roots)
 
 
-def _new_outputs(before: set[str], after: set[str], inputs: set[str]) -> list[str]:
-    """跑后新增、且非输入本身的路径 = 产出。顶层去重(目录产出不再列其子项)。"""
-    created = sorted(p for p in (after - before) if p not in inputs)
+def _new_outputs(before: dict[str, tuple], after: dict[str, tuple], inputs: set[str]) -> list[str]:
+    """跑后**新增或被覆盖**、且非输入本身的路径 = 产出。顶层去重(目录产出不再列其子项)。
+
+    目录的 mtime 会因内部新建文件而变,所以「被覆盖」只认文件,不认目录。"""
+    created = sorted(
+        p for p, fp in after.items()
+        if p not in inputs and (p not in before or (before[p] != fp and not Path(p).is_dir()))
+    )
     top: list[str] = []
     for p in created:
         if any(p != q and p.startswith(q.rstrip("/") + "/") for q in created):

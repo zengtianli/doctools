@@ -35,6 +35,26 @@ raycast/
 - Shell 引用库：`source "$(dirname "$0")/../../lib/common.sh"`
 - LLM 调用：`from llm_client import chat`
 
+### 全文改写 docx 必走 `lib/docx_xml.py` 的元素级遍历（2026-07-26 立）
+
+python-docx 的 `Document.paragraphs` 只认 `w:body/./w:p`、`Paragraph.runs` 只认 `./w:r`，
+**静默漏掉审阅修订（`w:ins`/`w:del`/`w:moveFrom`/`w:moveTo`）、`w:hyperlink`、文本框、
+嵌套表里的 run**；批注 `comments.xml` / 脚注 / 尾注更是整个 part 碰不到。所以凡是
+「把全文某类字符改一遍」的引擎（规范化、替换、术语统一…）都用：
+
+```python
+from docx_xml import iter_text_roots, iter_paragraphs, para_own_runs, run_text, set_run_text
+for label, root, flush in iter_text_roots(doc):      # 正文/批注/脚注/尾注/页眉页脚
+    for p in iter_paragraphs(root):
+        for r in para_own_runs(p):
+            set_run_text(r, fix(run_text(r)))
+    if flush: flush()                                 # 脚注/尾注是通用 Part,必须回写 blob
+```
+
+删除态（`w:del`/`w:moveFrom`）的文本载体是 `w:delText`，写成 `w:t` = 把删掉的字变回正文；
+`set_run_text` / `text_tag_for` 已挡住这条。回归门：
+`scripts/document/tests/test_docx_text_formatter_scopes.py`（老实现在此测试下 9 红）。
+
 ### Raycast 脚本
 - `raycast/commands/` 下是 Shell wrapper（含 @raycast 元数据）
 - Wrapper 通过 `run_python.sh` 调用实际脚本：`run_python "document/docx_text_formatter.py"`
