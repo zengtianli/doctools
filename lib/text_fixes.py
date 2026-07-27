@@ -118,20 +118,51 @@ def fix_quotes(text: str, counter: int = 0) -> tuple[str, int, int]:
     return result, count, counter
 
 
+# 半角→全角必须绕开的「机器读的」片段。2026-07-26 实测旧实现的破坏：
+#   https://example.com/a?b=1;c=2  →  https：//example.com/a？b=1；c=2   (链接失效)
+#   df.groupby(['a','b'])          →  df.groupby（['a'，'b']）           (代码跑不了)
+#   Total 1,234 items              →  Total 1，234 items                (千分位坏)
+_PROTECTED = re.compile(
+    r"""(
+        [a-zA-Z][a-zA-Z0-9+.\-]*://\S+       # URL(http/https/ftp/file…)
+      | (?:www\.|mailto:)\S+                 # www. 开头 / mailto:
+      | [\w.\-+]+@[\w.\-]+\.\w+              # 邮箱
+      | ```[\s\S]*?```                       # markdown 围栏代码块(md 是整篇进来的)
+      | `[^`\n]+`                            # markdown 行内代码
+      | \d{1,3}(?:,\d{3})+(?:\.\d+)?         # 千分位数字 1,234 / 1,234,567.89
+    )""",
+    re.VERBOSE,
+)
+
+
 def fix_punctuation(text: str) -> tuple[str, int]:
     """Convert English punctuation to Chinese equivalents.
+
+    URL / 邮箱 / 行内代码 / 千分位数字整段跳过 —— 那些半角符号是给机器读的，
+    转成全角等于把内容改坏（链接点不开、代码跑不了）。
 
     Returns:
         (result_text, replacement_count)
     """
-    result = text
     total = 0
-    for eng, chn in PUNCTUATION_MAP.items():
-        escaped = re.escape(eng)
-        n = len(re.findall(escaped, result))
-        total += n
-        result = re.sub(escaped, chn, result)
-    return result, total
+
+    def _convert(chunk: str) -> str:
+        nonlocal total
+        for eng, chn in PUNCTUATION_MAP.items():
+            n = chunk.count(eng)
+            if n:
+                total += n
+                chunk = chunk.replace(eng, chn)
+        return chunk
+
+    out = []
+    pos = 0
+    for m in _PROTECTED.finditer(text):
+        out.append(_convert(text[pos:m.start()]))
+        out.append(m.group(0))          # 受保护片段原样放回
+        pos = m.end()
+    out.append(_convert(text[pos:]))
+    return "".join(out), total
 
 
 def fix_units(text: str) -> tuple[str, int]:

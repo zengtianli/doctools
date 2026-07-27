@@ -212,3 +212,33 @@ def test_quote_font_can_be_turned_off():
     p2.add_run('标题“重点”部分')
     dtf.process_paragraph_element(p2._p, _stats(), cfg=dtf.FormatConfig(quote_font=True))
     assert len(p2._p.findall(qn("w:r"))) > 1, "开着时应拆 run 设宋体"
+
+
+# ── 6. 半角→全角必须绕开「机器读的」片段 ─────────────────────────
+
+sys.path.insert(0, str(_DOC.parent.parent / "lib"))
+from text_fixes import fix_punctuation  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "https://example.com/a?b=1;c=2",
+    "见 www.gov.cn/x?a=1;b=2",
+    "联系 a.b@c.com",
+    "`x = {1: 2}`",
+    "1,234",
+    "1,234,567.89",
+])
+def test_punct_skips_machine_readable(text: str):
+    """URL / 邮箱 / 行内代码 / 千分位整段原样保留 —— 转全角=内容改坏。"""
+    assert fix_punctuation(text)[0] == text
+
+
+def test_punct_skips_fenced_code_block():
+    md = "说明,如下:\n```python\nd = {'a': 1, 'b': 2}\n```\n结束,完毕"
+    out, _ = fix_punctuation(md)
+    assert "{'a': 1, 'b': 2}" in out, "围栏代码块被全角化"
+    assert "说明，如下：" in out and "结束，完毕" in out, "围栏外的正文该照常改"
+
+
+def test_punct_still_converts_prose():
+    assert fix_punctuation("正常中文,标点:全角化(应该改)")[0] == "正常中文，标点：全角化（应该改）"
