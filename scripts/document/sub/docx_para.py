@@ -44,6 +44,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import docx_surgical as ds  # noqa: E402
 from docx_surgical import qn  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+from soffice import find_soffice  # doctools SSOT: soffice 路径解析
+
+
 # register() 的 _dispatch helper —— 仅 package(docx_cli)上下文可用;standalone 跑 main()不需要
 try:
     from ._dispatch import get_or_add_group, get_or_add_subparsers  # type: ignore
@@ -54,10 +58,7 @@ XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 CACHE_ROOT = Path.home() / ".cache" / "doctools" / "docx_para"
 PDFTOTEXT = "/opt/homebrew/bin/pdftotext"
 PDFTOPPM = "/opt/homebrew/bin/pdftoppm"
-_SOFFICE_CANDIDATES = [
-    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    "/opt/homebrew/bin/soffice",
-]
+# soffice 路径解析走 doctools SSOT(lib/soffice.py) —— 勿在此另列候选
 _NORM = re.compile(r"\s+")
 
 # 命中范围跨这些结构 = 不安全,edit 拒动(不猜)
@@ -610,10 +611,7 @@ def cmd_scan_ppr(args) -> int:
 
 # ═══ 6. render（整本 PDF 内容 hash 缓存 + 段→页映射 + 单页切）═══════════════
 def _soffice():
-    for c in _SOFFICE_CANDIDATES:
-        if Path(c).exists():
-            return c
-    return shutil.which("soffice")
+    return find_soffice()
 
 
 def _docx_hash(docx: Path) -> str:

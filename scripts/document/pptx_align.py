@@ -30,6 +30,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+from soffice import find_soffice, require_soffice  # doctools SSOT: soffice 路径解析
+
+
 SLIDE_RE = re.compile(r'ppt/slides/slide(\d+)\.xml$')
 
 
@@ -343,9 +347,7 @@ def cmd_fontsize(path, args):
 
 # ── render:soffice → PNG 验证 ──────────────────────────────────
 def cmd_render(path, args):
-    soffice = next((p for p in ['/opt/homebrew/bin/soffice',
-                                '/Applications/LibreOffice.app/Contents/MacOS/soffice',
-                                'soffice', 'libreoffice'] if _which(p)), None)
+    soffice = find_soffice()
     if not soffice:
         print("⚠️  未找到 LibreOffice(soffice)", file=sys.stderr)
         return 1

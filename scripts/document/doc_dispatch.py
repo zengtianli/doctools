@@ -33,6 +33,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+from soffice import find_soffice, require_soffice  # doctools SSOT: soffice 路径解析
+
+
 DOC = Path(__file__).resolve().parent            # scripts/document
 DATA = DOC.parent / "data"                       # scripts/data
 PY = sys.executable                              # uv 环境的 python
@@ -86,7 +90,7 @@ def _doc_to_docx(f: str) -> str | None:
     成功返回产出路径,失败返回 None。"""
     p = Path(f)
     out = p.with_suffix(".docx")
-    soffice = shutil.which("soffice") or "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    soffice = find_soffice() or ""
     if Path(soffice).exists():
         cmd = [soffice, "--headless",
                "-env:UserInstallation=file:///tmp/lo_profile_doc_dispatch",

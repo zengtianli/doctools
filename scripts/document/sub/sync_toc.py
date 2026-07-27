@@ -40,8 +40,12 @@ from pathlib import Path
 
 from lxml import etree
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+from soffice import find_soffice, require_soffice  # doctools SSOT: soffice 路径解析
+
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-SOFFICE = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+SOFFICE = find_soffice() or "/Applications/LibreOffice.app/Contents/MacOS/soffice"
 
 
 def q(t):
