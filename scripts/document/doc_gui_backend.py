@@ -72,7 +72,7 @@ OPS = [
         "id": "clean",
         "verb": "clean",
         "title": "规范化",
-        "subtitle": "纯文本修复:引号/标点/单位(docx·md·pptx),产出 _fixed 副本",
+        "subtitle": "纯文本修复:引号+标点+单位一起做(只想动引号→用「引号统一」)",
         "icon": "wand.and.stars",
         "exts": ["docx", "md", "pptx"],
         "kind": "files",
@@ -89,6 +89,30 @@ OPS = [
              "title": "英文标点转中文", "note": "含 , : ; ! ? ( )"},
             {"id": "rule.units", "group": "rule", "type": "bool", "default": True,
              "title": "中文单位转标准符号", "note": "平方米→m²(仅数字后)"},
+            {"id": "rule.quote_font", "group": "rule", "type": "bool", "default": True,
+             "title": "引号设为宋体", "note": "会把引号拆成独立 run"},
+            {"id": "scope.body", "group": "scope", "type": "bool", "default": True, "title": "正文"},
+            {"id": "scope.table", "group": "scope", "type": "bool", "default": True, "title": "表格"},
+            {"id": "scope.revision", "group": "scope", "type": "bool", "default": True,
+             "title": "审阅修订", "note": "w:ins/w:del 插入与删除态"},
+            {"id": "scope.comments", "group": "scope", "type": "bool", "default": True, "title": "批注"},
+            {"id": "scope.notes", "group": "scope", "type": "bool", "default": True, "title": "脚注/尾注"},
+            {"id": "scope.headers", "group": "scope", "type": "bool", "default": True, "title": "页眉页脚"},
+        ],
+    },
+    {
+        "id": "quotes",
+        "verb": "quotes",
+        "title": "引号统一",
+        "subtitle": "只把引号统一成中文弯引号,不碰标点/单位(docx·md)",
+        "icon": "quote.opening",
+        "exts": ["docx", "md"],
+        "kind": "files",
+        "option_groups": [
+            {"id": "rule", "title": "怎么处理"},
+            {"id": "scope", "title": "改哪些范围", "applies_to": ["docx"]},
+        ],
+        "options": [
             {"id": "rule.quote_font", "group": "rule", "type": "bool", "default": True,
              "title": "引号设为宋体", "note": "会把引号拆成独立 run"},
             {"id": "scope.body", "group": "scope", "type": "bool", "default": True, "title": "正文"},
@@ -296,6 +320,8 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None,
             rc = dd.do_scan(files)
         elif verb == "view":
             rc = dd.do_view(files)
+        elif verb == "quotes":
+            rc = dd.do_quotes(files, opts)
         elif verb == "fontunify":
             rc = dd.do_fontunify(files)
         elif verb == "lowercase":

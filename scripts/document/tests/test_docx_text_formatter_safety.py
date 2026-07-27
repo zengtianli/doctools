@@ -242,3 +242,17 @@ def test_punct_skips_fenced_code_block():
 
 def test_punct_still_converts_prose():
     assert fix_punctuation("正常中文,标点:全角化(应该改)")[0] == "正常中文，标点：全角化（应该改）"
+
+
+# ── 7. 「引号统一」独立动词：只动引号 ────────────────────────────
+
+def test_quotes_only_config():
+    """FormatConfig(punct=False, units=False) 时标点与单位逐字不动。"""
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run('正文,面积5平方米(A);"引号"')
+    dtf.process_paragraph_element(
+        p._p, _stats(),
+        cfg=dtf.FormatConfig(quotes=True, punct=False, units=False, quote_font=False))
+    text = "".join(t.text or "" for t in p._p.iter(qn("w:t")))
+    assert text == '正文,面积5平方米(A);“引号”', text

@@ -54,8 +54,8 @@ SCRIPT_AUTHOR = "tianli"
 SCRIPT_UPDATED = "2026-03-25"
 
 
-def format_process_file(input_file):
-    """处理单个文件的格式修复"""
+def format_process_file(input_file, rules=("quotes", "punct", "units")):
+    """处理单个文件的格式修复。rules = 要应用的规则子集(与 docx 引擎口径一致)。"""
     input_path = Path(input_file)
 
     if not input_path.exists():
@@ -69,14 +69,17 @@ def format_process_file(input_file):
         with open(input_path, encoding="utf-8") as f:
             content = f.read()
 
-        show_processing("正在处理引号...")
-        fixed_content, quote_count, _ = fix_quotes(content)
-
-        show_processing("正在处理标点符号...")
-        fixed_content, punct_count = fix_punctuation(fixed_content)
-
-        show_processing("正在转换单位...")
-        fixed_content, unit_count = fix_units(fixed_content)
+        fixed_content = content
+        quote_count = punct_count = unit_count = 0
+        if "quotes" in rules:
+            show_processing("正在处理引号...")
+            fixed_content, quote_count, _ = fix_quotes(fixed_content)
+        if "punct" in rules:
+            show_processing("正在处理标点符号...")
+            fixed_content, punct_count = fix_punctuation(fixed_content)
+        if "units" in rules:
+            show_processing("正在转换单位...")
+            fixed_content, unit_count = fix_units(fixed_content)
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(fixed_content)
@@ -96,6 +99,8 @@ def format_process_file(input_file):
 
 def cmd_format(args):
     """format 子命令入口"""
+    sel = tuple(r for r in ("quotes", "punct", "units") if getattr(args, r, False))
+    rules = sel or ("quotes", "punct", "units")   # 一个都没给 = 全做(向后兼容)
     files = args.files
     if not files:
         files = get_input_files([], expected_ext="md")
@@ -120,7 +125,7 @@ def cmd_format(args):
     def _one(file_path) -> bool:
         print(f"\n处理文件: {Path(file_path).name}")
         try:
-            return format_process_file(str(file_path))
+            return format_process_file(str(file_path), rules)
         except Exception as e:  # 失败隔离：单文件崩不拖垮整批
             show_error(f"处理失败: {e}")
             return False
@@ -987,6 +992,9 @@ def build_parser():
         description="修复 Markdown 文件中的引号、英文标点和中文单位格式",
     )
     p_format.add_argument("files", nargs="*", help="要处理的 Markdown 文件（支持多个）")
+    p_format.add_argument("--quotes", action="store_true", help="只修引号")
+    p_format.add_argument("--punct", action="store_true", help="只修英文标点")
+    p_format.add_argument("--units", action="store_true", help="只转中文单位")
 
     # ── merge ──
     p_merge = subparsers.add_parser(

@@ -7,6 +7,7 @@
 
 用法:
   doc_dispatch.py clean      <files...>               规范化(纯文本:引号/标点/单位 · docx·md·pptx)
+  doc_dispatch.py quotes     <files...>               只统一引号(不碰标点/单位 · docx·md)
   doc_dispatch.py fontunify  <files...>               pptx 全篇字体统一(⚠原地覆写,留 .backup)
   doc_dispatch.py lowercase  <files...>               xlsx/docx 英文转小写(语义级数据改写)
   doc_dispatch.py stripchrome <files...>              docx 清除页眉页脚(⚠不可撤销,产出副本)
@@ -137,12 +138,34 @@ def route_clean(f: str, opts: dict | None = None) -> tuple[list[str], str] | Non
     if e == "docx":
         return _py("docx_text_formatter.py", f, *_clean_flags(opts)), "docx → 文本修复(引号/标点/单位)"
     if e == "md":
-        return _py("md_tools.py", "format", f), "md → 格式标准化"
+        rules = [a for a in _clean_flags(opts) if a in ("--quotes", "--punct", "--units")]
+        return _py("md_tools.py", "format", *rules, f), "md → 格式标准化"
     if e in ("pptx",):
         # 只跑 format+table(文本与表格规范)。font 阶段=全篇强制换字体,
         # 2026-07-26 拆成独立动词 fontunify —— 换字体不属于「文本规范化」。
         return _py("pptx_tools.py", "all", "--phases", "format,table", f), "pptx → 文本+表格规范"
     return None   # xlsx 的「英文小写」已拆成独立动词 lowercase(那是语义级数据改写)
+
+
+def route_quotes(f: str, opts: dict | None = None) -> tuple[list[str], str] | None:
+    """只把引号统一成中文弯引号 —— 独立动词(2026-07-26 用户钦定)。
+
+    典型场景:中文期刊投稿(GB/T 7714 参考文献区标点须半角)只想动引号,
+    绝不能顺手把逗号冒号括号一起全角化。
+    """
+    e = _ext(f)
+    # 从 clean 的翻译结果里只取「引号相关」的旗标:宋体开关 + 域白名单
+    flags = _clean_flags(opts)
+    extra: list[str] = []
+    if "--no-quote-font" in flags:
+        extra.append("--no-quote-font")
+    if "--scope" in flags:
+        extra += ["--scope", flags[flags.index("--scope") + 1]]
+    if e == "docx":
+        return _py("docx_text_formatter.py", f, "--quotes", *extra), "docx → 只统一引号"
+    if e == "md":
+        return _py("md_tools.py", "format", "--quotes", f), "md → 只统一引号"
+    return None
 
 
 def route_fontunify(f: str) -> tuple[list[str], str] | None:
@@ -239,6 +262,10 @@ def _per_file(files: list[str], router, verb: str, opts: dict | None = None) -> 
 def do_clean(files, opts: dict | None = None):
     return _per_file(files, route_clean, "规范化", opts or {})
 def do_split(files):  return _per_file(files, route_split, "拆分")
+
+
+def do_quotes(files, opts: dict | None = None):
+    return _per_file(files, route_quotes, "引号统一", opts or {})
 
 
 def do_fontunify(files):
@@ -366,7 +393,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="文档/数据统一调度器")
     sub = ap.add_subparsers(dest="verb", required=True)
     for v in ("clean", "typeset", "merge", "split", "view", "scan",
-              "fontunify", "lowercase", "stripchrome"):
+              "quotes", "fontunify", "lowercase", "stripchrome"):
         p = sub.add_parser(v); p.add_argument("files", nargs="+")
     pc = sub.add_parser("convert")
     pc.add_argument("--to", required=True, dest="target")
@@ -388,6 +415,8 @@ def main() -> int:
     if a.verb == "typeset": return do_typeset(a.files)
     if a.verb == "renum":   return do_renum(a.files, a.target)
     if a.verb == "bidfinal": return do_bidfinal(a.files, a.target)
+    if a.verb == "quotes":
+        return do_quotes(a.files)
     if a.verb == "fontunify":
         return do_fontunify(a.files)
     if a.verb == "lowercase":
