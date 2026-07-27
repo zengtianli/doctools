@@ -55,6 +55,26 @@ for label, root, flush in iter_text_roots(doc):      # 正文/批注/脚注/尾�
 `set_run_text` / `text_tag_for` 已挡住这条。回归门：
 `scripts/document/tests/test_docx_text_formatter_scopes.py`（老实现在此测试下 9 红）。
 
+### per-op 选项走后端声明,别写进 Swift（2026-07-26 立）
+
+GUI 的勾选框由 `doc_gui_backend.OPS[<op>]["options"]` + `["option_groups"]` 声明，
+Swift 只按 `type` 泛化渲染（`bool`→checkbox），**Sources/ 里不许出现任何 option id 字面量**。
+加一个旋钮 = 只改 Python，不重编 `.app`。
+
+```
+gui-ops  → {"id":"rule.units","group":"rule","type":"bool","default":true,"title":"…","note":"…"}
+gui-run  --op clean --opt rule.units=0 --opt scope.comments=0 --files a.docx
+```
+
+契约铁律：未知 key / 非法值一律走信封 `{"ok": false, "error": …}` 且 **exit 0**
+（argparse 的 exit 2 + 空 stdout 会让 Swift 只看到「后端崩了」）。
+引擎侧配置一律走 `FormatConfig` 冻结 dataclass 显式穿参，**禁再加模块级可变全局**
+（旧的 5 个全局只在 `__main__` 赋值，被 import 时永远是默认值、还会跨调用串味）。
+
+⚠ 域过滤与引号规则**不正交**：引号左右方向靠段落级奇偶计数器，被跳过的 run 仍要
+推进 counter 但不写回，否则它后面的引号整体反相。回归门在
+`tests/test_docx_text_formatter_safety.py::test_skipped_scope_does_not_flip_quote_direction`。
+
 ### Raycast 脚本
 - `raycast/commands/` 下是 Shell wrapper（含 @raycast 元数据）
 - Wrapper 通过 `run_python.sh` 调用实际脚本：`run_python "document/docx_text_formatter.py"`
