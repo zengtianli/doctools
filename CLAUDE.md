@@ -1,6 +1,6 @@
 # doctools
 
-文档处理与数据转换工具集，从 scripts 仓库拆分。主要通过 Raycast 调用。
+文档处理与数据转换工具集，从 scripts 仓库拆分。**入口是 `/docx` skill 与命令行**（`raycast/` 整子树 2026-07-27 已归档：`commands/` 早已是空的，9 个 `doc_*.sh` 在自己的 `_archive/` 里）。
 
 > **Python venv**：共享于 `~/Dev/.venv`（uv workspace member · 见 `~/Dev/CLAUDE.md` § uv workspace）。本 repo 不建独立 `.venv`。改 deps → 改 `pyproject.toml` + `cd ~/Dev && uv sync`。
 
@@ -23,8 +23,6 @@ lib/                  # 公共模块
 ├── llm_client.py     # AI 调用（claude -p 封装）
 └── common.sh         # Shell 公共函数
 
-raycast/
-├── commands/         # 27 个 Raycast wrapper
 └── lib/              # run_python.sh 运行器
 ```
 
@@ -88,9 +86,11 @@ gui-run  --op clean --opt rule.units=0 --opt scope.comments=0 --files a.docx
 
 判据：**动词名字承诺什么，默认就只做什么**；超出的部分要么另立动词，要么 opt-in flag。
 
-### Raycast 脚本
-- `raycast/commands/` 下是 Shell wrapper（含 @raycast 元数据）
-- Wrapper 通过 `run_python.sh` 调用实际脚本：`run_python "document/docx_text_formatter.py"`
+### Raycast 脚本（2026-07-27 已整体归档）
+
+`raycast/` 整子树已进 `~/.Trash/dead-scripts-20260727/`：`commands/` 早就是空的，
+9 个 `doc_*.sh` 在它自己的 `_archive/` 里，只剩一个没人 source 的 `lib/run_python.sh`。
+现在的入口是 `/docx` skill 与直接命令行。
 
 ## Claude CLI 依赖脚本
 
