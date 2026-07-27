@@ -70,6 +70,7 @@ dd._run = _captured_run  # noqa: SLF001 — 故意替换,把终端日志关进�
 OPS = [
     {
         "id": "clean",
+        "aliases": "normalize clean tidy format punctuation quotes units",
         "verb": "clean",
         "title": "规范化",
         "subtitle": "纯文本修复:引号+标点+单位一起做(只想动引号→用「引号统一」)",
@@ -102,6 +103,7 @@ OPS = [
     },
     {
         "id": "quotes",
+        "aliases": "quotes quotation curly smart 引号",
         "verb": "quotes",
         "title": "引号统一",
         "subtitle": "只把引号统一成中文弯引号,不碰标点/单位(docx·md)",
@@ -126,6 +128,7 @@ OPS = [
     },
     {
         "id": "fontunify",
+        "aliases": "font unify typeface pptx 字体",
         "verb": "fontunify",
         "title": "字体统一",
         "subtitle": "pptx 全篇(含母版/版式)统一字体 ⚠原地覆写原文件(留 .backup)",
@@ -136,6 +139,7 @@ OPS = [
     },
     {
         "id": "lowercase",
+        "aliases": "lowercase lower case downcase xlsx 小写",
         "verb": "lowercase",
         "title": "英文小写整理",
         "subtitle": "xlsx 数据行 / docx 正文里的英文转小写(语义级数据改写)",
@@ -146,6 +150,7 @@ OPS = [
     },
     {
         "id": "stripchrome",
+        "aliases": "strip header footer chrome remove 页眉 页脚",
         "verb": "stripchrome",
         "title": "清页眉页脚",
         "subtitle": "删除 docx 的页眉页脚引用,一个字不改 ⚠不可撤销(产出 _fixed 副本)",
@@ -155,7 +160,33 @@ OPS = [
         "danger": True,
     },
     {
+        # 2026-07-27 从「TL 代笔台」收编(该 app 实测 18 天开过 1 次共 0 分钟,
+        # 唯一动作就是调 docx_format_clone.py)。能力留在这里,壳退役。
+        # 引擎是 HQ SSOT(/docx format 也在用),此处只做编排。
+        "id": "formatclone",
+        "aliases": "format clone style template reference 版式 复刻 公文",
+        "verb": "formatclone",
+        "title": "公文版式复刻",
+        "subtitle": "拿一份范式件当格式源,把内容刷成同款版式(原件不动,产出 _成品.docx,永不覆盖)",
+        "icon": "doc.on.doc",
+        "exts": ["docx", "md"],
+        "kind": "files",
+        "option_groups": [
+            {"id": "src", "title": "格式来源(必选)"},
+            {"id": "opt", "title": "选项"},
+        ],
+        "options": [
+            # type=file:声明式契约的第二个类型(2026-07-27 加)。Swift 按 type 泛化渲染成
+            # 文件选择器,同样不出现任何 option id 字面量。
+            {"id": "ref", "group": "src", "type": "file", "exts": ["docx"], "required": True,
+             "title": "范式 docx", "note": "格式从这份抽(标题/正文/落款的直排版一并复刻)"},
+            {"id": "signature", "group": "opt", "type": "bool", "default": False,
+             "title": "保留落款署名", "note": "默认不含 —— 复刻件多数要另行署名"},
+        ],
+    },
+    {
         "id": "convert",
+        "aliases": "convert transform export pdf word markdown 转换",
         "verb": "convert",
         "title": "格式转换",
         "subtitle": "源格式自动识别 → 目标格式（含 PDF → 可编辑 Word）",
@@ -172,6 +203,7 @@ OPS = [
     },
     {
         "id": "split",
+        "aliases": "split divide separate chapters sheets 拆分",
         "verb": "split",
         "title": "拆分",
         "subtitle": "md 按标题 / xlsx 按 sheet",
@@ -181,6 +213,7 @@ OPS = [
     },
     {
         "id": "merge",
+        "aliases": "merge combine join concat 合并",
         "verb": "merge",
         "title": "合并",
         "subtitle": "多个 md→一篇 / 多个 txt→CSV",
@@ -190,6 +223,7 @@ OPS = [
     },
     {
         "id": "typeset",
+        "aliases": "typeset template word 套模板 成品",
         "verb": "typeset",
         "title": "套模板成品 Word",
         "subtitle": "md/docx/doc → 院模板(套样式·修文本·图注居中)",
@@ -199,6 +233,7 @@ OPS = [
     },
     {
         "id": "renum",
+        "aliases": "renumber renum numbering figures tables headings 序号",
         "verb": "renum",
         "title": "序号修正",
         "subtitle": "标题/图/表编号断号·错号·缺号一键重排(产出 _序号修正.docx,原件不动)",
@@ -213,6 +248,7 @@ OPS = [
     },
     {
         "id": "bidfinal",
+        "aliases": "bid final gate check residue identity print 标书 门检",
         "verb": "bidfinal",
         "title": "标书终稿门检",
         "subtitle": "残留8类/身份泄漏/打印就绪 三道门干跑体检,只诊断不改文件;红门=半成品禁交付",
@@ -226,6 +262,7 @@ OPS = [
     },
     {
         "id": "scan",
+        "aliases": "scan sensitive detect audit 敏感词",
         "verb": "scan",
         "title": "敏感词扫描",
         "subtitle": "扫一个目录里的 md/docx(竞品名/过硬措辞)",
@@ -235,6 +272,7 @@ OPS = [
     },
     {
         "id": "view",
+        "aliases": "view preview render html 预览",
         "verb": "view",
         "title": "预览",
         "subtitle": "md → HTML 浏览器预览(2026-06-14 从 raycast doc_preview 并入)",
@@ -328,6 +366,8 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None,
             rc = dd.do_lowercase(files)
         elif verb == "stripchrome":
             rc = dd.do_stripchrome(files)
+        elif verb == "formatclone":
+            rc = dd.do_formatclone(files, opts)
         else:
             return 2, f"未知操作: {verb}"
     log = _strip_ansi("\n".join([buf.getvalue().rstrip(), *_CAP]).strip())
@@ -349,9 +389,26 @@ def gui_run(op_id: str, files: list[str], target: str | None, opts: dict | None 
                     "error": f"未知选项: {', '.join(bad)}"
                              + (f"(该操作可用 {', '.join(sorted(declared))})" if declared
                                 else "(该操作不接受选项)")}
+        _types = {o["id"]: o.get("type", "bool") for o in op.get("options", [])}
         for k, v in opts.items():
+            t = _types.get(k, "bool")
+            if t == "file":
+                # file 型的值是绝对路径。空值放行(由动词自己报"未选范式"),
+                # 但给了就必须真存在 —— 否则错误会在子进程里以退出码形式出现,人看不懂。
+                if str(v).strip() and not Path(str(v)).expanduser().exists():
+                    return {"ok": False, "error": f"选项 {k} 指向的文件不存在: {v}"}
+                continue
             if str(v).strip().lower() not in ("0", "1", "true", "false", "yes", "no", "on", "off"):
                 return {"ok": False, "error": f"选项 {k} 的值 {v!r} 不是布尔(用 1/0)"}
+
+    # 必填选项(2026-07-27 立):缺了必须在契约层报人话。
+    # 踩过才加 —— formatclone 不选「范式 docx」时,动词只能 warn 后跳过,信封却报
+    # ok:true + 逐文件「无对应引擎/未产出(可能此格式不支持该操作)」,把「你没选格式来源」
+    # 说成「你的文件格式不对」。必填是契约属性,该在契约层判,不该漏到执行层去猜。
+    for o in op.get("options", []):
+        if o.get("required") and not str((opts or {}).get(o["id"], "")).strip():
+            return {"ok": False,
+                    "error": f"请先选择「{o['title']}」—— {op['title']} 没有它无法进行"}
 
     if op["kind"] == "dir":
         # scan:吃一个目录
@@ -411,6 +468,7 @@ def gui_run(op_id: str, files: list[str], target: str | None, opts: dict | None 
         outs = _new_outputs(before, _snapshot(roots), {f})
         ok = rc == 0 and bool(outs)
         results.append({
+            "_rc": rc,
             "input": f,
             "name": Path(f).name,
             "ok": ok,
@@ -423,16 +481,23 @@ def gui_run(op_id: str, files: list[str], target: str | None, opts: dict | None 
 
 
 def _wrap(op_id: str, results: list[dict], missing: list[str], log: str) -> dict:
+    # ok 曾经写死 True —— 于是「每个文件都失败」也报成功(2026-07-27 修)。
+    # 判据:有文件成功 → ok;一个都没成但子进程也没报错(诊断型动词的正常形态)→ 仍 ok;
+    # 一个都没成且确有子进程非零退出 → ok:false。
+    _succ = sum(1 for r in results if r["ok"])
+    _hard_fail = any(r.get("_rc", 0) != 0 for r in results)
     out = {
-        "ok": True,
+        "ok": bool(_succ) or not _hard_fail,
         "op": op_id,
         "results": results,
-        "succeeded": sum(1 for r in results if r["ok"]),
+        "succeeded": _succ,
         "total": len(results),
         "log": log.strip(),
     }
     if missing:
         out["skipped_missing"] = [Path(m).name for m in missing]
+    for r in results:
+        r.pop("_rc", None)          # 内部字段,不进对外信封
     return out
 
 

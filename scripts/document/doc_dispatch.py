@@ -11,6 +11,8 @@
   doc_dispatch.py fontunify  <files...>               pptx 全篇字体统一(⚠原地覆写,留 .backup)
   doc_dispatch.py lowercase  <files...>               xlsx/docx 英文转小写(语义级数据改写)
   doc_dispatch.py stripchrome <files...>              docx 清除页眉页脚(⚠不可撤销,产出副本)
+  doc_dispatch.py formatclone <files...> --ref <范式.docx> [--signature]
+                                                     公文版式复刻(原件不动,产出 _成品.docx,永不覆盖)
   doc_dispatch.py convert  --to {md,word,xlsx,csv,txt} <files...>   转换(源自动认;老 .doc 经 textutil 升级)
   doc_dispatch.py typeset  <files...>                 md/docx/doc → 院模板成品 Word(套模板→修文本→图注)
   doc_dispatch.py merge    <files...>                 合并(md/txt→csv/xlsx)
@@ -190,6 +192,48 @@ def route_stripchrome(f: str) -> tuple[list[str], str] | None:
     return None
 
 
+def _nonclobber(p: Path) -> Path:
+    """永不覆盖:目标已存在就退让到 -2 / -3 …
+
+    这条是本动词存在的一半理由。被它取代的旧实现(ghostwriting_console.cmd_clone)写的是
+    `out = existing[0] if existing else <默认名>` —— 只要成品目录里已有同类文件,
+    点一下「复刻」就**就地覆盖已交付给客户的那一份,无备份**。
+    产出件必须只增不改;要覆盖是人的决定,不是工具的默认。
+    """
+    if not p.exists():
+        return p
+    for i in range(2, 100):
+        cand = p.with_name(f"{p.stem}-{i}{p.suffix}")
+        if not cand.exists():
+            return cand
+    raise RuntimeError(f"同名产出过多(已到 99),清理一下: {p.parent}")
+
+
+def route_formatclone(f: str, opts: dict | None = None) -> tuple[list[str], str] | None:
+    """公文版式复刻:拿一份**范式 docx** 当格式源,把内容刷成同款版式。
+
+    2026-07-27 从「TL 代笔台」收编 —— 那个 app 实测 18 天里开过 1 次共 0 分钟,
+    而它唯一的动作就是调本引擎。能力留下,壳退役(见 ~/Apps/mac/handoffs/fleet-consolidation-plan.md)。
+    引擎 docx_format_clone.py 是 HQ SSOT(/docx format 也在用),此处只做编排,不碰它。
+    """
+    o = opts or {}
+    ref = (o.get("ref") or "").strip()
+    if not ref:
+        warn("未选「范式 docx」,复刻无格式来源")
+        return None
+    if not Path(ref).exists():
+        warn(f"范式文件不存在: {ref}")
+        return None
+    if _ext(f) not in ("docx", "md"):
+        return None
+    out = _nonclobber(Path(f).with_name(f"{Path(f).stem}_成品.docx"))
+    cmd = _py("docx_format_clone.py", "apply", f, "--ref", ref, "-o", str(out))
+    sig = str(o.get("signature", "0")).lower() in ("1", "true", "yes", "on")
+    if not sig:
+        cmd.append("--no-signature")
+    return cmd, f"套「{Path(ref).stem}」版式 → {out.name}（{'含' if sig else '不含'}署名）"
+
+
 def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
     e = _ext(f)
     M = {
@@ -278,6 +322,10 @@ def do_lowercase(files):
 
 def do_stripchrome(files):
     return _per_file(files, route_stripchrome, "清页眉页脚")
+
+
+def do_formatclone(files, opts: dict | None = None):
+    return _per_file(files, route_formatclone, "版式复刻", opts or {})
 
 
 def _word_textfix(out: Path) -> int:
@@ -395,6 +443,11 @@ def main() -> int:
     for v in ("clean", "typeset", "merge", "split", "view", "scan",
               "quotes", "fontunify", "lowercase", "stripchrome"):
         p = sub.add_parser(v); p.add_argument("files", nargs="+")
+    pf = sub.add_parser("formatclone")
+    pf.add_argument("--ref", required=True, help="范式 docx(格式来源)")
+    pf.add_argument("--signature", action="store_true",
+                    help="保留落款署名(默认不含 —— 复刻件多数要另行署名)")
+    pf.add_argument("files", nargs="+")
     pc = sub.add_parser("convert")
     pc.add_argument("--to", required=True, dest="target")
     pc.add_argument("files", nargs="+")
@@ -423,6 +476,8 @@ def main() -> int:
         return do_lowercase(a.files)
     if a.verb == "stripchrome":
         return do_stripchrome(a.files)
+    if a.verb == "formatclone":
+        return do_formatclone(a.files, {"ref": a.ref or "", "signature": "1" if a.signature else "0"})
     return 1
 
 
