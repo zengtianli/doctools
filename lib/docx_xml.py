@@ -83,6 +83,31 @@ def in_inserted(el) -> bool:
     return any(a.tag == qn("w:ins") for a in el.iterancestors())
 
 
+_REVISION_ANCESTORS = (qn("w:ins"), qn("w:del"), qn("w:moveFrom"), qn("w:moveTo"))
+
+
+def in_revision(el) -> bool:
+    """el 位于任一审阅修订标记内（插入 / 删除 / 移入 / 移出）。"""
+    return any(a.tag in _REVISION_ANCESTORS for a in el.iterancestors())
+
+
+def in_table(el) -> bool:
+    """el 位于表格单元格内（含嵌套表）。"""
+    return any(a.tag == qn("w:tbl") for a in el.iterancestors())
+
+
+def scope_of(el) -> str:
+    """正文 part 内一个 run 归属哪个可勾选的域。
+
+    修订优先于表格：表格里的修订段勾「审阅修订」就该动，不该被「表格」勾选状态左右。
+    """
+    if in_revision(el):
+        return "revision"
+    if in_table(el):
+        return "table"
+    return "body"
+
+
 def text_elems(r) -> list:
     """run 的文本子元素（`w:t` / `w:delText`），文档顺序。"""
     return [c for c in r if c.tag in TEXT_TAGS]
@@ -184,13 +209,22 @@ def new_text_elem(r, s: str):
     return el
 
 
-def iter_text_roots(doc, *, include_headers: bool = True):
+PART_SCOPES = {"comments": "批注", "notes": "脚注/尾注", "headers": "页眉页脚"}
+BODY_SCOPES = {"body": "正文", "table": "表格", "revision": "审阅修订"}
+ALL_SCOPES = {**BODY_SCOPES, **PART_SCOPES}
+
+
+def iter_text_roots(doc, *, include_headers: bool = True, parts: set[str] | None = None):
     """遍历一个 python-docx Document 里**所有承载正文文本的 XML part**。
 
     yield `(label, root, flush)`：
       - `label` 中文域名（正文 / 批注 / 脚注 / 尾注 / 页眉 / 页脚），用于分域统计
       - `root`  该 part 的 lxml 根（正文给 `w:body`）
       - `flush` 收尾回写回调；`None` 表示该 part 由 python-docx 自己序列化
+
+    `parts` 给 `PART_SCOPES` 的 key 子集（comments / notes / headers）时只产出被选中的
+    part；`None` = 全给。正文 part 永远产出（正文内部的 body/table/revision 三个域是
+    **run 级**过滤，由调用方按 `scope_of()` 决定，不在这里剪）。
 
     脚注 / 尾注在 python-docx 里是**没有 `.element` 的通用 Part**（只有 `_blob` 字节），
     所以必须解析 blob 再回写；批注是 `CommentsPart`（有 `.element`）直接改。
@@ -201,8 +235,17 @@ def iter_text_roots(doc, *, include_headers: bool = True):
 
     yield ("正文", doc.element.body, None)
 
-    wanted = {RT.COMMENTS: "批注", RT.FOOTNOTES: "脚注", RT.ENDNOTES: "尾注"}
-    if include_headers:
+    want = set(PART_SCOPES) if parts is None else set(parts)
+    if not include_headers:
+        want.discard("headers")
+
+    wanted = {}
+    if "comments" in want:
+        wanted[RT.COMMENTS] = "批注"
+    if "notes" in want:
+        wanted[RT.FOOTNOTES] = "脚注"
+        wanted[RT.ENDNOTES] = "尾注"
+    if "headers" in want:
         wanted[RT.HEADER] = "页眉"
         wanted[RT.FOOTER] = "页脚"
 

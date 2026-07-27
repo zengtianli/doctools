@@ -12,7 +12,8 @@ DocTools GUI 后端适配器 —— 给 doc_dispatch.py 套一层 JSON 信封,�
 
 子命令:
   gui-ops                        列出可用操作(给 UI 渲菜单)
-  gui-run --op <verb> [--to T] --files <paths...>   跑一个操作,返回逐文件结果
+  gui-run --op <verb> [--to T] [--opt K=V]... --files <paths...>   跑一个操作,返回逐文件结果
+                                 --opt 的可用键见 gui-ops 里该 op 的 options 声明
 
 原有终端用法(doc_dispatch.py <verb>)完全不受影响 —— 本文件只 import,不改它。
 """
@@ -75,6 +76,32 @@ OPS = [
         "icon": "wand.and.stars",
         "exts": ["docx", "md", "pptx", "xlsx", "xlsm"],
         "kind": "files",
+        # 勾选项 SSOT。Swift 侧只按 type 泛化渲染(bool→Toggle),不认识任何 option id ——
+        # 以后加旋钮只改这里,不重编 .app。applies_to 用于「该格式不吃这项」时灰显。
+        "option_groups": [
+            {"id": "rule", "title": "修哪些内容"},
+            {"id": "scope", "title": "改哪些范围", "applies_to": ["docx"]},
+            {"id": "danger", "title": "破坏性", "danger": True, "applies_to": ["docx"]},
+        ],
+        "options": [
+            {"id": "rule.quotes", "group": "rule", "type": "bool", "default": True,
+             "title": "引号统一为中文引号"},
+            {"id": "rule.punct", "group": "rule", "type": "bool", "default": True,
+             "title": "英文标点转中文", "note": "含 , : ; ! ? ( )"},
+            {"id": "rule.units", "group": "rule", "type": "bool", "default": True,
+             "title": "中文单位转标准符号", "note": "平方米→m²(仅数字后)"},
+            {"id": "rule.quote_font", "group": "rule", "type": "bool", "default": True,
+             "title": "引号设为宋体", "note": "会把引号拆成独立 run"},
+            {"id": "scope.body", "group": "scope", "type": "bool", "default": True, "title": "正文"},
+            {"id": "scope.table", "group": "scope", "type": "bool", "default": True, "title": "表格"},
+            {"id": "scope.revision", "group": "scope", "type": "bool", "default": True,
+             "title": "审阅修订", "note": "w:ins/w:del 插入与删除态"},
+            {"id": "scope.comments", "group": "scope", "type": "bool", "default": True, "title": "批注"},
+            {"id": "scope.notes", "group": "scope", "type": "bool", "default": True, "title": "脚注/尾注"},
+            {"id": "scope.headers", "group": "scope", "type": "bool", "default": True, "title": "页眉页脚"},
+            {"id": "strip_headers", "group": "danger", "type": "bool", "default": False,
+             "title": "删除页眉页脚", "note": "不可撤销:清掉 header/footer 引用"},
+        ],
     },
     {
         "id": "convert",
@@ -216,7 +243,8 @@ def _new_outputs(before: dict[str, tuple], after: dict[str, tuple], inputs: set[
 
 # ───────────────────────────────────────────── gui-run
 
-def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[int, str]:
+def _run_verb_capture(verb: str, files: list[str], target: str | None,
+                      opts: dict | None = None) -> tuple[int, str]:
     """调 doc_dispatch 的 do_* 实现,把所有日志(do_* 的 print + 子进程输出)关进缓冲,
     绝不让任何文本漏进真 stdout(那是 JSON 信封专用)。返回 (rc, captured_text)。
     两路收口:① redirect_stdout 接 do_* 自己的 print;② _CAP(monkeypatch 的 _run)接子进程。"""
@@ -224,7 +252,7 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         if verb == "clean":
-            rc = dd.do_clean(files)
+            rc = dd.do_clean(files, opts)
         elif verb == "split":
             rc = dd.do_split(files)
         elif verb == "merge":
@@ -247,10 +275,24 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None) -> tuple[
     return rc, log
 
 
-def gui_run(op_id: str, files: list[str], target: str | None) -> dict:
+def gui_run(op_id: str, files: list[str], target: str | None, opts: dict | None = None) -> dict:
     op = _OPS_BY_ID.get(op_id)
     if not op:
         return {"ok": False, "error": f"未知操作: {op_id}(支持 {', '.join(_OPS_BY_ID)})"}
+
+    # 选项校验:未知 key / 非布尔值一律走信封 ok:false,**不许 argparse exit 2**
+    # (本文件契约:所有 gui-* 一律 exit 0,成败只由信封承载)
+    declared = {o["id"] for o in op.get("options", [])}
+    if opts:
+        bad = sorted(set(opts) - declared)
+        if bad:
+            return {"ok": False,
+                    "error": f"未知选项: {', '.join(bad)}"
+                             + (f"(该操作可用 {', '.join(sorted(declared))})" if declared
+                                else "(该操作不接受选项)")}
+        for k, v in opts.items():
+            if str(v).strip().lower() not in ("0", "1", "true", "false", "yes", "no", "on", "off"):
+                return {"ok": False, "error": f"选项 {k} 的值 {v!r} 不是布尔(用 1/0)"}
 
     if op["kind"] == "dir":
         # scan:吃一个目录
@@ -305,7 +347,7 @@ def gui_run(op_id: str, files: list[str], target: str | None) -> dict:
     for f in existing:
         roots = _scan_roots([f])
         before = _snapshot(roots)
-        rc, log = _run_verb_capture(op["verb"], [f], target)
+        rc, log = _run_verb_capture(op["verb"], [f], target, opts)
         full_log.append(log.strip())
         outs = _new_outputs(before, _snapshot(roots), {f})
         ok = rc == 0 and bool(outs)
@@ -346,6 +388,8 @@ def main() -> int:
     pr = sub.add_parser("gui-run")
     pr.add_argument("--op", required=True)
     pr.add_argument("--to", dest="target", default=None)
+    pr.add_argument("--opt", action="append", default=[], metavar="K=V",
+                    help="per-op 选项,可重复(见 gui-ops 的 options 声明)")
     pr.add_argument("--files", nargs="+", required=True)
 
     a = ap.parse_args()
@@ -354,7 +398,15 @@ def main() -> int:
         if a.cmd == "gui-ops":
             payload = {"ok": True, "ops": OPS}
         elif a.cmd == "gui-run":
-            payload = gui_run(a.op, a.files, a.target)
+            _opts = {}
+            _bad_form = [x for x in a.opt if "=" not in x]
+            if _bad_form:
+                payload = {"ok": False, "error": f"--opt 需要 K=V 形式: {', '.join(_bad_form)}"}
+            else:
+                for kv in a.opt:
+                    k, v = kv.split("=", 1)
+                    _opts[k.strip()] = v.strip()
+                payload = gui_run(a.op, a.files, a.target, _opts)
         else:
             payload = {"ok": False, "error": f"未知子命令: {a.cmd}"}
     except Exception as e:  # noqa: BLE001 — 任何异常都转人话信封,绝不让 Swift 见 traceback

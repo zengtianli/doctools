@@ -44,6 +44,7 @@
 
 import copy
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from docx import Document
@@ -53,6 +54,7 @@ from docx.oxml.ns import qn
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from docx_xml import (
+    ALL_SCOPES,
     group_text,
     has_other_content,
     in_deleted,
@@ -61,6 +63,7 @@ from docx_xml import (
     iter_text_roots,
     para_own_runs,
     run_text,
+    scope_of,
     set_group_text,
     set_run_text,
     text_groups,
@@ -74,7 +77,74 @@ from text_fixes import fix_punctuation, fix_quotes, fix_units
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
 
-# ===== 配置选项 =====
+# ===== 配置对象 =====
+# 旧实现把 5 个旋钮做成模块级可变全局,且只在 `if __name__ == "__main__"` 里赋值 ——
+# 被 import 时永远拿默认值,同进程连跑两组配置会串味(第二次沿用上次残留)。
+# 现在一律走冻结的 FormatConfig 显式穿参;模块级全局只作为「CLI 默认值」保留。
+
+
+@dataclass(frozen=True)
+class FormatConfig:
+    """一次规范化的完整意图 = 规则轴 × 域轴 × 写回方式。"""
+
+    # 规则轴
+    quotes: bool = True            # 引号统一为中文弯引号
+    punct: bool = True             # 英文标点 → 中文标点
+    units: bool = True             # 中文单位 → 标准符号
+    quote_font: bool = True        # 引号拆独立 run 并设宋体(排版动作,可单独关)
+    # 域轴(空 = 全选);取值见 docx_xml.ALL_SCOPES
+    scopes: frozenset = frozenset(ALL_SCOPES)
+    # 破坏性 / 写回
+    strip_headers: bool = False    # 删除页眉页脚引用(默认关,属排版动作)
+    in_place: bool = False         # 原地写回 + .bak 备份(默认另存 _fixed)
+
+    def wants(self, scope: str) -> bool:
+        return scope in self.scopes
+
+    @classmethod
+    def from_opts(cls, opts: dict | None):
+        """从 {"rule.quotes": "0", "scope.comments": "1", ...} 造配置(GUI 通路)。
+
+        未知 key / 非法值抛 ValueError,由调用方翻成信封里的 ok:false。
+        """
+        cfg = cls()
+        if not opts:
+            return cfg
+        rules, scopes = {}, set(cfg.scopes)
+        for k, v in opts.items():
+            on = _truthy(k, v)
+            if k.startswith("rule."):
+                name = k[5:]
+                if name not in RULE_KEYS:
+                    raise ValueError(f"未知规则:{name}(可用 {'/'.join(RULE_KEYS)})")
+                rules[name] = on
+            elif k.startswith("scope."):
+                name = k[6:]
+                if name not in ALL_SCOPES:
+                    raise ValueError(f"未知范围:{name}(可用 {'/'.join(ALL_SCOPES)})")
+                scopes.add(name) if on else scopes.discard(name)
+            elif k in ("strip_headers", "in_place"):
+                rules[k] = on
+            else:
+                raise ValueError(f"未知选项:{k}")
+        return replace(cfg, scopes=frozenset(scopes), **rules)
+
+
+RULE_KEYS = ("quotes", "punct", "units", "quote_font")
+
+
+def _truthy(k: str, v) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("1", "true", "yes", "on", "是"):
+        return True
+    if s in ("0", "false", "no", "off", "否"):
+        return False
+    raise ValueError(f"选项 {k} 的值 {v!r} 不是布尔(用 1/0)")
+
+
+# ===== CLI 默认值 =====
 # 删页眉页脚 = 排版动作,不属于「文本规范化」。2026-07-26 默认翻转为**保留**:
 # 旧默认 True 是 initial commit 带进来的,从没人显式传过,却让每次「规范化」都把
 # docx 的 headerReference/footerReference 全删光(实测 2+2 → 0),且 typeset 套完
@@ -87,7 +157,26 @@ STRIP_HEADERS = False
 DO_QUOTES = True
 DO_PUNCT = True
 DO_UNITS = True
+DO_QUOTE_FONT = True   # 引号拆独立 run 并设宋体（排版动作；--no-quote-font 可单关）
+SCOPES = set(ALL_SCOPES)   # 默认全域：正文/表格/审阅修订/批注/脚注尾注/页眉页脚
 IN_PLACE = False   # True 时原地写回源文件 + 备份 .bak-时间戳（Work §1.5 协议），不另存 _fixed
+
+
+def _cli_config() -> "FormatConfig":
+    """把模块级 CLI 默认值收成一个 FormatConfig（旧调用方零改动仍可用）。"""
+    return FormatConfig(
+        quotes=DO_QUOTES, punct=DO_PUNCT, units=DO_UNITS, quote_font=DO_QUOTE_FONT,
+        scopes=frozenset(SCOPES), strip_headers=STRIP_HEADERS, in_place=IN_PLACE)
+
+
+def _fmt_rules(cfg) -> str:
+    on = [n for n, v in (("引号", cfg.quotes), ("标点", cfg.punct),
+                         ("单位", cfg.units), ("引号宋体", cfg.quote_font)) if v]
+    return "+".join(on) or "(无)"
+
+
+def _fmt_scopes(cfg) -> str:
+    return "+".join(ALL_SCOPES[k] for k in ALL_SCOPES if cfg.wants(k)) or "(无)"
 
 
 QUOTE_CHARS = {"\u201c", "\u201d"}
@@ -194,23 +283,29 @@ def _tally(stats, scope, r, n):
     stats["scopes"][key] = stats["scopes"].get(key, 0) + n
 
 
-def process_paragraph_element(p, stats, scope="正文"):
+def process_paragraph_element(p, stats, scope="正文", cfg=None):
     """
     处理一个 w:p 元素内的文本，逐 run 处理以保持每个 run 的字体格式。
-    引号拆分为独立 run 并设置宋体。
 
     走 para_own_runs 而非 python-docx 的 `Paragraph.runs`：后者只认 `./w:r`，
     审阅修订（w:ins/w:del）、超链接、smartTag 里的 run 会被静默跳过。
+
+    ⚠ 域过滤与引号规则**不正交**：引号左右方向靠段落级奇偶计数器，被跳过的 run
+    如果不推进计数器，它后面的引号会整体反相（实测 `乙"结束` 从 `乙“` 翻成 `乙”`）。
+    所以未选中的 run 仍然跑一遍 fix_quotes 推进 counter，只是**不写回**。
     """
-    # 先收集需要处理的 runs（遍历中会插入新 run，所以先快照）
-    original_runs = para_own_runs(p)
+    cfg = cfg or FormatConfig()
+    original_runs = para_own_runs(p)      # 先快照:遍历中会插入新 run
     if not original_runs:
         return
 
-    # 引号计数器跨run维护，保证配对正确
-    quote_counter = 0
+    quote_counter = 0                     # 引号计数器跨 run 维护,保证配对正确
 
     for r in original_runs:
+        # 正文 part 内按 run 归属的子域(正文/表格/审阅修订)过滤;其余 part 整体由
+        # iter_text_roots 的 parts 决定,进到这里就是选中的
+        selected = cfg.wants(scope_of(r)) if scope == "正文" else True
+
         # 逐「文本组」处理：w:tab / w:br 隔开的文本不合并，否则会被挤到末尾（对齐错位）
         groups = text_groups(r)
         for g in groups:
@@ -218,17 +313,17 @@ def process_paragraph_element(p, stats, scope="正文"):
             if not original_text:
                 continue
 
-            # 按 toggle 选择性应用转换（默认全开）
             fixed_text = original_text
             quote_count = punct_count = unit_count = 0
-            if DO_QUOTES:
+            if cfg.quotes:
                 fixed_text, quote_count, quote_counter = fix_quotes(fixed_text, quote_counter)
-            if DO_PUNCT:
+            if not selected:
+                continue                  # counter 已推进,但不改这段文字、不记账
+            if cfg.punct:
                 fixed_text, punct_count = fix_punctuation(fixed_text)
-            if DO_UNITS:
+            if cfg.units:
                 fixed_text, unit_count = fix_units(fixed_text)
 
-            # 更新统计
             stats["quotes"] += quote_count
             stats["punctuation"] += punct_count
             stats["units"] += unit_count
@@ -237,28 +332,27 @@ def process_paragraph_element(p, stats, scope="正文"):
             if fixed_text != original_text:
                 set_group_text(g, fixed_text)
 
-        # 拆分引号为独立 run 并设置宋体（仅在修引号时）。
+        # 引号拆独立 run + 宋体（排版动作，可单独关）。
         # run 里夹着 tab/br/图/脚注引用时不拆 —— 复制这些一次性载荷会出复件
-        if DO_QUOTES and len(groups) == 1 and not has_other_content(r):
+        if selected and cfg.quotes and cfg.quote_font and len(groups) == 1 and not has_other_content(r):
             segments = _split_text_at_quotes(run_text(r))
             if segments:
                 _apply_quote_split(r, segments)
 
 
-def process_root(root, stats, scope="正文"):
+def process_root(root, stats, scope="正文", cfg=None):
     """处理一个 XML 根（正文 body / 批注 / 脚注 / 页眉…）下的全部段落。
 
     `iter_paragraphs` 递归到嵌套表格、文本框、修订块里的 w:p；`para_own_runs`
     在嵌套 w:p 处剪枝，所以每个 run 恰好被处理一次。
     """
     for p in list(iter_paragraphs(root)):
-        process_paragraph_element(p, stats, scope)
+        process_paragraph_element(p, stats, scope, cfg)
 
 
-def process_docx(input_file):
-    """
-    处理DOCX文件
-    """
+def process_docx(input_file, cfg=None):
+    """处理 DOCX 文件。cfg=None 时用模块级 CLI 默认值(向后兼容既有调用方)。"""
+    cfg = cfg or _cli_config()
     input_path = Path(input_file)
 
     if not input_path.exists():
@@ -270,8 +364,8 @@ def process_docx(input_file):
         return False
 
     # 生成输出文件名（--in-place 时原地写回 + 备份；否则另存 _fixed）
-    write_gate = WriteGate(input_path) if IN_PLACE else None  # 读入前 capture 基线
-    if IN_PLACE:
+    write_gate = WriteGate(input_path) if cfg.in_place else None  # 读入前 capture 基线
+    if cfg.in_place:
         import shutil as _shutil
         from datetime import datetime as _dt
         bak = input_path.with_name(
@@ -292,17 +386,19 @@ def process_docx(input_file):
 
         # 处理所有承载文本的 part：正文（含表格/嵌套表/文本框/超链接/审阅修订）
         # + 批注 comments.xml + 脚注 + 尾注 + 页眉页脚（默认保留并规范化）
-        print("🔄 正在处理正文 / 表格 / 修订 / 批注 / 脚注...")
+        print(f"🔄 规则: {_fmt_rules(cfg)} | 范围: {_fmt_scopes(cfg)}")
         flushes = []
-        for label, root, flush in iter_text_roots(doc, include_headers=not STRIP_HEADERS):
-            process_root(root, stats, label)
+        parts = {k for k in ("comments", "notes", "headers") if cfg.wants(k)}
+        for label, root, flush in iter_text_roots(
+                doc, include_headers=not cfg.strip_headers, parts=parts):
+            process_root(root, stats, label, cfg)
             if flush is not None:
                 flushes.append(flush)
         for flush in flushes:          # 通用 Part（脚注/尾注）改完必须回写 blob
             flush()
 
         # 显式要求时才删页眉页脚（默认保留）
-        if STRIP_HEADERS:
+        if cfg.strip_headers:
             print("🗑️  正在删除页眉页脚（--strip-headers）...")
             from docx.oxml.ns import qn
 
@@ -351,18 +447,43 @@ def process_docx(input_file):
 if __name__ == "__main__":
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = sys.argv[1:]
-    _flags = {"--quotes", "--punct", "--units", "--in-place", "--keep-headers", "--strip-headers"}
+    _flags = {"--quotes", "--punct", "--units", "--no-quote-font",
+              "--in-place", "--keep-headers", "--strip-headers"}
     _sel = {a for a in _argv if a in _flags}
+
+    # --scope a,b,c（域白名单；不给 = 全域）
+    _scope_arg = None
+    _rest = []
+    _it = iter(_argv)
+    for a in _it:
+        if a == "--scope":
+            _scope_arg = next(_it, "")
+        elif a.startswith("--scope="):
+            _scope_arg = a.split("=", 1)[1]
+        else:
+            _rest.append(a)
+    _argv = _rest
+
     _unknown = [a for a in _argv if a.startswith("--") and a not in _flags]
     if _unknown:   # 未知 flag 不得被当成文件名静默吞掉→曾致 --help 直接跑全量改写
         print(f"❌ 未知参数：{' '.join(_unknown)}")
-        print(f"   可用：{' '.join(sorted(_flags))}")
+        print(f"   可用：{' '.join(sorted(_flags))} --scope <{'|'.join(ALL_SCOPES)}>")
         sys.exit(2)
     _argv = [a for a in _argv if a not in _flags]
+
+    if _scope_arg is not None:
+        SCOPES = {s.strip() for s in _scope_arg.split(",") if s.strip()}
+        _bad = SCOPES - set(ALL_SCOPES)
+        if _bad:
+            print(f"❌ 未知范围：{' '.join(sorted(_bad))}")
+            print(f"   可用：{' '.join(f'{k}({v})' for k, v in ALL_SCOPES.items())}")
+            sys.exit(2)
+
     if _sel & {"--quotes", "--punct", "--units"}:
         DO_QUOTES = "--quotes" in _sel
         DO_PUNCT = "--punct" in _sel
         DO_UNITS = "--units" in _sel
+    DO_QUOTE_FONT = "--no-quote-font" not in _sel
     IN_PLACE = "--in-place" in _sel
     STRIP_HEADERS = "--strip-headers" in _sel   # --keep-headers 已是默认行为,保留为兼容 no-op
 

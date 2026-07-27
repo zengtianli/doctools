@@ -146,3 +146,69 @@ def test_units_still_convert_after_number(text: str, expect: str):
 def test_quote_count_is_real_changes():
     assert fix_quotes("已是中文引号“甲”")[1] == 0
     assert fix_quotes('英文"甲"')[1] == 2
+
+
+# ── 5. 域勾选 × 引号计数器（唯一会静默产出错误文档的路径）─────────
+
+def _para_with_ins():
+    """同一段落三个 run：正文 → 修订插入 → 正文，引号跨 run 配对。"""
+    d = Document()
+    p = d.add_paragraph()
+    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:t>他说"甲</w:t></w:r>'))
+    ins = parse_xml(
+        f'<w:ins {nsdecls("w")} w:id="1" w:author="t" w:date="2026-01-01T00:00:00Z">'
+        f'<w:r><w:t>插入"</w:t></w:r></w:ins>')
+    p._p.append(ins)
+    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:t>乙"结束</w:t></w:r>'))
+    return d, p
+
+
+def _run_texts(p):
+    return [r.findall(qn("w:t"))[0].text for r in p._p.iter(qn("w:r"))
+            if r.findall(qn("w:t"))]
+
+
+def test_skipped_scope_does_not_flip_quote_direction():
+    """勾掉「审阅修订」后，正文里后续引号的左右方向必须与全勾时一致。
+
+    被跳过的 run 仍要推进段落级奇偶计数器 —— 否则第 3 个 run 的 “ 会翻成 ”。
+    """
+    d_all, p_all = _para_with_ins()
+    dtf.process_paragraph_element(p_all._p, _stats(), cfg=dtf.FormatConfig(quote_font=False))
+    full = _run_texts(p_all)
+
+    d_body, p_body = _para_with_ins()
+    cfg = dtf.FormatConfig(quote_font=False,
+                           scopes=frozenset({"body", "table", "comments", "notes", "headers"}))
+    dtf.process_paragraph_element(p_body._p, _stats(), cfg=cfg)
+    partial = _run_texts(p_body)
+
+    assert partial[1] == '插入"', "勾掉的域被改了"
+    assert partial[0] == full[0] and partial[2] == full[2], (
+        f"正文引号方向被域过滤带偏: 全勾={full} 只正文={partial}")
+    # 第 3 个引号是本段第 3 个 → 奇数位 → 左引号；关键是「跳过 revision 不改变它」
+    assert partial[2].startswith("乙“"), f"第 3 个 run 引号方向错: {partial}"
+
+
+def test_scope_filter_actually_skips():
+    d, p = _para_with_ins()
+    cfg = dtf.FormatConfig(scopes=frozenset({"revision"}), quote_font=False)
+    dtf.process_paragraph_element(p._p, _stats(), cfg=cfg)
+    texts = _run_texts(p)
+    assert texts[0] == '他说"甲' and texts[2] == '乙"结束', "只勾修订时正文不该被改"
+    assert texts[1] == '插入”', f"修订段该被改: {texts}"
+
+
+def test_quote_font_can_be_turned_off():
+    """关掉「引号设为宋体」后不再拆 run、不再写字体。"""
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run('标题“重点”部分')
+    dtf.process_paragraph_element(p._p, _stats(), cfg=dtf.FormatConfig(quote_font=False))
+    assert len(p._p.findall(qn("w:r"))) == 1, "关掉后不该拆 run"
+
+    d2 = Document()
+    p2 = d2.add_paragraph()
+    p2.add_run('标题“重点”部分')
+    dtf.process_paragraph_element(p2._p, _stats(), cfg=dtf.FormatConfig(quote_font=True))
+    assert len(p2._p.findall(qn("w:r"))) > 1, "开着时应拆 run 设宋体"

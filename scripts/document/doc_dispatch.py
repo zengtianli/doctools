@@ -94,10 +94,45 @@ def _doc_to_docx(f: str) -> str | None:
 
 # ───────────────────────────────────────────── 路由表
 
-def route_clean(f: str) -> tuple[list[str], str] | None:
+def _clean_flags(opts: dict | None) -> list[str]:
+    """把 GUI 的 {"rule.quotes":"1","scope.comments":"0",...} 翻成引擎 argv。
+
+    只翻 docx 引擎认识的那几个;规则全选时不传 flag(引擎默认全开),
+    避免「只勾了引号」与「什么都没勾」在 argv 上长得一样。
+    """
+    if not opts:
+        return []
+
+    ALL_SCOPES = ("body", "table", "revision", "comments", "notes", "headers")
+    RULES = ("quotes", "punct", "units")
+
+    def _on(key: str, default: bool) -> bool:
+        """只给了部分 key 时,没给的保持默认 —— GUI 传全量,CLI/脚本可只传想改的那几个。"""
+        if key not in opts:
+            return default
+        return str(opts[key]).strip().lower() in ("1", "true", "yes", "on")
+
+    args: list[str] = []
+
+    rules_on = [r for r in RULES if _on(f"rule.{r}", True)]
+    if len(rules_on) < len(RULES):
+        # 引擎的语义是「给了任一 --quotes/--punct/--units 就只做指定项」
+        args += [f"--{r}" for r in rules_on] or ["--quotes"]   # 一项不勾 → 退化成最保守的只修引号
+    if not _on("rule.quote_font", True):
+        args.append("--no-quote-font")
+    if _on("strip_headers", False):
+        args.append("--strip-headers")
+
+    scopes_on = [s for s in ALL_SCOPES if _on(f"scope.{s}", True)]
+    if len(scopes_on) < len(ALL_SCOPES):
+        args += ["--scope", ",".join(scopes_on) or "body"]
+    return args
+
+
+def route_clean(f: str, opts: dict | None = None) -> tuple[list[str], str] | None:
     e = _ext(f)
     if e == "docx":
-        return _py("docx_text_formatter.py", f), "docx → 文本修复(引号/标点/单位)"
+        return _py("docx_text_formatter.py", f, *_clean_flags(opts)), "docx → 文本修复(引号/标点/单位)"
     if e == "md":
         return _py("md_tools.py", "format", f), "md → 格式标准化"
     if e in ("pptx",):
@@ -160,13 +195,13 @@ def route_split(f: str) -> tuple[list[str], str] | None:
 
 # ───────────────────────────────────────────── 动词实现
 
-def _per_file(files: list[str], router, verb: str) -> int:
+def _per_file(files: list[str], router, verb: str, opts: dict | None = None) -> int:
     rc = 0
     for f in files:
         if not Path(f).exists():
             warn(f"文件不存在,跳过: {f}")
             continue
-        hit = router(f)
+        hit = router(f, opts) if opts is not None else router(f)
         if not hit:
             warn(f"{Path(f).name}: 没有「{verb}」对应的 {_ext(f) or '?'} 引擎,跳过")
             continue
@@ -176,7 +211,8 @@ def _per_file(files: list[str], router, verb: str) -> int:
     return rc
 
 
-def do_clean(files):  return _per_file(files, route_clean, "规范化")
+def do_clean(files, opts: dict | None = None):
+    return _per_file(files, route_clean, "规范化", opts or {})
 def do_split(files):  return _per_file(files, route_split, "拆分")
 
 
