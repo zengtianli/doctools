@@ -75,6 +75,19 @@ gui-run  --op clean --opt rule.units=0 --opt scope.comments=0 --files a.docx
 推进 counter 但不写回，否则它后面的引号整体反相。回归门在
 `tests/test_docx_text_formatter_safety.py::test_skipped_scope_does_not_flip_quote_direction`。
 
+### 破坏性动作必须自己占一个动词（2026-07-26 立）
+
+**不可逆操作不许搭在非破坏性动词的默认行为里**，也不许只靠 flag 才关得掉。2026-07-26 实测的四例：
+
+| 动词叫 | 默认还偷偷干了 | 修法 |
+|---|---|---|
+| `clean` 规范化 | 删光全部 `headerReference`/`footerReference`（连 typeset 套的院模板 14/13 个也没了） | 拆出独立动词 `stripchrome`，标 `danger` |
+| `--help` | 弹 Finder + 往选中文件写盘（曾写进 `~/Work` 在跑的项目） | 未知 flag 一律 `sys.exit(2)`，禁 fallthrough |
+| 「统一单位」 | 裸 `str.replace`：小时候→h候 · 毫米波→mm波 · Item2→Item² | 加词边界（中文单位须紧跟数字，ASCII 上标须两侧非字母数字） |
+| GUI 未勾的选项 | 当作**显式关闭** | `_clean_flags` 改为「没传 = 保持默认」，只有显式 `=0` 才关 |
+
+判据：**动词名字承诺什么，默认就只做什么**；超出的部分要么另立动词，要么 opt-in flag。
+
 ### Raycast 脚本
 - `raycast/commands/` 下是 Shell wrapper（含 @raycast 元数据）
 - Wrapper 通过 `run_python.sh` 调用实际脚本：`run_python "document/docx_text_formatter.py"`
