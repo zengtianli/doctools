@@ -231,6 +231,16 @@ def process_file(input_file):
 
 
 if __name__ == "__main__":
+    # 未知 flag 不得被 get_input_files 当成"没给文件"→静默 fallback 到 Finder 选中项，
+    # 那会在用户当前打开的真实交付件上直接跑改写（2026-07-26 实测：跑一次 --help
+    # 就在 ~/Work 活项目里生成了 _lower.docx）。同 docx_text_formatter.py:356 的修法。
+    _unknown = [a for a in sys.argv[1:] if a.startswith("-")]
+    if _unknown:
+        print(f"❌ 未知参数：{' '.join(_unknown)}")
+        print("   用法：python3 xlsx_lowercase.py <文件.docx|.xlsx|.xlsm>")
+        print("   （不带参数时取 Finder 选中项）")
+        sys.exit(2)
+
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
     files = get_input_files(sys.argv[1:], expected_ext=["docx", "xlsx", "xlsm"], allow_multiple=False)
 

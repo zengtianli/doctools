@@ -32,7 +32,7 @@
 
 覆盖范围（2026-07-26 扩齐）：
    正文 + 表格（含嵌套表）+ 文本框 + 超链接 + **审阅修订（w:ins 插入态 / w:del 删除态）**
-   + **批注 comments.xml** + **脚注 / 尾注** + 页眉页脚（SKIP_FOOTER=False 时）。
+   + **批注 comments.xml** + **脚注 / 尾注** + 页眉页脚（默认纳入；--strip-headers 时改为删除）。
    原先走 python-docx 的 `Document.paragraphs` / `Paragraph.runs`，那两个 API 只认
    直接子节点，带修订的稿子里 w:ins/w:del 段一个字都改不到（实测某审阅稿 24 个 run /
    3101 字全漏），批注与脚注更是整个 part 没碰。现统一走 docx_xml 的元素级遍历。
@@ -53,13 +53,17 @@ from docx.oxml.ns import qn
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from docx_xml import (
+    group_text,
+    has_other_content,
     in_deleted,
     in_inserted,
     iter_paragraphs,
     iter_text_roots,
     para_own_runs,
     run_text,
+    set_group_text,
     set_run_text,
+    text_groups,
     text_tag_for,
 )
 from file_ops import clear_quarantine
@@ -71,7 +75,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
 
 # ===== 配置选项 =====
-SKIP_FOOTER = True
+# 删页眉页脚 = 排版动作,不属于「文本规范化」。2026-07-26 默认翻转为**保留**:
+# 旧默认 True 是 initial commit 带进来的,从没人显式传过,却让每次「规范化」都把
+# docx 的 headerReference/footerReference 全删光(实测 2+2 → 0),且 typeset 套完
+# 院模板后第 2 步复用本引擎,把模板自带的 14/13 个页眉页脚引用一并删掉。
+# 要删请显式 --strip-headers。
+STRIP_HEADERS = False
 
 # 选择性修复开关（默认全开=向后兼容；命令行 --quotes/--punct/--units 任一指定则只做指定项）
 # 用途：中文期刊投稿(GB/T 7714 参考文献区标点须半角)只想修引号→ --quotes，不碰标点/单位
@@ -202,31 +211,35 @@ def process_paragraph_element(p, stats, scope="正文"):
     quote_counter = 0
 
     for r in original_runs:
-        original_text = run_text(r)
-        if not original_text:
-            continue
+        # 逐「文本组」处理：w:tab / w:br 隔开的文本不合并，否则会被挤到末尾（对齐错位）
+        groups = text_groups(r)
+        for g in groups:
+            original_text = group_text(g)
+            if not original_text:
+                continue
 
-        # 按 toggle 选择性应用转换（默认全开）
-        fixed_text = original_text
-        quote_count = punct_count = unit_count = 0
-        if DO_QUOTES:
-            fixed_text, quote_count, quote_counter = fix_quotes(fixed_text, quote_counter)
-        if DO_PUNCT:
-            fixed_text, punct_count = fix_punctuation(fixed_text)
-        if DO_UNITS:
-            fixed_text, unit_count = fix_units(fixed_text)
+            # 按 toggle 选择性应用转换（默认全开）
+            fixed_text = original_text
+            quote_count = punct_count = unit_count = 0
+            if DO_QUOTES:
+                fixed_text, quote_count, quote_counter = fix_quotes(fixed_text, quote_counter)
+            if DO_PUNCT:
+                fixed_text, punct_count = fix_punctuation(fixed_text)
+            if DO_UNITS:
+                fixed_text, unit_count = fix_units(fixed_text)
 
-        # 更新统计
-        stats["quotes"] += quote_count
-        stats["punctuation"] += punct_count
-        stats["units"] += unit_count
-        _tally(stats, scope, r, quote_count + punct_count + unit_count)
+            # 更新统计
+            stats["quotes"] += quote_count
+            stats["punctuation"] += punct_count
+            stats["units"] += unit_count
+            _tally(stats, scope, r, quote_count + punct_count + unit_count)
 
-        if fixed_text != original_text:
-            set_run_text(r, fixed_text)
+            if fixed_text != original_text:
+                set_group_text(g, fixed_text)
 
-        # 拆分引号为独立 run 并设置宋体（仅在修引号时）
-        if DO_QUOTES:
+        # 拆分引号为独立 run 并设置宋体（仅在修引号时）。
+        # run 里夹着 tab/br/图/脚注引用时不拆 —— 复制这些一次性载荷会出复件
+        if DO_QUOTES and len(groups) == 1 and not has_other_content(r):
             segments = _split_text_at_quotes(run_text(r))
             if segments:
                 _apply_quote_split(r, segments)
@@ -278,20 +291,19 @@ def process_docx(input_file):
         stats = {"quotes": 0, "punctuation": 0, "units": 0, "scopes": {}}
 
         # 处理所有承载文本的 part：正文（含表格/嵌套表/文本框/超链接/审阅修订）
-        # + 批注 comments.xml + 脚注 + 尾注（+ 页眉页脚，仅 SKIP_FOOTER=False 时）
+        # + 批注 comments.xml + 脚注 + 尾注 + 页眉页脚（默认保留并规范化）
         print("🔄 正在处理正文 / 表格 / 修订 / 批注 / 脚注...")
         flushes = []
-        for label, root, flush in iter_text_roots(doc, include_headers=not SKIP_FOOTER):
+        for label, root, flush in iter_text_roots(doc, include_headers=not STRIP_HEADERS):
             process_root(root, stats, label)
             if flush is not None:
                 flushes.append(flush)
         for flush in flushes:          # 通用 Part（脚注/尾注）改完必须回写 blob
             flush()
 
-        # 处理页眉页脚
-        if SKIP_FOOTER:
-            # 彻底删除页眉页脚
-            print("🗑️  正在删除页眉页脚...")
+        # 显式要求时才删页眉页脚（默认保留）
+        if STRIP_HEADERS:
+            print("🗑️  正在删除页眉页脚（--strip-headers）...")
             from docx.oxml.ns import qn
 
             for section in doc.sections:
@@ -322,9 +334,8 @@ def process_docx(input_file):
         print(f"   - 共替换了 {stats['quotes']} 个引号")
         print(f"   - 共替换了 {stats['punctuation']} 个标点符号")
         print(f"   - 共转换了 {stats['units']} 个单位")
-        extra = {k: v for k, v in stats["scopes"].items() if k != "正文"}
-        if extra:
-            print("   - 非正文域命中: " + "  ".join(f"{k} {v} 处" for k, v in extra.items()))
+        scopes = stats["scopes"] or {"正文": 0}
+        print("   - 分域命中: " + "  ".join(f"{k} {v} 处" for k, v in scopes.items()))
         print(f"   - 输出文件: {output_path.name}")
 
         return True
@@ -340,7 +351,7 @@ def process_docx(input_file):
 if __name__ == "__main__":
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = sys.argv[1:]
-    _flags = {"--quotes", "--punct", "--units", "--in-place", "--keep-headers"}
+    _flags = {"--quotes", "--punct", "--units", "--in-place", "--keep-headers", "--strip-headers"}
     _sel = {a for a in _argv if a in _flags}
     _unknown = [a for a in _argv if a.startswith("--") and a not in _flags]
     if _unknown:   # 未知 flag 不得被当成文件名静默吞掉→曾致 --help 直接跑全量改写
@@ -353,8 +364,7 @@ if __name__ == "__main__":
         DO_PUNCT = "--punct" in _sel
         DO_UNITS = "--units" in _sel
     IN_PLACE = "--in-place" in _sel
-    if "--keep-headers" in _sel:
-        SKIP_FOOTER = False    # 保留页眉页脚引用（默认 True=删，供 md2word 新建链用）
+    STRIP_HEADERS = "--strip-headers" in _sel   # --keep-headers 已是默认行为,保留为兼容 no-op
 
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
     files = get_input_files(_argv, expected_ext="docx")

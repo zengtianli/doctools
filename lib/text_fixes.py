@@ -75,6 +75,20 @@ UNITS_MAP = {
 
 _UNITS_SORTED = sorted(UNITS_MAP.items(), key=lambda x: len(x[0]), reverse=True)
 
+# 单位替换必须带边界,否则裸 str.replace 会改坏普通词汇(2026-07-26 实测:
+# 小时候→h候 · 毫米波→mm波 · 秒钟表→s表 · 分钟表→min表 · Item2→Item²)。
+#   中文单位:只在**紧跟数字**时替换(允许中间空格) —— "5 平方米"✓ / "小时候"✗
+#   ASCII 上标(m2/km3):前面不许是字母、后面不许是字母数字 —— "5m2"✓ / "Item2"✗
+_UNIT_RULES = [
+    (
+        re.compile(r"(?<=[0-9０-９])(\s*)" + re.escape(k))
+        if not k.isascii()
+        else re.compile(r"(?<![A-Za-z])(" + re.escape(k) + r")(?![A-Za-z0-9])"),
+        v,
+    )
+    for k, v in _UNITS_SORTED
+]
+
 # -- Quote pattern -------------------------------------------------------------
 
 QUOTE_PATTERN = '[""\u201c\u201d\u300c\u300d]'
@@ -90,12 +104,15 @@ def fix_quotes(text: str, counter: int = 0) -> tuple[str, int, int]:
     Returns:
         (result_text, replacement_count, updated_counter)
     """
-    count = len(re.findall(QUOTE_PATTERN, text))
+    count = 0
 
     def _replace(match):
-        nonlocal counter
+        nonlocal counter, count
         counter += 1
-        return "\u201c" if counter % 2 == 1 else "\u201d"
+        new = "\u201c" if counter % 2 == 1 else "\u201d"
+        if new != match.group(0):      # \u53ea\u6570\u771f\u6539\u52a8:\u672c\u6765\u5c31\u662f\u6b63\u786e\u4e2d\u6587\u5f15\u53f7\u7684\u4e0d\u8ba1
+            count += 1
+        return new
 
     result = re.sub(QUOTE_PATTERN, _replace, text)
     return result, count, counter
@@ -125,10 +142,9 @@ def fix_units(text: str) -> tuple[str, int]:
     """
     result = text
     total = 0
-    for unit_cn, unit_sym in _UNITS_SORTED:
-        n = result.count(unit_cn)
+    for pattern, unit_sym in _UNIT_RULES:
+        result, n = pattern.subn(lambda m, s=unit_sym: (m.group(1) if m.group(1).isspace() else "") + s, result)
         total += n
-        result = result.replace(unit_cn, unit_sym)
     return result, total
 
 

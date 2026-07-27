@@ -93,6 +93,49 @@ def run_text(r) -> str:
     return "".join(c.text or "" for c in text_elems(r))
 
 
+def text_groups(r) -> list[list]:
+    """run 内**可安全合并处理**的文本段分组。
+
+    被 `w:tab` / `w:br` / `w:drawing` 等非文本节点隔开的文本元素分属不同组：
+    合并跨越它们会把中间那个节点挤到末尾 —— 实测 `[t, tab, t]` 改写后变成
+    `[t, tab]`，"第一项⇥第二项" 成了 "第一项第二项⇥"，目录条与签署行的
+    制表位对齐当场错位。组内相邻文本元素合并处理（跨元素的"平方米"仍能命中）。
+    """
+    groups: list[list] = []
+    cur: list = []
+    for c in r:
+        if c.tag in TEXT_TAGS:
+            cur.append(c)
+        elif c.tag == qn("w:rPr"):
+            continue          # rPr 是属性不是内容，不切断文本
+        elif cur:
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def group_text(g: list) -> str:
+    return "".join(e.text or "" for e in g)
+
+
+def set_group_text(g: list, s: str) -> None:
+    """把整组文本写回组内首个元素，删掉组内其余元素（组外节点原位不动）。"""
+    g[0].text = s
+    _mark_space(g[0])
+    for extra in g[1:]:
+        extra.getparent().remove(extra)
+
+
+def has_other_content(r) -> bool:
+    """run 里除 rPr 与文本外还有别的内容（tab / br / drawing / 脚注引用…）。
+
+    这类 run 不能做"按引号拆 run"——拆出来的副本会丢失或复制这些一次性载荷。
+    """
+    return any(c.tag not in TEXT_TAGS and c.tag != qn("w:rPr") for c in r)
+
+
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 
