@@ -72,16 +72,15 @@ OPS = [
         "id": "clean",
         "verb": "clean",
         "title": "规范化",
-        "subtitle": "引号/标点/单位/字体修复(docx·md·pptx·xlsx)",
+        "subtitle": "纯文本修复:引号/标点/单位(docx·md·pptx),产出 _fixed 副本",
         "icon": "wand.and.stars",
-        "exts": ["docx", "md", "pptx", "xlsx", "xlsm"],
+        "exts": ["docx", "md", "pptx"],
         "kind": "files",
         # 勾选项 SSOT。Swift 侧只按 type 泛化渲染(bool→Toggle),不认识任何 option id ——
         # 以后加旋钮只改这里,不重编 .app。applies_to 用于「该格式不吃这项」时灰显。
         "option_groups": [
             {"id": "rule", "title": "修哪些内容"},
             {"id": "scope", "title": "改哪些范围", "applies_to": ["docx"]},
-            {"id": "danger", "title": "破坏性", "danger": True, "applies_to": ["docx"]},
         ],
         "options": [
             {"id": "rule.quotes", "group": "rule", "type": "bool", "default": True,
@@ -99,9 +98,37 @@ OPS = [
             {"id": "scope.comments", "group": "scope", "type": "bool", "default": True, "title": "批注"},
             {"id": "scope.notes", "group": "scope", "type": "bool", "default": True, "title": "脚注/尾注"},
             {"id": "scope.headers", "group": "scope", "type": "bool", "default": True, "title": "页眉页脚"},
-            {"id": "strip_headers", "group": "danger", "type": "bool", "default": False,
-             "title": "删除页眉页脚", "note": "不可撤销:清掉 header/footer 引用"},
         ],
+    },
+    {
+        "id": "fontunify",
+        "verb": "fontunify",
+        "title": "字体统一",
+        "subtitle": "pptx 全篇(含母版/版式)统一字体 ⚠原地覆写原文件(留 .backup)",
+        "icon": "textformat",
+        "exts": ["pptx"],
+        "kind": "files",
+        "danger": True,
+    },
+    {
+        "id": "lowercase",
+        "verb": "lowercase",
+        "title": "英文小写整理",
+        "subtitle": "xlsx 数据行 / docx 正文里的英文转小写(语义级数据改写)",
+        "icon": "textformat.abc",
+        "exts": ["xlsx", "xlsm", "docx"],
+        "kind": "files",
+        "danger": True,
+    },
+    {
+        "id": "stripchrome",
+        "verb": "stripchrome",
+        "title": "清页眉页脚",
+        "subtitle": "删除 docx 的页眉页脚引用,一个字不改 ⚠不可撤销(产出 _fixed 副本)",
+        "icon": "rectangle.topthird.inset.filled",
+        "exts": ["docx"],
+        "kind": "files",
+        "danger": True,
     },
     {
         "id": "convert",
@@ -269,6 +296,12 @@ def _run_verb_capture(verb: str, files: list[str], target: str | None,
             rc = dd.do_scan(files)
         elif verb == "view":
             rc = dd.do_view(files)
+        elif verb == "fontunify":
+            rc = dd.do_fontunify(files)
+        elif verb == "lowercase":
+            rc = dd.do_lowercase(files)
+        elif verb == "stripchrome":
+            rc = dd.do_stripchrome(files)
         else:
             return 2, f"未知操作: {verb}"
     log = _strip_ansi("\n".join([buf.getvalue().rstrip(), *_CAP]).strip())

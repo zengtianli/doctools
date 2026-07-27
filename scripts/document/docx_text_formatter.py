@@ -448,7 +448,7 @@ if __name__ == "__main__":
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = sys.argv[1:]
     _flags = {"--quotes", "--punct", "--units", "--no-quote-font",
-              "--in-place", "--keep-headers", "--strip-headers"}
+              "--in-place", "--keep-headers", "--strip-headers", "--strip-only"}
     _sel = {a for a in _argv if a in _flags}
 
     # --scope a,b,c（域白名单；不给 = 全域）
@@ -486,6 +486,10 @@ if __name__ == "__main__":
     DO_QUOTE_FONT = "--no-quote-font" not in _sel
     IN_PLACE = "--in-place" in _sel
     STRIP_HEADERS = "--strip-headers" in _sel   # --keep-headers 已是默认行为,保留为兼容 no-op
+    if "--strip-only" in _sel:
+        # 「清页眉页脚」独立动词:只删 chrome,一个字都不改
+        STRIP_HEADERS = True
+        DO_QUOTES = DO_PUNCT = DO_UNITS = DO_QUOTE_FONT = False
 
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
     files = get_input_files(_argv, expected_ext="docx")

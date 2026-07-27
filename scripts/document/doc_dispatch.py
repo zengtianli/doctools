@@ -6,7 +6,10 @@
 所有底层引擎(md_tools/pptx_tools/docx_*/data/convert 等)一个不改,subprocess 调用。
 
 用法:
-  doc_dispatch.py clean    <files...>                 规范化(docx 文本修复 / md format / pptx 全套)
+  doc_dispatch.py clean      <files...>               规范化(纯文本:引号/标点/单位 · docx·md·pptx)
+  doc_dispatch.py fontunify  <files...>               pptx 全篇字体统一(⚠原地覆写,留 .backup)
+  doc_dispatch.py lowercase  <files...>               xlsx/docx 英文转小写(语义级数据改写)
+  doc_dispatch.py stripchrome <files...>              docx 清除页眉页脚(⚠不可撤销,产出副本)
   doc_dispatch.py convert  --to {md,word,xlsx,csv,txt} <files...>   转换(源自动认;老 .doc 经 textutil 升级)
   doc_dispatch.py typeset  <files...>                 md/docx/doc → 院模板成品 Word(套模板→修文本→图注)
   doc_dispatch.py merge    <files...>                 合并(md/txt→csv/xlsx)
@@ -136,9 +139,31 @@ def route_clean(f: str, opts: dict | None = None) -> tuple[list[str], str] | Non
     if e == "md":
         return _py("md_tools.py", "format", f), "md → 格式标准化"
     if e in ("pptx",):
-        return _py("pptx_tools.py", "all", f), "pptx → 字体+表格+文本 全套规范"
-    if e in ("xlsx", "xlsm"):
-        return _data("xlsx_lowercase.py", f), "xlsx → 英文小写整理"
+        # 只跑 format+table(文本与表格规范)。font 阶段=全篇强制换字体,
+        # 2026-07-26 拆成独立动词 fontunify —— 换字体不属于「文本规范化」。
+        return _py("pptx_tools.py", "all", "--phases", "format,table", f), "pptx → 文本+表格规范"
+    return None   # xlsx 的「英文小写」已拆成独立动词 lowercase(那是语义级数据改写)
+
+
+def route_fontunify(f: str) -> tuple[list[str], str] | None:
+    """pptx 全篇(含母版/版式)字体统一。⚠ 原地覆写原文件,留 .backup。"""
+    if _ext(f) == "pptx":
+        return _py("pptx_tools.py", "font", f), "pptx → 全篇字体统一(原地覆写,留 .backup)"
+    return None
+
+
+def route_lowercase(f: str) -> tuple[list[str], str] | None:
+    """英文转小写 —— 语义级数据改写,与文本规范化不是一回事,故独立成动词。"""
+    if _ext(f) in ("xlsx", "xlsm", "docx"):
+        return _data("xlsx_lowercase.py", f), f"{_ext(f)} → 英文小写整理"
+    return None
+
+
+def route_stripchrome(f: str) -> tuple[list[str], str] | None:
+    """只删页眉页脚,不动一个字(--strip-only)。⚠ 不可撤销,产出 _fixed 副本。"""
+    if _ext(f) == "docx":
+        return (_py("docx_text_formatter.py", f, "--strip-only"),
+                "docx → 清除页眉页脚(不改文字)")
     return None
 
 
@@ -214,6 +239,18 @@ def _per_file(files: list[str], router, verb: str, opts: dict | None = None) -> 
 def do_clean(files, opts: dict | None = None):
     return _per_file(files, route_clean, "规范化", opts or {})
 def do_split(files):  return _per_file(files, route_split, "拆分")
+
+
+def do_fontunify(files):
+    return _per_file(files, route_fontunify, "字体统一")
+
+
+def do_lowercase(files):
+    return _per_file(files, route_lowercase, "英文小写整理")
+
+
+def do_stripchrome(files):
+    return _per_file(files, route_stripchrome, "清页眉页脚")
 
 
 def _word_textfix(out: Path) -> int:
@@ -328,7 +365,8 @@ def do_merge(files):
 def main() -> int:
     ap = argparse.ArgumentParser(description="文档/数据统一调度器")
     sub = ap.add_subparsers(dest="verb", required=True)
-    for v in ("clean", "typeset", "merge", "split", "view", "scan"):
+    for v in ("clean", "typeset", "merge", "split", "view", "scan",
+              "fontunify", "lowercase", "stripchrome"):
         p = sub.add_parser(v); p.add_argument("files", nargs="+")
     pc = sub.add_parser("convert")
     pc.add_argument("--to", required=True, dest="target")
@@ -350,6 +388,12 @@ def main() -> int:
     if a.verb == "typeset": return do_typeset(a.files)
     if a.verb == "renum":   return do_renum(a.files, a.target)
     if a.verb == "bidfinal": return do_bidfinal(a.files, a.target)
+    if a.verb == "fontunify":
+        return do_fontunify(a.files)
+    if a.verb == "lowercase":
+        return do_lowercase(a.files)
+    if a.verb == "stripchrome":
+        return do_stripchrome(a.files)
     return 1
 
 
