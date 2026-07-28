@@ -1,0 +1,191 @@
+/* docx-view · 中文友好富 HTML 样式表 */
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC",
+    "Hiragino Sans GB", sans-serif;
+  max-width: 920px;
+  margin: 2.5em auto;
+  padding: 0 1.5em;
+  line-height: 1.75;
+  color: #1a1a1a;
+  background: #fafafa;
+  font-size: 16px;
+}
+
+/* 标题 — 蓝色边框层次 */
+h1, h2, h3, h4, h5, h6 {
+  color: #0a3d62;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.6em;
+  margin-bottom: 0.6em;
+}
+h1 {
+  font-size: 2em;
+  border-bottom: 3px solid #0a3d62;
+  padding-bottom: 0.3em;
+}
+h2 {
+  font-size: 1.5em;
+  border-bottom: 2px solid #4a90c2;
+  padding-bottom: 0.25em;
+}
+h3 {
+  font-size: 1.25em;
+  border-left: 4px solid #4a90c2;
+  padding-left: 0.6em;
+}
+h4 { font-size: 1.1em; color: #2c5f8c; }
+
+/* 段落 */
+p { margin: 0.8em 0; }
+
+/* 链接 */
+a {
+  color: #0a6db5;
+  text-decoration: none;
+  border-bottom: 1px dotted #0a6db5;
+}
+a:hover { color: #d63031; border-bottom-style: solid; }
+
+/* 表格 — 边框 + 斑马纹 + 表头浅蓝 */
+table {
+  border-collapse: collapse;
+  margin: 1.2em auto;
+  width: 100%;
+  font-size: 0.95em;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  background: #fff;
+}
+th, td {
+  border: 1px solid #d0d7de;
+  padding: 0.55em 0.85em;
+  text-align: left;
+  vertical-align: top;
+}
+th {
+  background: #e8f1f9;
+  color: #0a3d62;
+  font-weight: 600;
+  border-bottom: 2px solid #0a3d62;
+}
+tr:nth-child(even) td { background: #f6f8fa; }
+tr:hover td { background: #fffbe6; }
+
+/* 图片 */
+img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  padding: 4px;
+  background: #fff;
+  display: block;
+  margin: 1em auto;
+}
+
+/* 引言 */
+blockquote {
+  border-left: 4px solid #4a90c2;
+  background: #f0f6fb;
+  color: #333;
+  margin: 1em 0;
+  padding: 0.6em 1em;
+  border-radius: 0 4px 4px 0;
+}
+blockquote p { margin: 0.3em 0; }
+
+/* 列表 */
+ul, ol { padding-left: 1.8em; }
+li { margin: 0.3em 0; }
+
+/* TOC 卡片 */
+nav#TOC {
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 1em 1.4em;
+  margin: 1.5em 0 2em 0;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  font-size: 0.95em;
+}
+nav#TOC::before {
+  content: "目录";
+  display: block;
+  font-weight: 700;
+  font-size: 1.1em;
+  color: #0a3d62;
+  margin-bottom: 0.5em;
+  border-bottom: 1px solid #e1e4e8;
+  padding-bottom: 0.3em;
+}
+nav#TOC ul { padding-left: 1.2em; margin: 0.2em 0; list-style: none; }
+nav#TOC > ul { padding-left: 0; }
+nav#TOC li::before {
+  content: "›";
+  color: #4a90c2;
+  margin-right: 0.4em;
+}
+nav#TOC a {
+  border-bottom: none;
+  color: #2c5f8c;
+}
+nav#TOC a:hover { color: #d63031; }
+
+/* 行内 code */
+code {
+  font-family: "SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
+  background: #f0f3f6;
+  color: #c0392b;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+
+/* 代码块 — Monokai-ish */
+pre {
+  background: #272822;
+  color: #f8f8f2;
+  padding: 1em 1.2em;
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.55;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: 0.9em;
+}
+
+/* 横线 */
+hr {
+  border: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, #d0d7de, transparent);
+  margin: 2em 0;
+}
+
+/* 强调 */
+strong { color: #0a3d62; font-weight: 600; }
+em { color: #2c5f8c; }
+
+/* 脚注 */
+.footnote-back { text-decoration: none; }
+section.footnotes {
+  margin-top: 3em;
+  padding-top: 1em;
+  border-top: 1px solid #d0d7de;
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* 打印 */
+@media print {
+  body { background: #fff; max-width: none; margin: 0; }
+  nav#TOC { page-break-after: always; }
+  h1, h2 { page-break-after: avoid; }
+  table, img, pre, blockquote { page-break-inside: avoid; }
+}
