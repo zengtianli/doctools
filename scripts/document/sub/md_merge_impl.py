@@ -35,6 +35,8 @@ from datetime import datetime
 from pathlib import Path
 from docx import Document
 from docx.shared import Inches
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 # 复用 md_docx_template 的 md-table 解析/边框 helper, 不重写 (铁律 #5)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -44,6 +46,103 @@ from md_docx_template import (  # noqa: E402
     set_table_border,
     clean_markdown_text,
 )
+
+
+# ─────────────────────────── 修订标记 (track changes) ───────────────────────────
+# 场景：目标 docx 本身处于 Word「修订模式」协作中（正文大量 w:ins 未接受）。
+# 直接删旧段/插新段会让协作方看不出改了什么，也无法逐条接受/拒绝。
+# 开启后：新增内容包 <w:ins>、被替换的旧内容转 <w:del>（w:t → w:delText），
+# 段落标记同步打 ins/del，与 Word 原生「修订」完全一致。
+
+
+def _next_rev_id(state: dict) -> int:
+    state["rid"] += 1
+    return state["rid"]
+
+
+def _rev_el(tag: str, state: dict) -> "OxmlElement":
+    el = OxmlElement(f"w:{tag}")
+    el.set(qn("w:id"), str(_next_rev_id(state)))
+    el.set(qn("w:author"), state["author"])
+    el.set(qn("w:date"), state["date"])
+    return el
+
+
+def _para_mark(p_elem, tag: str, state: dict) -> None:
+    """给段落标记本身打 ins/del（表示这个段落是新增的/被删的）。"""
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p_elem.insert(0, pPr)
+    rPr = pPr.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        pPr.insert(0, rPr)
+    rPr.append(_rev_el(tag, state))
+
+
+def _wrap_runs(container, tag: str, state: dict) -> None:
+    """把 container 内所有 w:r 逐个包进 <w:ins>/<w:del>。
+
+    已被同类标记包住的跳过；del 时 w:t → w:delText（OOXML 要求）。
+    对已在 w:ins 内的 run 用 del 包裹是合法的（插入后又删除）。
+    """
+    for run in list(container.iter(qn("w:r"))):
+        parent = run.getparent()
+        if parent is None or parent.tag == qn(f"w:{tag}"):
+            continue
+        if tag == "del":
+            for t in run.findall(qn("w:t")):
+                t.tag = qn("w:delText")
+        idx = list(parent).index(run)
+        wrapper = _rev_el(tag, state)
+        parent.remove(run)
+        wrapper.append(run)
+        parent.insert(idx, wrapper)
+
+
+def mark_inserted(elem, state: dict) -> None:
+    """整个元素（段落或表格）标记为新增。"""
+    if elem.tag == qn("w:tbl"):
+        for tr in elem.findall(qn("w:tr")):
+            trPr = tr.find(qn("w:trPr"))
+            if trPr is None:
+                trPr = OxmlElement("w:trPr")
+                tr.insert(0, trPr)
+            trPr.append(_rev_el("ins", state))
+        for p in elem.iter(qn("w:p")):
+            _para_mark(p, "ins", state)
+        _wrap_runs(elem, "ins", state)
+    else:
+        _para_mark(elem, "ins", state)
+        _wrap_runs(elem, "ins", state)
+
+
+def mark_deleted(elem, state: dict) -> None:
+    """整个元素（段落或表格）标记为删除，元素保留在文档中。"""
+    if elem.tag == qn("w:tbl"):
+        for tr in elem.findall(qn("w:tr")):
+            trPr = tr.find(qn("w:trPr"))
+            if trPr is None:
+                trPr = OxmlElement("w:trPr")
+                tr.insert(0, trPr)
+            trPr.append(_rev_el("del", state))
+        for p in elem.iter(qn("w:p")):
+            _para_mark(p, "del", state)
+        _wrap_runs(elem, "del", state)
+    else:
+        _para_mark(elem, "del", state)
+        _wrap_runs(elem, "del", state)
+
+
+def scan_max_rev_id(doc) -> int:
+    """扫描文档现有修订/批注 id 上界，新 id 从这里往后取，避免撞号。"""
+    mx = 0
+    for el in doc.element.body.iter():
+        v = el.get(qn("w:id"))
+        if v and v.lstrip("-").isdigit():
+            mx = max(mx, int(v))
+    return mx
 
 
 def parse_md(filepath: str) -> list:
@@ -97,8 +196,8 @@ def parse_md(filepath: str) -> list:
             blocks.append(("image", path, alt))
             i += 1
             continue
-        # 标题 ##..#####
-        m = re.match(r"^(#{2,5})\s+(.+)$", line)
+        # 标题 #..######（含一级：首个 heading 用于更新被合并节的标题，见 apply() 内 blocks[0] 分支）
+        m = re.match(r"^(#{1,6})\s+(.+)$", line)
         if m:
             blocks.append(("heading", len(m.group(1)), m.group(2).strip()))
             i += 1
@@ -130,6 +229,8 @@ def apply(
     output_file: str | None = None,
     in_place: bool = False,
     no_backup: bool = False,
+    track_changes: bool = False,
+    tc_author: str = "CC",
 ) -> str:
     """Merge MD into DOCX section and return output path.
 
@@ -192,11 +293,28 @@ def apply(
 
     print(f"\n范围内: {len(paras)} 段落, {len(tables)} 个非段落元素")
 
-    # Detach non-paragraph elements then delete paragraphs
-    for elem, _ in tables:
-        body.remove(elem)
-    for p_elem in paras:
-        body.remove(p_elem)
+    tc_state = None
+    if track_changes:
+        tc_state = {
+            "rid": scan_max_rev_id(doc) + 1000,  # 留空档，避开既有 id 段
+            "author": tc_author,
+            "date": datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+    if track_changes:
+        # 旧内容原位保留并标记为删除；新内容随后追加在其后
+        for p_elem in paras:
+            mark_deleted(p_elem, tc_state)
+        for elem, _ in tables:
+            mark_deleted(elem, tc_state)
+        print(f"修订模式: {len(paras)} 段落 + {len(tables)} 非段落元素标记为删除")
+        tables = []  # 已原位保留，无需回插
+    else:
+        # Detach non-paragraph elements then delete paragraphs
+        for elem, _ in tables:
+            body.remove(elem)
+        for p_elem in paras:
+            body.remove(p_elem)
 
     blocks = parse_md(md_file)
 
@@ -204,18 +322,26 @@ def apply(
     if blocks and blocks[0][0] == "heading":
         title_text = blocks[0][2]
         p_start = doc.paragraphs[start_idx]
-        for run in p_start.runs:
-            run.text = ""
-        if p_start.runs:
-            p_start.runs[0].text = title_text
-        blocks = blocks[1:]
-        print(f"标题更新为: {title_text}")
+        cur_title = (p_start.text or "").strip()
+        if track_changes:
+            # 修订模式下不静默重写标题（会抹掉协作方的既有修订痕迹）
+            blocks = blocks[1:]
+            if cur_title != title_text:
+                print(f"标题保持原文不动: {cur_title!r}（MD 写的是 {title_text!r}）")
+        else:
+            for run in p_start.runs:
+                run.text = ""
+            if p_start.runs:
+                p_start.runs[0].text = title_text
+            blocks = blocks[1:]
+            print(f"标题更新为: {title_text}")
 
     n_tbl = sum(1 for b in blocks if b[0] == "table")
     print(f"插入 {len(blocks)} 个 block (含 {n_tbl} 个表格)")
 
     # Insert blocks after the section heading (para/heading/table)
-    ref = start_elem
+    # 修订模式下旧内容仍在原位（已标删），新内容接在其后
+    ref = paras[-1] if (track_changes and paras) else start_elem
     for blk in blocks:
         if blk[0] == "heading":
             new_p = doc.add_paragraph(blk[2], style=f"Heading {min(blk[1], 5)}")
@@ -249,6 +375,8 @@ def apply(
         else:  # para
             new_p = doc.add_paragraph(blk[1], style="Normal")
             new_elem = new_p._element
+        if track_changes:
+            mark_inserted(new_elem, tc_state)
         ref.addnext(new_elem)
         ref = new_elem
 
@@ -277,7 +405,7 @@ def apply(
     print("\n--- 验证 ---")
     for i in range(
         max(0, start_idx - 1),
-        min(start_idx + len(md_paras) + 5, len(doc2.paragraphs)),
+        min(start_idx + len(blocks) + 5, len(doc2.paragraphs)),
     ):
         p = doc2.paragraphs[i]
         if "Heading" in p.style.name:
@@ -314,6 +442,11 @@ def main() -> int:
     ap.add_argument("--end-anchor", help="按标题文本定位 end_idx (下一节标题)")
     ap.add_argument("--in-place", action="store_true", help="原地改 + 自动备份 .bak-时间戳")
     ap.add_argument("--no-backup", action="store_true", help="配合 --in-place 跳过备份")
+    ap.add_argument("--track-changes", action="store_true",
+                    help="以 Word 修订标记写入：旧内容标 w:del 原位保留、新内容标 w:ins "
+                         "(目标 docx 本身在修订模式协作时用)")
+    ap.add_argument("--tc-author", default="CC",
+                    help="修订标记署名 (配合 --track-changes, 默认 CC)")
     args = ap.parse_args()
 
     start_idx, end_idx = args.start_idx, args.end_idx
@@ -330,7 +463,8 @@ def main() -> int:
         return 2
 
     apply(args.md_file, args.docx_file, start_idx, end_idx,
-          args.output_file, in_place=args.in_place, no_backup=args.no_backup)
+          args.output_file, in_place=args.in_place, no_backup=args.no_backup,
+          track_changes=args.track_changes, tc_author=args.tc_author)
     return 0
 
 

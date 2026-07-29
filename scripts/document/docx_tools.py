@@ -934,10 +934,16 @@ def _tc_extract_del_text(node) -> str:
 class DocxReviewer:
     """对 .docx 文件应用替换规则，生成带修订标记的新文件。保持原文格式不变。"""
 
-    def __init__(self, docx_path: str, author: str = "CC审阅"):
+    def __init__(
+        self, docx_path: str, author: str = "CC审阅", include_ins: bool = False
+    ):
         self.docx_path = docx_path
         self._write_gate = WriteGate(docx_path)  # 读入时 capture,save 回源文件前 assert
         self.author = author
+        # include_ins：允许命中 <w:ins> 内的文字。
+        # 目标 docx 本身在修订模式协作、正文大量插入未接受时必须打开，
+        # 否则规则一条都匹配不到（w:del 内的文字任何情况下都跳过——那是已删除的字）。
+        self.include_ins = include_ins
         self.date = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.comment_id_counter = 0
         self.comments = []
@@ -974,11 +980,23 @@ class DocxReviewer:
         """应用替换规则列表。返回成功替换的数量。"""
         count = 0
         for rule in rules:
-            n = self._apply_one_rule(rule["find"], rule["replace"], rule.get("comment"))
+            replace = rule.get("replace", rule["find"])
+            # comment_only：只挂批注、不产生修订标记。显式声明优先；
+            # 未声明时 find == replace 自动视为 comment_only（替换成同样的字没有意义）。
+            comment_only = rule.get("comment_only", replace == rule["find"])
+            n = self._apply_one_rule(
+                rule["find"], replace, rule.get("comment"), comment_only
+            )
             count += n
         return count
 
-    def _apply_one_rule(self, find: str, replace: str, comment: str | None) -> int:
+    def _apply_one_rule(
+        self,
+        find: str,
+        replace: str,
+        comment: str | None,
+        comment_only: bool = False,
+    ) -> int:
         body = self.doc_root.find(qn("w:body"))
         if body is None:
             return 0
@@ -988,8 +1006,14 @@ class DocxReviewer:
                 result = self._find_in_paragraph(para, find)
                 if result is None:
                     break
-                self._replace_in_paragraph(para, result, find, replace, comment)
+                self._replace_in_paragraph(
+                    para, result, find, replace, comment, comment_only
+                )
                 count += 1
+                if comment_only:
+                    # 原文保留在段内，再找必然命中同一处 → 死循环。
+                    # comment_only 只标注每段首次出现。
+                    break
         return count
 
     def _find_in_paragraph(self, para, find_text: str):
@@ -1001,7 +1025,13 @@ class DocxReviewer:
         active_runs = []
         for r in runs:
             parent = r.getparent()
-            if parent is not None and parent.tag in (qn("w:del"), qn("w:ins")):
+            if parent is not None and parent.tag == qn("w:del"):
+                continue  # 已删除的文字永不参与匹配
+            if (
+                not self.include_ins
+                and parent is not None
+                and parent.tag == qn("w:ins")
+            ):
                 continue
             active_runs.append(r)
         if not active_runs:
@@ -1043,8 +1073,14 @@ class DocxReviewer:
             "end_offset": end_offset,
         }
 
-    def _replace_in_paragraph(self, para, match, find_text, replace_text, comment_text):
-        """拆分 run，插入 del/ins 标记，保持原有格式"""
+    def _replace_in_paragraph(
+        self, para, match, find_text, replace_text, comment_text, comment_only=False
+    ):
+        """拆分 run，插入 del/ins 标记，保持原有格式。
+
+        comment_only=True 时不生成 del/ins，原文原样保留，只包上批注范围——
+        用于给既有文字挂溯源批注（不改字）。
+        """
         runs = match["runs"]
         start_offset = match["start_offset"]
         end_offset = match["end_offset"]
@@ -1084,22 +1120,26 @@ class DocxReviewer:
             cs.set(qn("w:id"), str(comment_id))
             nodes.append(cs)
 
-        # <w:del>
-        rid = self._next_rid()
-        del_node = etree.Element(qn("w:del"))
-        del_node.set(qn("w:id"), rid)
-        del_node.set(qn("w:author"), self.author)
-        del_node.set(qn("w:date"), self.date)
-        del_node.append(self._make_del_run(find_text, rpr_template))
-        nodes.append(del_node)
+        if comment_only:
+            # 只挂批注：原文原样放回，不产生任何修订标记
+            nodes.append(self._make_run(find_text, rpr_template))
+        else:
+            # <w:del>
+            rid = self._next_rid()
+            del_node = etree.Element(qn("w:del"))
+            del_node.set(qn("w:id"), rid)
+            del_node.set(qn("w:author"), self.author)
+            del_node.set(qn("w:date"), self.date)
+            del_node.append(self._make_del_run(find_text, rpr_template))
+            nodes.append(del_node)
 
-        # <w:ins>
-        ins_node = etree.Element(qn("w:ins"))
-        ins_node.set(qn("w:id"), self._next_rid())
-        ins_node.set(qn("w:author"), self.author)
-        ins_node.set(qn("w:date"), self.date)
-        ins_node.append(self._make_run(replace_text, rpr_template))
-        nodes.append(ins_node)
+            # <w:ins>
+            ins_node = etree.Element(qn("w:ins"))
+            ins_node.set(qn("w:id"), self._next_rid())
+            ins_node.set(qn("w:author"), self.author)
+            ins_node.set(qn("w:date"), self.date)
+            ins_node.append(self._make_run(replace_text, rpr_template))
+            nodes.append(ins_node)
 
         # 批注结束 + 引用
         if comment_text and comment_id is not None:
@@ -1127,8 +1167,21 @@ class DocxReviewer:
         if suffix_text:
             nodes.append(self._make_run(suffix_text, rpr_template))
 
-        for i, node in enumerate(nodes):
-            parent.insert(insert_pos + i, node)
+        if parent.tag == qn("w:ins") and not comment_only:
+            # 命中的原文本身是一处未接受的插入（w:ins）。
+            # w:ins 不能嵌套 w:ins，故：删除标记留在原 w:ins 内（w:ins>w:del = 插入后又删除，
+            # 这是 Word 的标准表示），新增文字提到 w:p 层级、紧跟在原 w:ins 之后。
+            inner = [n for n in nodes if n.tag != qn("w:ins")]
+            outer = [n for n in nodes if n.tag == qn("w:ins")]
+            for i, node in enumerate(inner):
+                parent.insert(insert_pos + i, node)
+            grandparent = parent.getparent()
+            gi = list(grandparent).index(parent)
+            for j, node in enumerate(outer):
+                grandparent.insert(gi + 1 + j, node)
+        else:
+            for i, node in enumerate(nodes):
+                parent.insert(insert_pos + i, node)
 
     def _make_run(self, text: str, rpr=None) -> etree._Element:
         """创建 <w:r>，继承原有 rPr 格式"""
@@ -1249,11 +1302,35 @@ class DocxReviewer:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
-def review_docx(input_path: str, output_path: str, rules: list[dict], author: str = "CC审阅") -> int:
-    """便捷函数：对 .docx 应用替换规则，输出带修订标记的新文件。"""
-    reviewer = DocxReviewer(input_path, author=author)
+def review_docx(
+    input_path: str,
+    output_path: str,
+    rules: list[dict],
+    author: str = "CC审阅",
+    include_ins: bool = False,
+    strict: bool = False,
+) -> int:
+    """便捷函数：对 .docx 应用替换规则，输出带修订标记的新文件。
+
+    strict=True 时任一规则 0 命中即抛错（fail-closed）——避免"静默 0 处替换"
+    被当成执行成功。
+    """
+    reviewer = DocxReviewer(input_path, author=author, include_ins=include_ins)
     try:
-        count = reviewer.apply_rules(rules)
+        if strict:
+            misses = []
+            count = 0
+            for rule in rules:
+                n = reviewer.apply_rules([rule])
+                if n == 0:
+                    misses.append(rule["find"][:60])
+                count += n
+            if misses:
+                raise ValueError(
+                    "以下规则 0 命中（strict 模式）：\n  - " + "\n  - ".join(misses)
+                )
+        else:
+            count = reviewer.apply_rules(rules)
         reviewer.save(output_path)
         return count
     except Exception:
@@ -1268,7 +1345,14 @@ def cmd_track_changes(args):
     elif args.tc_command == "review":
         with open(args.rules, encoding="utf-8") as f:
             rules = json.load(f)
-        count = review_docx(args.input, args.output, rules, author=args.author)
+        count = review_docx(
+            args.input,
+            args.output,
+            rules,
+            author=args.author,
+            include_ins=bool(getattr(args, "include_ins", False)),
+            strict=bool(getattr(args, "strict", False)),
+        )
         print(f"完成：{count} 处替换已写入 {args.output}")
     elif args.tc_command == "compare":
         print("compare 功能将在 v2 实现。")
@@ -1547,6 +1631,11 @@ def main():
     wp.add_argument("--output", "-o", required=True, help="输出 .docx 文件")
     wp.add_argument("--rules", "-r", required=True, help="替换规则 JSON 文件")
     wp.add_argument("--author", "-a", default="CC审阅", help="作者名")
+    wp.add_argument("--include-ins", action="store_true",
+                    help="允许命中 <w:ins> 内的文字（目标 docx 本身在修订模式协作、"
+                         "正文大量插入未接受时必须打开，否则规则一条都匹配不到）")
+    wp.add_argument("--strict", action="store_true",
+                    help="任一规则 0 命中即报错退出（fail-closed，防静默漏改）")
 
     tcp = tc_sub.add_parser("compare", help="对比生成修订 (v2)")
     tcp.add_argument("original", help="原始 .docx")
