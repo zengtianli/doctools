@@ -32,6 +32,10 @@ __all__ = [
     "body_start_idx",
     "make_backup",
     "surgical_rewrite",
+    "surgical_rewrite_parts",
+    "read_part",
+    "parse_part",
+    "list_parts",
     "serialize",
     "PPR_ORDER",
     "ensure_ppr_child",
@@ -56,6 +60,28 @@ def read_document_xml(docx: Path) -> bytes:
 def parse_document(docx: Path):
     """read + etree.fromstring → root。"""
     return etree.fromstring(read_document_xml(docx))
+
+
+def read_part(docx: Path, name: str) -> bytes:
+    """zip 内只读任意一个部件的字节(word/styles.xml、word/header1.xml …)。"""
+    with zipfile.ZipFile(docx) as z:
+        return z.read(name)
+
+
+def parse_part(docx: Path, name: str):
+    """read_part + etree.fromstring → root。部件不存在直接抛,不返回 None ——
+    调用方拿到 None 往往会当成「这个部件是空的」继续跑,那是假绿。"""
+    return etree.fromstring(read_part(docx, name))
+
+
+def list_parts(docx: Path, pattern: str | None = None) -> list[str]:
+    """列出包内部件名;pattern 给正则则只留匹配的(如 r"word/(header|footer)\\d*\\.xml")。"""
+    with zipfile.ZipFile(docx) as z:
+        names = z.namelist()
+    if pattern is None:
+        return names
+    rx = re.compile(pattern)
+    return [n for n in names if rx.fullmatch(n)]
 
 
 def iter_paras(root) -> list:
@@ -103,15 +129,46 @@ def serialize(root) -> bytes:
 def surgical_rewrite(docx: Path, new_document_xml: bytes, *, backup: bool = True) -> Path | None:
     """verbatim repack:只替换 word/document.xml,其余 zip 项(媒体/embeddings/OLE/公式)原样搬运。
 
-    写 .tmp 后 tmp.replace(docx) 原子换 → verify_repacked 自检。坏 → 用 bak 回滚 + raise RepackError。
-    返回 bak 路径(backup=False 则 None)。
+    = `surgical_rewrite_parts(docx, {DOCUMENT_XML: ...})` 的单部件快捷式,签名与语义
+    保持不变(存量 docx_para.py 直接依赖它)。
     """
+    return surgical_rewrite_parts(docx, {DOCUMENT_XML: new_document_xml}, backup=backup)
+
+
+def surgical_rewrite_parts(docx: Path, parts: dict[str, bytes], *,
+                           backup: bool = True) -> Path | None:
+    """verbatim repack:替换 `parts` 里点名的若干 zip 部件,其余全部原样搬运。
+
+    2026-07-28 加。原来只能改 `word/document.xml`,而真正要迁的存量脚本里 12/16 还要动
+    `word/styles.xml`(字体/样式)、`word/numbering.xml`(编号)、`word/header*.xml`
+    `word/footer*.xml`(页眉页脚) —— 缺这个能力,那些脚本就只能继续用 python-docx 整包重存,
+    而整包重存正是剥掉 OLE/公式/嵌入对象的那个动作(磐安母本 47 个公式对象 → 产物 0 个)。
+
+    **只改不增删**:parts 里出现的部件必须已存在于原包。想新增部件(如首次加页眉)需要连
+    `[Content_Types].xml` 和 `.rels` 一起改,那是另一件事,本函数拒绝——静默忽略一个
+    写不进去的部件,和它要防的数据丢失是同一类东西。
+
+    写 .tmp 后 tmp.replace(docx) 原子换 → verify_repacked 自检(逐个 parse 改过的部件)。
+    坏 → 用 bak 回滚 + raise RepackError。返回 bak 路径(backup=False 则 None)。
+    """
+    if not parts:
+        raise ValueError("surgical_rewrite_parts: parts 为空 —— 拒绝做一次无意义的重打包")
+    with zipfile.ZipFile(docx) as z:
+        existing = set(z.namelist())
+    missing = sorted(set(parts) - existing)
+    if missing:
+        raise RepackError(
+            f"这些部件不在原包里,本函数只改不增: {missing}。"
+            f"新增部件需同时改 [Content_Types].xml 与 .rels")
+
     bak = make_backup(docx) if backup else None
     tmp = docx.with_suffix(docx.suffix + ".tmp")
     try:
         with zipfile.ZipFile(docx) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
-                data = new_document_xml if item.filename == DOCUMENT_XML else zin.read(item.filename)
+                data = parts.get(item.filename)
+                if data is None:
+                    data = zin.read(item.filename)
                 zout.writestr(item, data)  # 复用 zin.infolist() 的 ZipInfo 保留每项 compress_type/日期
         tmp.replace(docx)
     except Exception:
@@ -119,7 +176,7 @@ def surgical_rewrite(docx: Path, new_document_xml: bytes, *, backup: bool = True
         raise
     # 写后自检 → 坏则回滚
     try:
-        verify_repacked(docx)
+        verify_repacked(docx, extra_parts=list(parts))
     except Exception as e:
         if bak is not None and bak.exists():
             shutil.copy2(bak, docx)
@@ -128,13 +185,23 @@ def surgical_rewrite(docx: Path, new_document_xml: bytes, *, backup: bool = True
     return bak
 
 
-def verify_repacked(docx: Path) -> None:
-    """重开 zip + testzip(全项 CRC) + parse document.xml。坏 → raise。"""
+def verify_repacked(docx: Path, *, extra_parts: list[str] | None = None) -> None:
+    """重开 zip + testzip(全项 CRC) + parse document.xml 及所有被改过的部件。坏 → raise。
+
+    改过哪个就 parse 哪个:只 parse document.xml 而放过刚写坏的 styles.xml,
+    等于自检报了个假绿。
+    """
     with zipfile.ZipFile(docx) as z:
         bad = z.testzip()
         if bad is not None:
             raise ValueError(f"zip CRC 坏: {bad}")
-        etree.fromstring(z.read(DOCUMENT_XML))
+        for name in dict.fromkeys([DOCUMENT_XML, *(extra_parts or [])]):
+            if not name.endswith(".xml") and not name.endswith(".rels"):
+                continue          # 非 XML 部件(媒体)无从 parse
+            try:
+                etree.fromstring(z.read(name))
+            except Exception as e:
+                raise ValueError(f"{name} 写坏了,parse 失败: {e}") from e
 
 
 # ── pPr schema 序 ─────────────────────────────────────────────────────────
