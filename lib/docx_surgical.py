@@ -13,6 +13,7 @@ import shutil
 import sys
 import zipfile
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from lxml import etree
@@ -36,6 +37,8 @@ __all__ = [
     "read_part",
     "parse_part",
     "list_parts",
+    "canonical",
+    "graft_unchanged",
     "serialize",
     "PPR_ORDER",
     "ensure_ppr_child",
@@ -183,6 +186,100 @@ def surgical_rewrite_parts(docx: Path, parts: dict[str, bytes], *,
             raise RepackError(f"repack 自检失败,已从 {bak.name} 回滚: {e}") from e
         raise RepackError(f"repack 自检失败(无备份可回滚): {e}") from e
     return bak
+
+
+def canonical(data: bytes) -> bytes:
+    """XML 规范化(C14N):抹掉属性序 / 命名空间声明位置 / 无意义空白,只留语义。
+    非 XML(媒体/OLE 二进制)原样返回 —— 它们本来就该逐字节比。"""
+    try:
+        tree = etree.parse(BytesIO(data))
+    except Exception:
+        return data
+    out = BytesIO()
+    tree.write_c14n(out)
+    return out.getvalue()
+
+
+def graft_unchanged(original: Path, modified: Path, *, on_missing: str = "error") -> dict:
+    """把 `modified` 里**语义没变**的部件,按 `original` 的原始字节还原。原地改写 modified。
+
+    ## 为什么需要它 (2026-07-28 立,实测数据)
+
+    一份 301 部件 / 75 个嵌入公式的真报告,python-docx **什么都不改**地打开再存回:
+
+        字节层面变了 60 个部件(含 [Content_Types].xml / _rels/.rels / 28 个 header / 14 个 footer)
+        语义层面变了  1 个部件([Content_Types].xml:两条 <Default> 被拆成逐文件 <Override>)
+
+    也就是说 59/60 是纯重新序列化 —— 内容一模一样,只是被 python-docx 的序列化器重写了一遍。
+    改一个字号,炸开面 60 倍;而每一次重写都是一次「Word 可能渲染得不一样」的机会。
+
+    有了这个函数,存量那 16 个 python-docx 脚本**一行都不用改**:让它照常跑完,然后把没真变的
+    部件还原回去,炸开面立刻从 60 收到 1。不需要把 8500 行重写成手搓 XML。
+
+    ## on_missing —— 部件在 modified 里消失了怎么办
+
+    `Document()` 新建再搬内容那种写法会真的丢部件(实测 301 → 17、75 个公式对象归零)。
+    默认 "error":直接抛。**不默认悄悄补回来** —— 补回来的部件没有任何东西引用它,
+    得到的是一份「看起来完整、其实公式已经不在正文里」的文件,比直接报错危险得多。
+      "error"   丢了就抛 RepackError(默认)
+      "restore" 用 original 的字节补回(只在你确认调用方本就该保留全部部件时用)
+      "ignore"  接受丢失(极少;比如 pdf_to_docx 这种本来就在造新文件)
+
+    返回 {"还原": [...], "真变了": [...], "新增": [...], "丢失": [...]}。
+    """
+    if on_missing not in ("error", "restore", "ignore"):
+        raise ValueError(f"on_missing 只能是 error/restore/ignore,给的是 {on_missing!r}")
+
+    with zipfile.ZipFile(original) as z:
+        orig = {i.filename: (z.read(i.filename), i) for i in z.infolist()}
+    with zipfile.ZipFile(modified) as z:
+        mod = {i.filename: (z.read(i.filename), i) for i in z.infolist()}
+
+    lost = sorted(set(orig) - set(mod))
+    if lost and on_missing == "error":
+        raise RepackError(
+            f"这个工具把 {len(lost)} 个部件整个弄丢了,不是「改」是「重造」:{lost[:8]}"
+            f"{' …' if len(lost) > 8 else ''}。确认无害请显式传 on_missing=")
+
+    kept, real, added = [], [], sorted(set(mod) - set(orig))
+    out_parts: list[tuple[zipfile.ZipInfo, bytes]] = []
+    for name, (mdata, minfo) in mod.items():
+        if name in orig:
+            odata, oinfo = orig[name]
+            if odata == mdata or canonical(odata) == canonical(mdata):
+                kept.append(name)
+                out_parts.append((oinfo, odata))       # 连 ZipInfo 一起用原件的
+                continue
+            real.append(name)
+        out_parts.append((minfo, mdata))
+    if lost and on_missing == "restore":
+        for name in lost:
+            odata, oinfo = orig[name]
+            out_parts.append((oinfo, odata))
+
+    # [Content_Types].xml:部件集合一个没增没减时,原来那张表必然仍然正确 —— 还原它。
+    # python-docx 每次存盘都会重建这张表(实测把 <Default Extension="bin"/> 和
+    # <Default Extension="vsdx"/> 拆成 122 条逐文件 <Override>),那是它按自己认得的
+    # 部件重新推导的结果 —— 它认不得的东西就靠 <Default> 兜底,而 <Default> 恰好被它删了。
+    # 部件集合一变(新增/丢失)就不能还原:新部件需要新的类型声明。
+    CT = "[Content_Types].xml"
+    if not added and not lost and CT in real and CT in orig:
+        real.remove(CT)
+        kept.append(CT)
+        odata, oinfo = orig[CT]
+        out_parts = [(oinfo, odata) if i.filename == CT else (i, d) for i, d in out_parts]
+
+    tmp = modified.with_suffix(modified.suffix + ".graft")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for info, data in out_parts:
+                zout.writestr(info, data)
+        tmp.replace(modified)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    verify_repacked(modified, extra_parts=real)
+    return {"还原": sorted(kept), "真变了": sorted(real), "新增": added, "丢失": lost}
 
 
 def verify_repacked(docx: Path, *, extra_parts: list[str] | None = None) -> None:
