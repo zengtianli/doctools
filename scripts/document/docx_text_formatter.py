@@ -47,6 +47,12 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn

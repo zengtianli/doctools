@@ -41,6 +41,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 
 from lxml import etree
 
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+
 from docx_xml import R_NS, REL_COMMENTS, W, qn
 from file_ops import clear_quarantine
 

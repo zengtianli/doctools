@@ -26,6 +26,13 @@ run 级编号替换:
 """
 from __future__ import annotations
 
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+
+
 import argparse
 import json
 import re

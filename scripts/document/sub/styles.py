@@ -38,6 +38,13 @@ from pathlib import Path
 from typing import Optional
 
 # python-docx / lxml — 顶部 import 让所有子命令共享
+
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+
 from docx import Document
 from docx.document import Document as DocType
 from docx.oxml.ns import qn

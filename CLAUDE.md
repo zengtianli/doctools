@@ -33,6 +33,34 @@ lib/                  # 公共模块
 - Shell 引用库：`source "$(dirname "$0")/../../lib/common.sh"`
 - LLM 调用：`from llm_client import chat`
 
+### 用 python-docx 存盘的脚本必须挂 surgical 收口（2026-07-30 立 · 有守卫）
+
+一行：
+
+```python
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[N] / "lib"))   # N = 到仓根的层数
+import docx_safe_save  # noqa: E402,F401
+```
+
+**append 不是 `insert(0)`** —— `lib/` 和 `scripts/document/sub/` 都有 `styles.py`，插 0 位会顶掉脚本自己那份。
+
+为什么：一份 301 部件 / 75 个嵌入公式的真报告，python-docx **什么都不改**地打开再存回，
+**60 个部件字节变了、只有 1 个语义真变了**（59 个纯属被重新序列化）。收口把语义未变的部件
+按原字节还原 → 炸开面 60→1，实测「无改动时输出与原件逐字节相同」。
+`Document()` 新建文档自动不介入，所以从零造文件的脚本照样加，不碍事。
+
+| 什么时候用什么 | |
+|---|---|
+| 守卫（枚举全仓，缺收口判红，fail-closed） | `python3 tools/check_docx_collar.py` |
+| 量某条命令的炸开面 | `python3 tools/blast_radius.py run <docx> -- <命令，{docx} 占位>` |
+| 迁移前后对拍（老 vs 新，判语义等价 + 炸开面收窄） | `python3 tools/blast_radius.py diff <docx> --old '…' --new '…'` |
+| 逃生 | `DOCX_GRAFT_OFF=1`（退回裸存盘）· `DOCX_GRAFT_QUIET=1`（不打那行 stderr） |
+
+`blast_radius.py diff` 的判据全部是「老 vs 新」的相对比较，**不是「新 vs 理想值」** ——
+后者会连着造出三种假红（详见该文件里「判据的那根轴」）。
+
 ### 全文改写 docx 必走 `lib/docx_xml.py` 的元素级遍历（2026-07-26 立）
 
 python-docx 的 `Document.paragraphs` 只认 `w:body/./w:p`、`Paragraph.runs` 只认 `./w:r`，

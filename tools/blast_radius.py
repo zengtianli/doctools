@@ -29,6 +29,7 @@ python-docx 与 surgical(lxml+zipfile) 的真实差别,**光数 zip 条目数看
         --new "python3 sub/normalize_fonts.py {docx}"
 
 退出码: 0 通过 / 1 有差异(diff 模式下 = 迁移不等价) / 2 真故障(夹具不存在/命令跑不起来)
+        3 没测到(老实现在本夹具上一个部件都没改) —— 既不算通过也不算判红
 """
 
 from __future__ import annotations
@@ -43,9 +44,22 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from docx_surgical import canonical  # noqa: E402
+
 # 这些部件被改写是「必然且无害」的:改正文本来就要动 document.xml。
 # 其余任何一个被改写都要报出来 —— 它是这次改动的**意外**炸开面。
 EXPECTED = {"word/document.xml"}
+
+
+def read_doc_xml(docx: Path) -> bytes:
+    """读 word/document.xml。缺了直接退出,不返回 b"" —— 两份都缺时空串会互相相等,
+    于是「正文一致」报绿,那是假绿里最难发现的一种。"""
+    with zipfile.ZipFile(docx) as z:
+        try:
+            return z.read("word/document.xml")
+        except KeyError:
+            raise SystemExit(f"⛔ {docx} 里没有 word/document.xml —— 不是可用的 Word 文件")
 
 
 def part_hashes(docx: Path) -> dict[str, str]:
@@ -130,24 +144,51 @@ def cmd_diff(a) -> int:
         ro = report("老实现", before, ha)
         rn = report("新实现", before, hb)
 
-        # 正文等价性:两条实现改完之后 document.xml 该是同一份
-        same_doc = ha.get("word/document.xml") == hb.get("word/document.xml")
-        print(f"\n正文 document.xml 两边一致: {'是' if same_doc else '否'}")
+        # 正文等价性必须比**规范化后**的 XML，不能比 sha1(2026-07-30 修)。
+        # 拿 sha1 比会得出「迁移改变了行为」的假红:新实现在正文语义没变时会把原件
+        # 字节整个还原(那正是它的价值),而老实现留下的是 python-docx 重新序列化过的
+        # 同一份内容 —— 声明写成 <?xml version='1.0'?> 而不是 "1.0"、换行 \n 而不是
+        # \r\n,字节就不同了。实测 number_captions / convert_chapter_format 双双因此
+        # 被判红,而 canonical 比对两边完全一致。
+        # 这跟「数 zip 条目数」是同一类错误:拿看得见的尺子量,量的不是要判的那件事。
+        same_doc = canonical(read_doc_xml(o)) == canonical(read_doc_xml(n))
+        print(f"\n正文 document.xml 两边语义一致（C14N 比对）: {'是' if same_doc else '否'}")
         shrink = len(ro["意外"]) - len(rn["意外"])
         print(f"意外炸开面: 老 {len(ro['意外'])} → 新 {len(rn['意外'])}"
               f"（{'收窄 %d' % shrink if shrink > 0 else '没有收窄'}）")
 
+        # 老实现一个部件都没动 = 这条命令在本夹具上什么都没干(没找到可改的东西,或
+        # 另存到别的文件去了)。此时「炸开面没收窄」是必然的,判红是假红;但也**不能报
+        # 通过** —— 什么都没测到就宣布等价是假绿。单独一档 rc=3。
+        if not (ro["删掉"] or ro["新增"] or ro["改写"]):
+            print("  ⊘ 老实现在本夹具上一个部件都没改 —— 闸门没测到东西，不算通过。"
+                  "换一份能触发它的夹具，或给它该有的参数（--plan/--decision…）")
+            return 3
+
+        # ── 判据的那根轴（2026-07-30 立，被三个 bug 连着教会的）──────────────────
+        # 本子命令叫 diff，它判的是**等价迁移**，所以每一条判据都必须是「老 vs 新」的
+        # 相对比较，**不能是「新 vs 我以为的理想值」**。三个 bug 全是同一个形状：
+        #   ① 正文用 sha1 比绝对字节  → 新实现还原原件字节(那正是收益)被判成「改变了行为」
+        #   ② 没收窄就判红            → 老实现本来啥都没改，没有东西可收窄
+        #   ③ 新实现增删部件就判红    → add_header_footer 加页眉页脚是本职，老新都增同样 10 个
+        # 再加判据前先问：这条是在和老实现比，还是在和我脑内的理想值比？后者一律是假红。
         bad = []
         if not same_doc:
-            bad.append("正文结果不一致 —— 迁移改变了行为，不是等价替换")
-        if rn["删掉"] or rn["新增"]:
-            bad.append(f"新实现动了部件集合：删 {len(rn['删掉'])} 增 {len(rn['新增'])}")
+            bad.append("正文语义不一致 —— 迁移改变了行为，不是等价替换")
+        # 判据是「迁移**改变了**部件集合的增删」,不是「新实现增删了部件」(2026-07-30 修)。
+        # 有些脚本增删部件就是它的本职:add_header_footer 给 17 个节加页眉页脚,老新两边
+        # 都新增同样的 10 个部件 —— 拿绝对值判会把它判红,而它恰恰是一次合格的等价迁移
+        # (炸开面 59→26)。要抓的是迁移**引入**的增删差异。
+        if set(rn["删掉"]) != set(ro["删掉"]) or set(rn["新增"]) != set(ro["新增"]):
+            bad.append(
+                f"迁移改变了部件集合：删 老{len(ro['删掉'])}/新{len(rn['删掉'])} · "
+                f"增 老{len(ro['新增'])}/新{len(rn['新增'])}")
         if shrink <= 0:
             bad.append("新实现没有收窄炸开面 —— 迁移没带来收益，先查是不是没真走 surgical")
         for b in bad:
             print(f"  ✗ {b}")
         if not bad:
-            print("  ✓ 等价且炸开面收窄")
+            print("  ✓ 语义等价且炸开面收窄")
         return 1 if bad else 0
 
 
