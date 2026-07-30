@@ -16,6 +16,9 @@
   默认 --check 干跑打印计数不落盘；--apply 才写（备份 + 三护栏红则不写 exit 2）。
   落盘后自动复扫（bid_residue_lib.scan_parts 类别 1-7），复扫归零才 PASS。
 exit 0 = PASS（无事可做/清理后归零）；exit 2 = 有待清理项/护栏红/复扫未归零；exit 1 = 用法/IO 错误。
+
+pipeline 接口: apply_path(docx_path, args) -> dict（含护栏否决权，见下方 docstring 里
+「为什么不是 apply(doc, args)」）。打印与退出码留在 main。
 """
 import argparse
 import re
@@ -78,6 +81,62 @@ def sweep(root, rules):
     return counts
 
 
+def apply_path(docx_path, args=None) -> dict:
+    """读 docx → 清理类 1-7 → 三护栏 →（护栏绿且 args.apply 时）备份+落盘+复扫，返回报告。
+
+    **为什么是 apply_path 而不是 apply(doc, args)** —— 不是因为要改 document.xml 以外的部件，
+    而是因为这道清理的价值全在「护栏红就不许写盘」这条否决权上。apply(doc, args) 的契约
+    把存盘交给调用方，护栏只能以返回值的形式提建议：调用方照样可以拿着一份已经被改坏的
+    内存树 save 下去，而且 pipeline_lib.run_pipeline 就是这么干的（它把 step 异常吞成
+    error 后继续存盘）。把否决权交出去 = 把 fail-closed 降级成 fail-open，那还不如不要护栏。
+    所以写盘这一步必须和护栏待在同一个函数里，接口只能是 apply_path。
+
+    args 取 mode / rules / apply 三个属性；apply 缺省为 False = 干跑不落盘（破坏性动作
+    默认关，符合「默认非交互直接干」但「默认不写」的取舍：写坏一份终稿的代价远高于多跑一次）。
+    """
+    docx_path = Path(docx_path)
+    mode = getattr(args, "mode", "pei")
+    do_apply = bool(getattr(args, "apply", False))
+    rules = lib.load_rules(getattr(args, "rules", None))
+    names, parts = lib.load_parts(docx_path)
+    if "word/document.xml" not in parts:
+        raise ValueError(f"不是有效 docx（缺 word/document.xml）: {docx_path}")
+
+    terms = lib.protect_terms(rules)
+    root = lib.parse_document(parts)
+    before = "".join(lib.ptext(p) for p in lib.paragraphs(root))
+    g0 = lib.guards(before, terms)
+
+    counts = sweep(root, rules)
+    total = sum(counts.values())
+
+    after = "".join(lib.ptext(p) for p in lib.paragraphs(root))
+    g1 = lib.guards(after, terms)
+    bad = lib.guard_diff(g0, g1)
+
+    report = {"changed": total, "counts": counts, "护栏": bad, "applied": do_apply,
+              "wrote": False, "backup": None, "residual": None, "mode": mode}
+    if bad or not do_apply:
+        return report          # 护栏红 / 干跑：一个字节都不写
+
+    # --apply 落盘：备份 + 只重写 document.xml（surgical，其余 entry 逐个原样复制）
+    if total:
+        bak = docx_path.with_suffix(docx_path.suffix + ".bak-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(str(docx_path), str(bak))
+        parts["word/document.xml"] = etree.tostring(
+            root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        with zipfile.ZipFile(str(docx_path), "w", zipfile.ZIP_DEFLATED) as z:
+            for n in names:
+                z.writestr(n, parts[n])
+        report["wrote"] = True
+        report["backup"] = bak.name
+
+    # 落盘后自动复扫（类别 1-7；第8类归 identity_gate）
+    _, parts2 = lib.load_parts(docx_path)
+    report["residual"] = lib.scan_parts(parts2, mode=mode, rules=rules, cats=range(1, 8))
+    return report
+
+
 def main():
     ap = argparse.ArgumentParser(description="标书终稿确定性清理引擎（残留类 1-7）")
     ap.add_argument("docx", type=Path)
@@ -92,27 +151,12 @@ def main():
         print(f"错误: 文件不存在 {args.docx}", file=sys.stderr)
         return 1
     try:
-        rules = lib.load_rules(args.rules)
-        names, parts = lib.load_parts(args.docx)
-        if "word/document.xml" not in parts:
-            print(f"错误: 不是有效 docx（缺 word/document.xml）: {args.docx}", file=sys.stderr)
-            return 1
+        report = apply_path(args.docx, args)
     except (OSError, ValueError, RuntimeError) as e:
         print(f"错误: {e}", file=sys.stderr)
         return 1
 
-    terms = lib.protect_terms(rules)
-    root = lib.parse_document(parts)
-    before = "".join(lib.ptext(p) for p in lib.paragraphs(root))
-    g0 = lib.guards(before, terms)
-
-    counts = sweep(root, rules)
-    total = sum(counts.values())
-
-    after = "".join(lib.ptext(p) for p in lib.paragraphs(root))
-    g1 = lib.guards(after, terms)
-    bad = lib.guard_diff(g0, g1)
-
+    counts, bad, total = report["counts"], report["护栏"], report["changed"]
     tag = "[APPLY] " if args.apply else "[CHECK] "
     print(tag + " · ".join(f"{k} {v}" for k, v in counts.items()))
     print("三护栏:", "✅ 全绿（数字集合不变/术语计数不变/保护从句不减）" if not bad
@@ -131,22 +175,12 @@ def main():
         print("PASS")
         return 0
 
-    # --apply 落盘：备份 + 只重写 document.xml
-    if total:
-        bak = args.docx.with_suffix(args.docx.suffix + ".bak-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
-        shutil.copy2(str(args.docx), str(bak))
-        parts["word/document.xml"] = etree.tostring(
-            root, xml_declaration=True, encoding="UTF-8", standalone=True)
-        with zipfile.ZipFile(str(args.docx), "w", zipfile.ZIP_DEFLATED) as z:
-            for n in names:
-                z.writestr(n, parts[n])
-        print(f"已写 {args.docx.name} · 备份 {bak.name}")
+    if report["wrote"]:
+        print(f"已写 {args.docx.name} · 备份 {report['backup']}")
     else:
         print("无待清理项，未改动文件（幂等）")
 
-    # 落盘后自动复扫（类别 1-7；第8类归 identity_gate）
-    _, parts2 = lib.load_parts(args.docx)
-    residual = lib.scan_parts(parts2, mode=args.mode, rules=rules, cats=range(1, 8))
+    residual = report["residual"]
     if residual:
         print(f"复扫（类1-7）未归零，剩 {len(residual)} 条（需人工改写或补 rules）:")
         for line in lib.format_findings(residual):

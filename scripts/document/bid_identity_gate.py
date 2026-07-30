@@ -13,6 +13,8 @@
 exit 0 = PASS；exit 2 = 有 findings；exit 1 = 用法/IO 错误。
 stdout 最后一行必是 "PASS" 或 "FAIL <n> findings"。
 
+pipeline 接口: apply_path(docx_path, args) -> dict（扫描主体；打印与退出码留在 run/main）。
+
 规则 YAML（--rules，可缺省）只取 identity_banned: [公司全名/人名...] 做项目级增补。
 参考: shaoxing-eco-flow-2026/scripts/gen_bid_docx.py::assert_no_identity（此处独立成完整 CLI）。
 """
@@ -92,12 +94,17 @@ def _mini_yaml(text):
 
 
 def load_rules(path):
+    """载入项目级规则 YAML。找不到文件抛 ValueError（不 sys.exit）——
+
+    这个函数被 apply_path 间接调用，而 apply_path 可能跑在别人的 pipeline 里；
+    在库函数里 sys.exit 会把整条 pipeline 连坐掐掉，调用方连「哪一步、为什么」都拿不到。
+    退出码归 main。
+    """
     if path is None:
         return {}
     p = Path(path)
     if not p.is_file():
-        print("规则文件不存在: %s" % p, file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("规则文件不存在: %s" % p)
     text = p.read_text(encoding="utf-8")
     try:
         import yaml  # type: ignore
@@ -178,10 +185,21 @@ def scan_filename(docx, banned, findings, warnings):
 
 
 # ── 主流程 ──────────────────────────────────────────────────────────────────
-def run(docx, mode, rules_path):
+def apply_path(docx_path, args=None) -> dict:
+    """只读扫身份泄漏，返回 findings/warnings 报告；不改 docx、不写盘、不 sys.exit。
+
+    为什么是 apply_path 而不是 apply(doc, args)：本门的扫描面是「docx 里全部 .xml/.rels
+    部件 + 文件名本身」。陪标最常漏的两处恰恰在正文之外 —— docProps/core.xml 的
+    creator/lastModifiedBy，和页眉页脚里的院名。python-docx 的 Document 对象够不着它们，
+    改用 doc 当入口等于把这道门的覆盖面砍掉一半，而且砍掉的是最容易忘的一半。
+
+    args 取 mode / rules 两个属性（Namespace 或 None 都行）。
+    """
+    docx = Path(docx_path)
     if not docx.is_file():
-        print("文件不存在: %s" % docx, file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("文件不存在: %s" % docx)
+    mode = getattr(args, "mode", "pei")
+    rules_path = getattr(args, "rules", None)
     rules = load_rules(rules_path)
     extra = [x for x in (rules.get("identity_banned") or []) if x]
 
@@ -196,8 +214,7 @@ def run(docx, mode, rules_path):
             parts_bytes = {n: z.read(n) for n in z.namelist()
                            if n.endswith(".xml") or n.endswith(".rels")}
     except zipfile.BadZipFile:
-        print("非法 docx（不是 zip）: %s" % docx, file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("非法 docx（不是 zip）: %s" % docx)
     parts = {n: b.decode("utf-8", "ignore") for n, b in parts_bytes.items()}
 
     findings, warnings = [], []
@@ -209,18 +226,32 @@ def run(docx, mode, rules_path):
     scan_core_props(parts, mode, findings, warnings)
     scan_filename(docx, banned, findings, warnings)
 
-    # ── 报告 ──
+    return {"changed": 0, "findings": findings, "warnings": warnings,
+            "findings数": len(findings), "warnings数": len(warnings),
+            "mode": mode, "禁词数": len(banned), "增补数": len(extra) if mode == "pei" else 0,
+            "part数": len(parts)}
+
+
+def run(docx, mode, rules_path):
+    """CLI 外壳：调 apply_path 拿报告 → 打印 → 退出码。"""
+    args = argparse.Namespace(mode=mode, rules=rules_path)
+    try:
+        report = apply_path(docx, args)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+
     print("bid_identity_gate · %s · mode=%s · rules=%s · 内置禁词 %d + 增补 %d"
           % (docx.name, mode, rules_path or "(无)",
              len(BANNED_PEI) if mode == "pei" else len(BANNED_MAIN),
-             len(extra) if mode == "pei" else 0))
-    print("扫描 part 数: %d（.xml/.rels）+ 文件名" % len(parts))
-    for f in findings:
+             report["增补数"]))
+    print("扫描 part 数: %d（.xml/.rels）+ 文件名" % report["part数"])
+    for f in report["findings"]:
         print(f)
-    for wline in warnings:
+    for wline in report["warnings"]:
         print("[warn] " + wline)
-    if findings:
-        print("FAIL %d findings" % len(findings))
+    if report["findings"]:
+        print("FAIL %d findings" % report["findings数"])
         sys.exit(2)
     print("PASS")
     sys.exit(0)

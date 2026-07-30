@@ -98,6 +98,32 @@ def verify(doc):
     return [(i, o, n) for i, o, n, _ in items if o != n]
 
 
+def apply(doc, args=None) -> dict:
+    """在**已打开**的 doc 上按现有编号深度重排标题号（不动层级）。
+
+    改写走 renumber_headings 的 run 级 rewrite_paragraph_with_prefix，只碰
+    document.xml 的段首 run，所以是 doc-based step。
+
+    dry_run 只出计划不改树 —— 计划和真改用的是同一个 plan()，不存在「预览的和
+    实际改的不是一回事」。存盘后的连贯性复检留给调用方（verify() 要重开文件，
+    那是 apply() 契约里明确不做的事）。
+    """
+    dry_run = bool(getattr(args, "dry_run", False)) if args else False
+    items, warns = plan(doc)
+    changes = [(i, o, n) for i, o, n, _ in items if o != n]
+    if not dry_run:
+        paras = doc.paragraphs
+        for i, _o, n in changes:
+            rewrite_paragraph_with_prefix(paras[i], f"{n} ")
+    return {
+        "changed": len(changes),
+        "headings": len(items),
+        "dry_run": dry_run,
+        "changes": [{"idx": i, "old": o, "new": n} for i, o, n in changes],
+        "warnings": warns,
+    }
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="标题编号按现有深度重排序(修断号/重号/错号,不动层级)")
     ap.add_argument("docx_path")
@@ -111,28 +137,26 @@ def main(argv=None) -> int:
         return 2
 
     doc = Document(str(path))
-    items, warns = plan(doc)
-    changes = [(i, o, n) for i, o, n, _ in items if o != n]
-    print(f"[plan] 带编号标题 {len(items)} 段, 需修 {len(changes)} 段")
-    for i, o, n in changes:
-        print(f"  #{i} {o} → {n}")
-    for w in warns:
+    rep = apply(doc, a)
+    changes = rep["changes"]
+    print(f"[plan] 带编号标题 {rep['headings']} 段, 需修 {len(changes)} 段")
+    for c in changes:
+        print(f"  #{c['idx']} {c['old']} → {c['new']}")
+    for w in rep["warnings"]:
         print(f"  ⚠ {w}")
     if a.report:
         Path(a.report).write_text(json.dumps(
-            {"changes": [{"idx": i, "old": o, "new": n} for i, o, n in changes],
-             "warnings": warns}, ensure_ascii=False, indent=2), encoding="utf-8")
+            {"changes": changes, "warnings": rep["warnings"]},
+            ensure_ascii=False, indent=2), encoding="utf-8")
     if a.dry_run:
         print("[dry-run] 未写文件")
         return 0
     if not changes:
         print("✓ 标题编号已连贯,无需改写")
         return 0
+    # 备份放在内存改写之后不影响内容：磁盘上的文件直到下面 doc.save 才动
     if not a.no_backup:
         print(f"[backup] {make_backup(path).name}")
-    paras = doc.paragraphs
-    for i, _o, n in changes:
-        rewrite_paragraph_with_prefix(paras[i], f"{n} ")
     doc.save(str(path))
     left = verify(Document(str(path)))
     if left:

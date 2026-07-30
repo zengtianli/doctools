@@ -100,23 +100,37 @@ def _all_tbl_elements(doc):
     return list(doc.element.body.iter(qn("w:tbl")))
 
 
-def process(docx_path: Path, cell_center: bool, dry_run: bool, backup: bool) -> dict:
-    doc = Document(str(docx_path))
+def apply(doc, args=None) -> dict:
+    """在**已打开**的 doc 上把所有表格整体居中（可选连单元格内文字一起居中）。
+
+    改动全在 document.xml 的 <w:tbl>/<w:tc>/<w:p> 上，不碰 zip 里别的部件，
+    所以是 doc-based step —— 存盘、备份、复检都归调用方。
+    """
+    cell_center = bool(getattr(args, "cell_center", False)) if args else False
+
     tbls = _all_tbl_elements(doc)
-    n_tbl = len(tbls)
     cells = 0
     for tbl_el in tbls:
         _set_table_jc(tbl_el, "center")
         if cell_center:
             cells += _center_cells(tbl_el)
 
-    result = {
-        "file": str(docx_path),
-        "tables": n_tbl,
+    return {
+        "changed": len(tbls),
+        "tables": len(tbls),
         "cell_center": cell_center,
         "cells": cells,
+    }
+
+
+def process(docx_path: Path, cell_center: bool, dry_run: bool, backup: bool) -> dict:
+    doc = Document(str(docx_path))
+    result = {
+        "file": str(docx_path),
+        **apply(doc, argparse.Namespace(cell_center=cell_center)),
         "dry_run": dry_run,
     }
+    n_tbl = result["tables"]
     if dry_run or n_tbl == 0:
         result["written"] = False
         return result
@@ -186,7 +200,11 @@ def main() -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply_path(docx_path, args=None) -> dict:
-    """pipeline-compatible adapter（原地 mutator）。"""
+    """原地 mutator（自己开文件、备份、存盘、复检）。
+
+    留着是为了不掐断已经按路径调它的老调用方；pipeline_lib.load_step 优先取
+    apply()，新链路一律走纯内存版本，这里不会被 pipeline 选中。
+    """
     cell = bool(getattr(args, "cell_center", False)) if args else False
     dry = bool(getattr(args, "dry_run", False)) if args else False
     backup = not bool(getattr(args, "no_backup", False)) if args else True

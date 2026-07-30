@@ -11,6 +11,10 @@ Subcommands:
   fix clear-direct-format  ← (W15) 清段 inline 直接格式 (pPr/rPr 直接子元素), 只保留 pStyle/rStyle
   fix style-create         ← (W15) 按 base style 克隆新空 style 定义到 styles.xml
 
+pipeline 接口:
+  只有 style-rebrand 暴露 doc-based `apply(doc, args)`; 其余 6 个子命令 + restore
+  未纳入 (改 styles.xml / settings.xml, 或跨多文件编排) —— 理由见 apply() docstring.
+
 CLI 通用 args (per subcommand):
     <docx_path> [--dry-run] [--inplace] [--no-backup] [--force] [--report json]
     --profile <name>          (default zdwp; 走 doctools.lib.styles.load_profile)
@@ -356,42 +360,70 @@ def _set_para_pStyle(p, style_id: str):
     pStyle.set(qn("w:val"), style_id)
 
 
+def _resolve_rebrand_pair(profile, from_style, to_style, role,
+                          profile_name=None) -> tuple[str, str]:
+    """把 (--from / --to / --role) 归一成 (from_match, to_id)。
+
+    抽出来是因为 CLI 和 pipeline apply() 必须用同一套解析——
+    「role 落到哪个 styleId」是 profile 语义，散成两份迟早两边漂。
+    解析不出目标样式就抛 ValueError（fail-closed：宁可炸也别默默不改）；
+    调用方自己决定是打印 [ERR] 退 2 还是让异常冒到 pipeline。
+    """
+    to_id = to_style
+    if role and not to_id:
+        to_id = _profile_target_for_role(profile, role)
+        if not to_id:
+            raise ValueError(f"profile {profile_name!r} 无 role={role!r} 主样式")
+    from_match = from_style or "Normal"
+    if not to_id:
+        raise ValueError("--to / --role 必须给一个")
+    return from_match, to_id
+
+
+def _rebrand_paragraphs(doc, from_match: str, to_id: str) -> dict:
+    """纯内存段样式迁移：把 style.name 或 styleId == from_match 的段改挂 to_id。
+
+    不开文件不存盘——这样 CLI（经 _shape_gate 走对账+事务落盘）和 pipeline
+    （多个 apply 串在同一个 doc 上）能共用同一份改法。
+    目标 styleId 在 docx 里不存在时只记 target_missing、一段都不改：
+    挂一个没有定义的 pStyle 会让 Word 静默回落 Normal，比不改更糟。
+    """
+    stats = {"matched": 0, "changed": 0, "skipped_same": 0}
+    available = {s.style_id for s in doc.styles}
+    if to_id not in available:
+        stats["target_missing"] = to_id
+    for p in doc.paragraphs:
+        name = (p.style.name if p.style else None) or ""
+        sid = getattr(p.style, "style_id", None) if p.style else None
+        if from_match in (name, sid):
+            stats["matched"] += 1
+            if sid == to_id:
+                stats["skipped_same"] += 1
+                continue
+            if to_id in available:
+                _set_para_pStyle(p, to_id)
+                stats["changed"] += 1
+    return stats
+
+
 def cmd_style_rebrand(args) -> int:
     profile = load_profile(args.profile)
     src = _common_setup(args)
 
     # 决定 from / to
-    from_match = args.from_style
-    to_id = args.to_style
-    if args.role and not to_id:
-        to_id = _profile_target_for_role(profile, args.role)
-        if not to_id:
-            print(f"[ERR] profile {args.profile!r} 无 role={args.role!r} 主样式", file=sys.stderr)
-            return 2
-    if not from_match:
-        from_match = "Normal"
-    if not to_id:
-        print("[ERR] --to / --role 必须给一个", file=sys.stderr)
+    try:
+        from_match, to_id = _resolve_rebrand_pair(
+            profile, args.from_style, args.to_style, args.role,
+            profile_name=args.profile,
+        )
+    except ValueError as e:
+        print(f"[ERR] {e}", file=sys.stderr)
         return 2
 
     stats_holder = {"matched": 0, "changed": 0, "skipped_same": 0}
 
     def _work(doc):
-        # 验目标 styleId 在 docx 里存在
-        available = {s.style_id for s in doc.styles}
-        if to_id not in available:
-            stats_holder["target_missing"] = to_id
-        for p in doc.paragraphs:
-            name = (p.style.name if p.style else None) or ""
-            sid = getattr(p.style, "style_id", None) if p.style else None
-            if from_match in (name, sid):
-                stats_holder["matched"] += 1
-                if sid == to_id:
-                    stats_holder["skipped_same"] += 1
-                    continue
-                if to_id in available:
-                    _set_para_pStyle(p, to_id)
-                    stats_holder["changed"] += 1
+        stats_holder.update(_rebrand_paragraphs(doc, from_match, to_id))
         return stats_holder
 
     before, after, violations, refused = _shape_gate(
@@ -1917,6 +1949,45 @@ _orig_register = register
 def register(subparsers) -> None:  # type: ignore[no-redef]
     _orig_register(subparsers)
     register_restore(subparsers)
+
+
+# ── pipeline adapter (doc-based step · 见 sub/pipeline_lib.py 契约) ──────────
+def apply(doc, args=None) -> dict:
+    """pipeline-compatible: 在内存 doc 上跑「套样式集」主路 = fix style-rebrand。
+
+    识别 args: from_style(默认 "Normal") / to_style / role / profile。
+    --to 与 --role 至少给一个，两者都缺直接抛 ValueError（同 CLI 的 exit 2 语义，
+    只是这里由 pipeline 决定怎么处置）；只有真要按 role 查表时才 load_profile，
+    免得纯 --to 的调用也被 styles_registry.yaml 缺失拖挂。
+
+    **只覆盖 7 个子命令里的 style-rebrand**，其余一律未纳入 apply：
+      · style-pool-cleanup / role-fill / style-create / style-rename
+        改的是 styles.xml 里的样式定义（增删改名 w:style 节点），且 pool-cleanup
+        还要读 numbering.xml / settings.xml / header*.xml 判引用——不是纯 doc 改动，
+        且这些是「一次性整理动作」，不该混进逐文档批处理流水线；
+      · style-pane-filter 改 word/settings.xml 的 stylePaneFormatFilter；
+      · clear-direct-format 是破坏性清格式，默认串进 pipeline 风险过大，保持显式 CLI 调用；
+      · restore / restore-batch 是跨多文件、含 LLM 决策的 9 步编排，本就不是单 doc 步骤。
+    要这些能力仍走 CLI 子命令，它们各自带 shape_contract 对账 + 事务落盘。
+    """
+    to_style = getattr(args, "to_style", None) if args else None
+    role = getattr(args, "role", None) if args else None
+    from_style = getattr(args, "from_style", None) if args else None
+    profile_name = getattr(args, "profile", None) if args else None
+    # profile 只在「给了 role 却没给 to」时才需要
+    profile = load_profile(profile_name) if (role and not to_style) else None
+    from_match, to_id = _resolve_rebrand_pair(
+        profile, from_style, to_style, role, profile_name=profile_name,
+    )
+    stats = _rebrand_paragraphs(doc, from_match, to_id)
+    return {
+        "from": from_match,
+        "to": to_id,
+        "changed": stats["changed"],
+        "matched": stats["matched"],
+        "skipped_same": stats["skipped_same"],
+        "target_missing_in_docx": stats.get("target_missing"),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

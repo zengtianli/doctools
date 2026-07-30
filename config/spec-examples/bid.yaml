@@ -1,0 +1,159 @@
+# bid.yaml · 标书（投标文件）交付件的**版式** spec
+#
+#     cd ~/Dev/tools/doctools
+#     python3 scripts/document/typeset_apply.py <标书.docx> \
+#         --spec config/spec-examples/bid.yaml --report /tmp/bid-typeset.json
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 先说清楚它**没有**替代什么 —— 这份 spec 替代的 bid_* 脚本数 = 0
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 2026-07-30 逐个评估了 scripts/document/bid_*.py 七件，看哪些能收成 spec 的一节：
+#
+#   脚本                    类别            能不能变成 spec        为什么
+#   ─────────────────────  ─────────────  ──────────────────  ───────────────────
+#   bid_residue_scan.py     (B) 只读闸门    不能                 spec 是「把文档改成什
+#   bid_identity_gate.py    (B) 只读闸门    不能                 么样」，闸门是「不长这
+#   bid_print_ready.py      (B) 只读闸门    不能                 样就别发出去」。而且引
+#   bid_residue_lib.py      (B) 闸门的 SSOT 不能                 擎的 audit_* 动作只把
+#                                                               findings 写进 report，
+#                                                               **不影响退出码**（见
+#                                                               typeset_apply.py main()：
+#                                                               rc 只来自 run()），闸门语义
+#                                                               在当前引擎里表达不出来。
+#   bid_finalize_sweep.py   (C) 内容改写    不能                 删段/剥内部码/精确替换/
+#                                                               题注重编号 —— 改的是**正文
+#                                                               写了什么**，不是它长什么样。
+#   bid_deref.py            (C) 内容改写    不能                 删从句、把「见表 7.1-1」改写
+#                                                               成「见下表」，还会吐 MANUAL
+#                                                               清单要人判。这是语义判断。
+#   bid_final.py            —  driver      不能                 它是**调用方**，地位与
+#                                                               typeset_apply 平级，不是动作。
+#
+# 那这份 spec 是什么？是标书交付件的**另一半** —— 版式那一半。bid_* 七件一件都不管版式
+# （字体/页眉页脚/章号/框线一个都没碰），今天这一半靠项目里手写脚本或人肉调。收成 spec 之后
+# 它变成一份 yaml，而且它的每个旋钮都**结构性地消掉某道门会红的原因**（下面逐条标了）。
+#
+# ── 跑的顺序（跨轴，不是本 spec 内部顺序；spec 内部顺序由引擎写死）─────────────
+#   ① 本 spec（版式定型，章号在这一步定死）
+#   ② bid_deref.py         去交叉引用耦合
+#   ③ bid_finalize_sweep.py --apply   清残留类 1-7
+#   ④ bid_final.py         跑三道门（residue / identity / print_ready）
+#
+#   ①在②之前的理由是硬的：bid_deref 用正文当前章号建「章节号→标题名」映射，章号在它跑完
+#   之后再被 renumber_headings 改一次，它吐给人判的 MANUAL 清单里的号就全是废号。
+#
+# 全量字段看 config/docx_spec.schema.yaml；通用报告版看 report-generic.yaml。
+
+version: 1
+
+actions:
+
+  # ── 一 · 文本定型 ───────────────────────────────────────────────────────
+  # 标书是多人合稿件，进来时几乎必然带修订标记和 _Toc 残留书签。
+  strip_revisions:
+    revision_mode: accept-all
+  strip_bookmarks:
+    bookmark_prefixes: "_Toc,_Ref,_Hlk"
+
+  # ── 二 · 结构清理 ───────────────────────────────────────────────────────
+  strip_empty_captions: true      # 空「表名/图名」壳子
+  delete_empty_h1: true           # 空 H1（sectPr 迁到前一段，保住分节）
+  relocate_orphan_blocks: false   # 要搬块得先给 plan JSON，通用标书给不了
+
+  # ── 三 · 章号 ───────────────────────────────────────────────────────────
+  convert_chapter_format: true
+  renumber_headings:
+    # 标书按招标文件的评分序分节交付，正文常常从第 10 章起编 —— 这正是 schema 里
+    # 「标书从第 10 章起编那种」说的场景。按你的标段改；不确定写 auto 让它从文档现状探测。
+    h1_base: 10
+
+  # ── 四 · 题注 ───────────────────────────────────────────────────────────
+  strip_outlinelvl_from_captions: true
+  pair_table_captions: false      # 要先给 decision JSON
+  number_captions: true
+  # ⚠️ number_captions **只给没编号的题注补号，已有「表 X-Y」前缀的一律跳过**（见
+  #    sub/number_captions.py 启发规则），所以它 **修不了**「合稿后编号乱序」——
+  #    2026-07-30 实测：一份正文里先出现「表 10-2」后出现「表 10-1」的 docx，跑完
+  #    number_captions 报 changed=0，bid_print_ready 照旧红「题注编号断裂 [2,1]」。
+  #    乱序要靠 bid_finalize_sweep 的 rules `caption_renumber:`（按正文首次出现序重编，
+  #    占位法防连环替换）。**这条是 spec 收编不了 bid_finalize_sweep 的直接证据之一。**
+
+  # ── 五 · 正文细节 ───────────────────────────────────────────────────────
+  fix_superscript_refs: true
+  docx_apply_image_caption: false  # 吃项目模板专属样式名，标书通用版给不了
+
+  # ── 六 · 页眉页脚 ═══ 陪标(pei)在这里最容易一脚踩进身份泄漏 ═══════════════
+  #
+  # footer_prefix 就是 bid_identity_gate 盯的那个东西。2026-07-30 实测同一份 fixture：
+  #     footer_prefix: ""                              → identity_gate FAIL 8
+  #     footer_prefix: 浙江省水利水电勘测设计院有限责任公司 → identity_gate FAIL 11
+  #                    （新增 word/footer1.xml 命中「勘测设计院」「设计院」「有限责任公司」）
+  # 也就是说：**这一个 yaml 字段的取值直接决定身份门红不红**。这是 spec 与闸门之间
+  # 唯一一处真正的耦合点，值得单独盯。
+  #
+  # 陪标(pei) → 保持下面这样（header/footer 都不写字，只留页码）：
+  add_header_footer:
+    header: ""                    # 陪标页眉不写任何单位/项目名
+    footer_prefix: ""             # ← 陪标必须留空；主标(main)才填院名全称
+    page_number: true
+    font_size: 10.0
+    gap_spaces: 13
+    header_align: right
+    footer_align: center
+  # 主标(main)改成：
+  #   header: <项目名>
+  #   footer_prefix: 浙江省水利水电勘测设计院有限责任公司
+  # 注意 sub/add_header_footer.py 的 apply() 里 footer_prefix 的 getattr 兜底值**是院名**
+  # （`getattr(args, "footer_prefix", "浙江省水利水电勘测设计院")`）。走本引擎不会踩到
+  # （ACTIONS 表的默认值是空串，_ns 一定会把这个属性填上），但**别的调用方直接
+  # apply(doc, Namespace()) 就会凭空多出院名**。陪标件别走那条路。
+
+  # ── 七 · 表格 ───────────────────────────────────────────────────────────
+  set_table_borders:
+    val: single
+    sz: 4
+    color: auto
+    keep_cell_borders: false
+  set_table_align:
+    cell_center: false
+
+  # ── 八 · 终态自检（只读；注意它们不改退出码，真闸门在 bid_final.py）────────
+  audit_caption_outline: true
+  audit_table_pairing: true
+  audit_bookmarks: true
+
+  # ── 九 · zip 层 ─────────────────────────────────────────────────────────
+  strip_doc_protection: true
+  freeze_heading_numbers:
+    freeze_levels: "1,2,3,4"
+    unlink_style: true
+    num_id: "4"
+  freeze_all_fields:
+    freeze_types: all
+  # 冻域对标书是刚需而不是可选项：评委/合稿人在**别的机器上**打开，Word 会重算 TOC 和
+  # PAGE 域。不冻 = 页码和目录到了对方电脑上变一个样，而这恰好是没人会去复查的地方。
+  strip_style_outlinelvl:
+    strip_styles: null
+
+  # ── 十 · 字体（整条链最后一步）───────────────────────────────────────────
+  normalize_fonts:
+    body_cjk: 宋体              # 全局 CLAUDE.md #12：宋体系/仿宋系，等线在 spec 层就被拦
+    heading_cjk: 黑体
+    latin: Times New Roman
+    heading_color: "000000"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 本 spec **管不着**的，以及为什么（别指望加参数能解决）
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 1. 页面尺寸 A4 —— bid_print_ready 会 warn「页面非 A4」，但引擎里**根本没有设页面尺寸的
+#    动作**（ACTIONS 表里没有 set_page_size）。所以这条 warn 今天只能靠模板保证，spec 修不了。
+#    这是「新增一类交付 = 新写 spec」这个命题上一个真实的缺口：连纯版式的东西都还没配齐。
+# 2. 清 docProps 的 creator / lastModifiedBy / description —— 陪标 fatal 项，同样没有动作。
+# 3. TOC 有没有 —— 只有 warn，没有「生成目录」的动作。
+# 4. 上面三条都是**纯版式**，都该是 spec 的活，只是引擎还没长出来。它们不构成「标书必须
+#    另起炉灶写脚本」的理由，构成的是「spec 引擎的动作表还得补」的待办。
+# 5. 类别 1-9 残留、身份泄漏、交叉引用去耦合 —— 这些**永远不该**进 spec：它们改的是
+#    正文写了什么、以及这份稿子能不能发出去，不是它长什么样。

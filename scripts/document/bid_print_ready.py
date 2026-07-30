@@ -25,6 +25,9 @@ CLI 契约（终稿管线统一）：
 
 题注校验参考 shaoxing normalize_captions.py（相邻图/表判定）与 finalize2.py（重编号段）。
 只用 stdlib + lxml；零写操作，无备份需求。
+
+pipeline 接口: apply_path(docx_path, args) -> dict。检查主体一直在 check() 里，apply_path 与
+main 都调它 —— main 保留自己的 --rules 存在性/解析错误分支（那是参数校验，属于调用方）。
 """
 import argparse
 import re
@@ -298,6 +301,26 @@ def check(docx: Path, mode: str, rules: dict):
     # 报告头附加统计（非 finding）
     warn_stats = f"[stat] 段落 {len(all_paras)} · media {media_n} · 真图题注 {fig_caps} · 题注组 {len(groups)}"
     return fatal, warn, warn_stats
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """只读跑打印级验收，返回 fatal/warn 报告；不改 docx、不写盘、不 sys.exit。
+
+    为什么是 apply_path 而不是 apply(doc, args)：本门有一半检查项在 document.xml 之外 ——
+    zip CRC、各 part 的 XML 可解析性、word/_rels 里的 rId 定义、docProps 元数据、media 计数。
+    这些正是「Word 打开弹修复框」的高发处，拿 python-docx 的 Document 当入口一条都看不到。
+
+    args 取 mode / rules 两个属性；rules 是 YAML 路径，None = 不加载项目级增补。
+    """
+    docx_path = Path(docx_path)
+    mode = getattr(args, "mode", "pei")
+    rules_path = getattr(args, "rules", None)
+    rules = parse_simple_yaml(Path(rules_path)) if rules_path else {}
+    result = check(docx_path, mode, rules)
+    fatal, warn = result[0], result[1]
+    stat = result[2] if len(result) == 3 else None   # zip/xml 挂时短路返回二元组，没有统计行
+    return {"changed": 0, "fatal": fatal, "warn": warn, "stat": stat,
+            "fatal数": len(fatal), "warn数": len(warn), "mode": mode}
 
 
 def main():

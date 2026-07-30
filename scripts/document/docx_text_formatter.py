@@ -356,6 +356,86 @@ def process_root(root, stats, scope="正文", cfg=None):
         process_paragraph_element(p, stats, scope, cfg)
 
 
+def _strip_header_footer_refs(doc) -> int:
+    """删掉所有 section 的 headerReference/footerReference，返回删掉的引用数。
+
+    删「引用」而不是 header/footer part 本身：Word 见不到引用就按无页眉页脚渲染，
+    留在包里的孤儿 part 无害；去删 part 会连带 rels 一起崩。
+    """
+    removed = 0
+    for section in doc.sections:
+        sectPr = section._sectPr
+        for ref in (sectPr.findall(qn("w:headerReference"))
+                    + sectPr.findall(qn("w:footerReference"))):
+            sectPr.remove(ref)
+            removed += 1
+    return removed
+
+
+def _normalize_doc(doc, cfg: FormatConfig) -> dict:
+    """对**已打开的** doc 做完整规范化，返回统计。不开文件、不存盘、不打印。
+
+    process_docx（CLI/GUI 通路，手上已经是 FormatConfig）与 apply（pipeline 通路，
+    手上是 argparse.Namespace）共用这一份实现 —— 两边各抄一遍这个循环，正是
+    「脚注 flush 漏一处」「新加的 part 只接进了一条通路」这类 bug 的温床。
+    """
+    stats = {"quotes": 0, "punctuation": 0, "units": 0, "scopes": {}}
+
+    # 处理所有承载文本的 part：正文（含表格/嵌套表/文本框/超链接/审阅修订）
+    # + 批注 comments.xml + 脚注 + 尾注 + 页眉页脚（默认保留并规范化）
+    flushes = []
+    parts = {k for k in ("comments", "notes", "headers") if cfg.wants(k)}
+    for label, root, flush in iter_text_roots(
+            doc, include_headers=not cfg.strip_headers, parts=parts):
+        process_root(root, stats, label, cfg)
+        if flush is not None:
+            flushes.append(flush)
+    for flush in flushes:          # 通用 Part（脚注/尾注）改完必须回写 blob
+        flush()
+
+    # 显式要求时才删页眉页脚（默认保留）
+    stats["headers_stripped"] = _strip_header_footer_refs(doc) if cfg.strip_headers else 0
+    stats["changed"] = (stats["quotes"] + stats["punctuation"] + stats["units"]
+                        + stats["headers_stripped"])
+    return stats
+
+
+def _config_from_args(args=None) -> FormatConfig:
+    """argparse.Namespace → FormatConfig（pipeline 通路）。
+
+    逐项 getattr 带默认：pipeline 里同一个 Namespace 要喂给一串 step，缺哪项就该
+    沿用本脚本的默认值，而不是 AttributeError 掀桌。dict 通路是 GUI 专用的
+    FormatConfig.from_opts（键名带 rule./scope. 前缀），两套别混。
+    """
+    base = _cli_config()
+    if args is None:
+        return base
+    ready = getattr(args, "format_config", None)
+    if isinstance(ready, FormatConfig):     # 调用方已算好完整意图，直接用
+        return ready
+    scopes = getattr(args, "scopes", None)
+    return replace(
+        base,
+        quotes=bool(getattr(args, "quotes", base.quotes)),
+        punct=bool(getattr(args, "punct", base.punct)),
+        units=bool(getattr(args, "units", base.units)),
+        quote_font=bool(getattr(args, "quote_font", base.quote_font)),
+        scopes=frozenset(scopes) if scopes else base.scopes,
+        strip_headers=bool(getattr(args, "strip_headers", base.strip_headers)),
+    )
+
+
+# ---------------- pipeline adapter ----------------
+def apply(doc, args=None) -> dict:
+    """在**已打开的** doc 上做文本规范化（引号/标点/单位 + 引号宋体），返回统计。
+
+    覆盖面照旧走 docx_xml 的 iter_text_roots：批注/脚注/尾注/页眉页脚是独立 part，
+    审阅修订（w:ins/w:del）又不是 w:p 的直接子 run —— 只遍历 doc.paragraphs 会
+    整块漏掉（实测某审阅稿 24 个 run / 3101 字一个都改不到）。
+    """
+    return _normalize_doc(doc, _config_from_args(args))
+
+
 def process_docx(input_file, cfg=None):
     """处理 DOCX 文件。cfg=None 时用模块级 CLI 默认值(向后兼容既有调用方)。"""
     cfg = cfg or _cli_config()
@@ -387,35 +467,11 @@ def process_docx(input_file, cfg=None):
         print(f"📖 正在读取文件: {input_path.name}")
         doc = Document(input_path)
 
-        # 统计信息（scopes 分域记账：正文 / 修订·插入态 / 修订·删除态 / 批注 / 脚注…）
-        stats = {"quotes": 0, "punctuation": 0, "units": 0, "scopes": {}}
-
-        # 处理所有承载文本的 part：正文（含表格/嵌套表/文本框/超链接/审阅修订）
-        # + 批注 comments.xml + 脚注 + 尾注 + 页眉页脚（默认保留并规范化）
+        # 改 doc 的那件事整体在 _normalize_doc 里（统计信息由它返回，这里只负责喊）
         print(f"🔄 规则: {_fmt_rules(cfg)} | 范围: {_fmt_scopes(cfg)}")
-        flushes = []
-        parts = {k for k in ("comments", "notes", "headers") if cfg.wants(k)}
-        for label, root, flush in iter_text_roots(
-                doc, include_headers=not cfg.strip_headers, parts=parts):
-            process_root(root, stats, label, cfg)
-            if flush is not None:
-                flushes.append(flush)
-        for flush in flushes:          # 通用 Part（脚注/尾注）改完必须回写 blob
-            flush()
-
-        # 显式要求时才删页眉页脚（默认保留）
         if cfg.strip_headers:
             print("🗑️  正在删除页眉页脚（--strip-headers）...")
-            from docx.oxml.ns import qn
-
-            for section in doc.sections:
-                sectPr = section._sectPr
-                # 删除所有页眉引用
-                for headerRef in sectPr.findall(qn("w:headerReference")):
-                    sectPr.remove(headerRef)
-                # 删除所有页脚引用
-                for footerRef in sectPr.findall(qn("w:footerReference")):
-                    sectPr.remove(footerRef)
+        stats = _normalize_doc(doc, cfg)
 
         # 保存文件
         print("💾 正在保存文件...")

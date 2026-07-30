@@ -403,12 +403,24 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply(doc, args=None) -> dict:
+    """按层级重排标题编号（内存版，不开文件不存盘）。
+
+    h1_base 走 args 而不是写死 1：main() 一直是 `plan_renumber(doc, h1_base)`
+    （--h1-base 专为「标书从第 10 章起编」而加），抽 apply() 时这个值漏搬了，
+    于是所有走 pipeline / spec 的调用一律被悄悄按 1 起编 —— 「配了没生效」是
+    这条链上最难查的一类 bug，宁可补回来。缺省 1 与漏搬前的行为逐字相同。
+    """
     dry = bool(getattr(args, "dry_run", False)) if args else False
-    before, after, stats = plan_renumber(doc)
+    raw_base = getattr(args, "h1_base", 1) if args else 1
+    if raw_base is None:
+        raw_base = 1
+    h1_base = detect_h1_base(doc) if str(raw_base) == "auto" else int(raw_base)
+    before, after, stats = plan_renumber(doc, h1_base)
     if not dry:
         apply_renumber(doc, after)
     return {
         "changed": len(after),
+        "h1_base": h1_base,
         **stats,
     }
 

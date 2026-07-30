@@ -174,6 +174,19 @@ def delete_marked(doc, hits: list[dict]) -> int:
     return deleted
 
 
+# ---------------- pipeline adapter ----------------
+def apply(doc, args=None) -> dict:
+    """在内存 doc 上删掉 strict 空 caption 段, 返回改动报告.
+
+    识别规则是启发式(样式关键词 + strict 空判定), 刻意不做成参数 ——
+    它靠的是模板残留的客观形态, 一旦开放配置就会被调成"顺手多删几段"。
+    所以本函数不读 args, 但仍保留该形参以符合 pipeline 的 step 契约。
+    """
+    hits = scan_empty_captions(doc)
+    deleted = delete_marked(doc, hits)
+    return {"changed": deleted, "deleted": deleted, "hits": hits}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -250,7 +263,8 @@ def main() -> int:
         report["backup"] = str(bak)
         print(f"[INFO] 备份 -> {bak.name}")
 
-    deleted = delete_marked(doc, hits)
+    # dry-run / 无命中 两条分支已在上面用 scan 结果提前返回, 走到这里必然是真删
+    deleted = apply(doc, args)["deleted"]
     report["deleted"] = deleted
 
     out_path = args.output if args.output else args.docx

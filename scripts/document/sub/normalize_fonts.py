@@ -91,11 +91,23 @@ def _iter_all_paragraphs(doc):
         yield from _iter_table_paragraphs(t)
 
 
-def process(docx_path: Path, body_cjk: str, heading_cjk: str, latin: str,
-            heading_color: str, dry_run: bool, backup: bool) -> dict:
+def apply(doc, args=None) -> dict:
+    """在**已打开**的 doc 上统一中西文字体 + 压黑标题色。
+
+    纯内存做得到的原因：python-docx 的 doc.styles 拿到的就是 styles.xml 的
+    元素树，改它和改段落一样是在同一份 package 上动手，落盘时一起写出去 ——
+    不需要自己拆 zip，所以这是 doc-based step 而非 path-based。
+
+    ⚠ 顺序约束（调用方负责）：必须排在所有**新增 run** 的动作之后（补题注号、
+    冻结域生成的编号文本），否则新加的 run 逃过字体统一，成品里会有零星异体字。
+    """
     from docx.enum.style import WD_STYLE_TYPE
 
-    doc = Document(str(docx_path))
+    body_cjk = getattr(args, "body_cjk", "宋体") if args else "宋体"
+    heading_cjk = getattr(args, "heading_cjk", "黑体") if args else "黑体"
+    latin = getattr(args, "latin", "Times New Roman") if args else "Times New Roman"
+    heading_color = getattr(args, "heading_color", "000000") if args else "000000"
+
     styles = doc.styles
 
     # ── 1) 样式级 ──
@@ -122,12 +134,23 @@ def process(docx_path: Path, body_cjk: str, heading_cjk: str, latin: str,
                 heading_runs += 1
             run_hits += 1
 
-    result = {
-        "file": str(docx_path),
+    return {
+        "changed": style_hits + run_hits,
         "style_hits": style_hits,
         "run_hits": run_hits,
         "heading_runs": heading_runs,
         "policy": f"标题={heading_cjk}/#{heading_color} · 正文={body_cjk} · 西文={latin}",
+    }
+
+
+def process(docx_path: Path, body_cjk: str, heading_cjk: str, latin: str,
+            heading_color: str, dry_run: bool, backup: bool) -> dict:
+    doc = Document(str(docx_path))
+    result = {
+        "file": str(docx_path),
+        **apply(doc, argparse.Namespace(
+            body_cjk=body_cjk, heading_cjk=heading_cjk,
+            latin=latin, heading_color=heading_color)),
         "dry_run": dry_run,
     }
     if dry_run:
@@ -188,6 +211,11 @@ def main() -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply_path(docx_path, args=None) -> dict:
+    """原地 mutator（自己开文件、备份、存盘）。
+
+    留着是为了不掐断已经按路径调它的老调用方；pipeline_lib.load_step 优先取
+    apply()，新链路一律走纯内存版本，这里不会被 pipeline 选中。
+    """
     body = getattr(args, "body_cjk", "宋体") if args else "宋体"
     heading = getattr(args, "heading_cjk", "黑体") if args else "黑体"
     latin = getattr(args, "latin", "Times New Roman") if args else "Times New Roman"

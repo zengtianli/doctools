@@ -19,6 +19,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 # ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
 import sys as _sys
@@ -191,6 +192,69 @@ def add_blank_line_after_paragraph(doc, paragraph):
     body.insert(para_index + 1, new_para)
 
 
+def apply(doc, args=None) -> dict:
+    """对已打开的 doc: 给图片段和它下一行的图名段套图名样式, 并在图名后补空行。
+
+    样式名走模糊匹配, 因为模板落地后常变成 "ZDWP 图名" 这类空格变体;
+    匹配不到时**不退出也不抛** —— 退出码是调用方的事, 这里只用 style_resolved=None 报告。
+    段级异常逐段收进 errors 而不是即时打印: 一是单段失败不能中断整篇,
+    二是 pipeline 里多个 step 串跑时, 打印归调用方统一做。
+    """
+    style_name = getattr(args, "style_name", "ZDWP图名") if args else "ZDWP图名"
+    actual_style_name = find_style_fuzzy(doc, style_name)
+    if not actual_style_name:
+        return {
+            "changed": 0,
+            "style_requested": style_name,
+            "style_resolved": None,
+            "images": 0,
+            "captions": 0,
+            "errors": [],
+        }
+
+    image_count = 0
+    caption_count = 0
+    errors: list[dict] = []
+
+    paragraphs = doc.paragraphs
+
+    for i, paragraph in enumerate(paragraphs):
+        try:
+            # 跳过表格内的段落
+            if is_in_table(paragraph):
+                continue
+
+            # 检查是否包含图片
+            if has_image(paragraph):
+                # 应用样式到图片段落
+                paragraph.style = actual_style_name
+                image_count += 1
+
+                # 检查下一行是否存在
+                if i + 1 < len(paragraphs):
+                    next_paragraph = paragraphs[i + 1]
+
+                    # 如果下一行不在表格内且有内容，应用样式
+                    if not is_in_table(next_paragraph) and next_paragraph.text.strip():
+                        next_paragraph.style = actual_style_name
+                        caption_count += 1
+
+                        # 在图片题注后面添加空行
+                        add_blank_line_after_paragraph(doc, next_paragraph)
+
+        except Exception as e:
+            errors.append({"para_no": i + 1, "error": str(e)})
+
+    return {
+        "changed": image_count + caption_count,
+        "style_requested": style_name,
+        "style_resolved": actual_style_name,
+        "images": image_count,
+        "captions": caption_count,
+        "errors": errors,
+    }
+
+
 def apply_image_caption_style(input_file, style_name="ZDWP图名"):
     """
     应用图片和图名样式
@@ -245,42 +309,14 @@ def apply_image_caption_style(input_file, style_name="ZDWP图名"):
     except Exception as e:
         print(f"⚠️ 备份失败: {e}")
 
-    # 统计信息
-    image_count = 0
-    caption_count = 0
-    error_count = 0
-
     print("🔄 正在应用图片和图名样式...")
 
-    paragraphs = doc.paragraphs
-
-    for i, paragraph in enumerate(paragraphs):
-        try:
-            # 跳过表格内的段落
-            if is_in_table(paragraph):
-                continue
-
-            # 检查是否包含图片
-            if has_image(paragraph):
-                # 应用样式到图片段落
-                paragraph.style = style_name
-                image_count += 1
-
-                # 检查下一行是否存在
-                if i + 1 < len(paragraphs):
-                    next_paragraph = paragraphs[i + 1]
-
-                    # 如果下一行不在表格内且有内容，应用样式
-                    if not is_in_table(next_paragraph) and next_paragraph.text.strip():
-                        next_paragraph.style = style_name
-                        caption_count += 1
-
-                        # 在图片题注后面添加空行
-                        add_blank_line_after_paragraph(doc, next_paragraph)
-
-        except Exception as e:
-            print(f"⚠️ 段落 {i + 1} 处理失败: {e}")
-            error_count += 1
+    result = apply(doc, SimpleNamespace(style_name=style_name))
+    image_count = result["images"]
+    caption_count = result["captions"]
+    error_count = len(result["errors"])
+    for err in result["errors"]:
+        print(f"⚠️ 段落 {err['para_no']} 处理失败: {err['error']}")
 
     # 保存文档
     try:

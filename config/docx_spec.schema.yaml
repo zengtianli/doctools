@@ -1,0 +1,235 @@
+# docx_spec.schema.yaml —— spec(yaml) 的全量字段说明
+#
+# ⚠️ 本文件由引擎派生，**别手改**。改动作/选项请改 ACTIONS 表再重新生成：
+#     cd ~/Dev/tools/doctools && python3 scripts/document/typeset_apply.py \
+#         --dump-schema > config/docx_spec.schema.yaml
+#
+# 用法：
+#     python3 scripts/document/typeset_apply.py <docx> --spec <spec.yaml> [--dry-run]
+#
+# 顶层只认 actions / version —— 多一个键就报错退出
+#（顶层拼错最容易表现为「配了但一个动作都没跑」，报错比静默跑空强）。
+# actions 下每个键 = 一个动作；值 = false/null（不跑）| true（跑，全默认）| 选项映射。
+# 选项映射里还认一个 enabled: false，等价于整条关掉（便于保留参数不删）。
+#
+# **顺序不在这里控**：动作之间有真依赖（先冻域再改字体、先配对题注再编号），
+# 顺序写死在引擎 ACTIONS 表里，每条带「为什么在这个位置」。spec 只管
+# 「跑不跑」和「参数是什么」。分节是注释不是 yaml 层级 —— actions 是扁平映射，
+# 套一层 `页眉页脚:` 会被判「不认识的动作」。
+#
+# 本文件把**所有可用动作全部列出**，直接拿去用等于「全都跑」。真实交付建议照抄
+# config/spec-examples/report-generic.yaml 再按需增删。
+
+version: 1
+
+actions:
+
+  # ══ 一 · doc-pre —— parse 一次，下面这些按顺序施加在同一棵内存树上，然后存盘
+
+  # strip_revisions —— 接受/清除正文里的审阅修订标记（w:ins/w:del/w:moveFrom/w:moveTo）
+  #   为什么在这个位置：必须最先。带修订标记时 doc.paragraphs 读到的是「显示态」而
+  #     非最终文本，后面所有按文本匹配的动作（章号解析、题注识别）拿到的都是半成品。
+  strip_revisions:
+    # 修订处理模式；脚本 choices 当前只有 accept-all（ins 展开 + del 删除）
+    revision_mode: accept-all
+    # true = 保留 word/comments.xml 里的批注定义。默认 false：连同正文锚点一
+    # 起清干净
+    keep_comments: false
+
+  # strip_bookmarks —— 清 _Toc/_Ref/_Hlk/_GoBack 这类残留书签锚点
+  #   为什么在这个位置：要在任何搬段/删段动作之前。书签是 bookmarkStart/End 成对的
+  #     空元素，段被搬走或删掉之后它们就变成对不上的孤儿，再清就得处理孤儿分支。
+  strip_bookmarks:
+    # 要清的书签名前缀；逗号串或 list，"all"=清所有，_GoBack 恒清；null=脚本
+    # 默认 _Toc,_Ref,_Hlk
+    bookmark_prefixes: null
+
+  # strip_empty_captions —— 删掉内容为空的题注段（模板残留的空「表名/图名」壳子）
+  #   为什么在这个位置：必须在 pair_table_captions / number_captions 之前：空题注
+  #     段会被配对算法当成候选表名去抢配对，也会被编号动作编上一个指向空气的「表 X-Y」。
+  #     先删干净，后面两步看到的才是真题注集合。
+  strip_empty_captions: true            # 无选项，只有跑/不跑
+
+  # delete_empty_h1 —— 删掉空的一级标题段（并把段上挂的 sectPr 迁到前一段，保住分节）
+  #   为什么在这个位置：所有「按段落 index 生成计划」的动作都必须排在它后面 —— 它
+  #     一删段，先前记下的 index 全部漂移。
+  delete_empty_h1: true                 # 无选项，只有跑/不跑
+
+  # relocate_orphan_blocks —— 按外部 plan JSON 把游离块搬回它该在的章下
+  #   为什么在这个位置：结构定型的最后一步，必须在标题编号之前：搬完之后章的先后次
+  #     序才是最终的，编号才有意义。没给 relocate_plan 时它自己 noop。
+  relocate_orphan_blocks:
+    # 游离块搬迁 plan JSON 的路径；null 时脚本自己 noop
+    relocate_plan: null
+
+  # convert_chapter_format —— H1 章号格式统一（「第X章 Y」/「X、Y」→「N Y」）
+  #   为什么在这个位置：必须在 renumber_headings 之前：重编号解析的是转换之后的形
+  #     态，顺序反了就等于拿旧格式去套新编号规则。
+  convert_chapter_format: true          # 无选项，只有跑/不跑
+
+  # renumber_headings —— 按层级重排标题编号
+  #   为什么在这个位置：必须在 number_captions 之前：题注号「图 X-Y」的 X 取自所在
+  #     章的章号，章号还没定就编题注号 = 编出来的号下一步就作废。
+  renumber_headings:
+    # 首个 H1 的目标编号；整数，或 "auto"=从文档现状探测（标书从第 10 章起编
+    # 那种）
+    h1_base: 1
+
+  # strip_outlinelvl_from_captions —— 摘掉题注段上被误设的 outlineLvl（段级直接格式）
+  #   为什么在这个位置：要在题注配对/编号之前。带 outlineLvl 的题注段会被当成大纲
+  #     标题，配对与编号两步都按「这是不是标题」分流，先清干净它们看到的才是真题注集
+  #     合。
+  strip_outlinelvl_from_captions: true  # 无选项，只有跑/不跑
+
+  # pair_table_captions —— 按外部 decision JSON 把表与表名配对（调整相对位置）
+  #   为什么在这个位置：必须在 number_captions 之前 —— 没配好就编号 = 把号写到错的
+  #     段上，之后再纠正就要二次改写正文文本。没给 pair_decision 时它自己 noop。
+  pair_table_captions:
+    # 表↔表名配对 decision JSON 的路径。这是「你先给判断结果」而不是配置值（
+    # 脚本自己猜不准）；null=noop
+    pair_decision: null
+
+  # number_captions —— 给表名/图名段补「表 X-Y」/「图 X-Y」章节序号
+  #   为什么在这个位置：排在配对之后、字体统一之前：它会**新增文本 run**，那些新 r
+  #     un 得让后面的字体统一盖到，否则新补的号是继承字体、和正文不一致。
+  number_captions: true                 # 无选项，只有跑/不跑
+
+  # fix_superscript_refs —— 把 [1] / [3-4] 这类文献引用拆成独立 run 并设上标
+  #   为什么在这个位置：排在编号类动作之后、字体统一之前：它同样是**拆 run + 新增 
+  #     run**，得让 doc-post 的字体统一盖到。放在 number_captions 之后是因为题注号里
+  #     的方括号数字不该被误当成文献引用 —— 编完号再扫，看到的是最终文本。
+  #   脚本位置：scripts/document/fix_superscript_refs.py（不在 sub/ 下）
+  fix_superscript_refs: true            # 无选项，只有跑/不跑
+
+  # docx_apply_image_caption —— 给图片段与它下一行的图名段套图名样式，并在图名后补空行
+  #   为什么在这个位置：必须在 normalize_fonts 之前：它改的是**段落样式**，字体统
+  #     一要按最终样式去判「这段算正文还是标题」，样式换在后面就等于按旧身份统一了字
+  #     体。放在 number_captions 之后：图名文本先定下来再套样式，避免样式套到随后又
+  #     被改写的段上。样式名走模糊匹配，匹配不到时它 noop 并如实报style_resolved=nul
+  #     l，不静默假装干过。
+  #   脚本位置：scripts/document/docx_apply_image_caption.py（不在 sub/ 下）
+  docx_apply_image_caption:
+    # 套给图片段与图名段的段落样式名；模糊匹配，"ZDWP 图名" 这类空格变体也命
+    # 中。文档里没有这个样式 → 整步 noop
+    style_name: ZDWP图名
+
+  # add_header_footer —— 设置页眉页脚（含页码域）
+  #   为什么在这个位置：doc-pre 的最后一步：它按 doc.sections 遍历，而前面的删段/
+  #     搬块都可能改变节结构（delete_empty_h1 里就有 sectPr 迁移），节稳定下来再写页
+  #     眉页脚。
+  add_header_footer:
+    # 页眉文字；空串 = 不写字（CLI 里它是 required，spec 里默认空）
+    header: ""
+    # 页脚前缀，通常是院名；空串时 apply() 内部兜底「浙江省水利水电勘测设计
+    # 院」
+    footer_prefix: ""
+    # 页脚是否插 PAGE 域
+    page_number: true
+    # 页眉页脚字号 pt
+    font_size: 10.0
+    # 院名与页码之间的空格数
+    gap_spaces: 13
+    # 页眉对齐 left/center/right
+    header_align: right
+    # 页脚对齐 left/center/right
+    footer_align: center
+
+  # set_table_borders —— 统一表格框线（线型 / 磅值 / 颜色 / 间距）
+  #   为什么在这个位置：表格框线与文本轴互不依赖，所以它待在 doc-pre 而不是 doc-po
+  #     st —— 白捡一次不用重开文件。（它同时有 apply 和 apply_path，本引擎按声明的 d
+  #     oc 走内存版。）
+  set_table_borders:
+    # 框线线型 single/double/dashed/none…
+    val: single
+    # 框线磅值（1/8 pt 为单位，4 = 0.5pt）
+    sz: 4
+    # 框线颜色 hex 或 auto(=黑)
+    color: auto
+    # 框线边距
+    space: 0
+    # true = 保留单元格自带 tcBorders，只把非实线改成实线；false = 直接删 tc
+    # Borders 让表级框线生效
+    keep_cell_borders: false
+
+  # set_table_align —— 统一表格对齐（表级居中，可选单元格内文字也居中）
+  #   为什么在这个位置：同 set_table_borders，与文本轴无依赖，留在 doc-pre。
+  set_table_align:
+    # true = 单元格内文字水平+垂直也居中；表级 jc=center 是脚本写死的，没有 
+    # left/right 可选
+    cell_center: false
+
+  # audit_caption_outline —— 只读自检：题注段的 outlineLvl / 样式污染还剩多少
+  #   为什么在这个位置：放在所有 doc 改动之后 —— 自检要报的是终态，不是中间态。
+  audit_caption_outline: true           # 无选项，只有跑/不跑
+
+  # audit_table_pairing —— 只读自检：表与表名的配对情况（孤儿表名 / 孤儿表 / 重名）
+  #   为什么在这个位置：同上，终态自检。
+  audit_table_pairing: true             # 无选项，只有跑/不跑
+
+  # audit_bookmarks —— 只读自检：书签总数与孤儿 start/end
+  #   为什么在这个位置：同上，终态自检。
+  audit_bookmarks: true                 # 无选项，只有跑/不跑
+
+  # ══ 二 · path —— 存盘之后逐个改 zip 里 document.xml 以外的部件
+
+  # strip_doc_protection —— 清 settings.xml 里的文档保护位（只读保护 / 编辑限制）
+  #   为什么在这个位置：path 段第一个：后面几步都要改 styles.xml / document.xml，
+  #     先把保护摘掉语义上更顺（技术上 python-docx 不受保护位约束，摘不摘都能写）。
+  strip_doc_protection: true            # 无选项，只有跑/不跑
+
+  # freeze_heading_numbers —— 把标题的 Word 自动编号固化成真文本，并摘掉 styles.xml 里的 numPr
+  #   为什么在这个位置：必须在 normalize_fonts 之前。域没冻结时编号是 Word 渲染期
+  #     算出来的，document.xml 里根本没有承载它的 run，字体统一无从下手；冻结之后它
+  #     们才是普通 run，字体才盖得住。
+  freeze_heading_numbers:
+    # 冻结哪几级标题的自动编号；逗号串或 list，元素只能是 1/2/3/4；null = 全
+    # 部四级
+    freeze_levels: null
+    # 是否同时摘掉 styles.xml 里标题样式的 numPr
+    unlink_style: true
+    # 从 numbering.xml 的哪个 numId 取 lvlText 模板
+    num_id: "4"
+
+  # freeze_all_fields —— 冻结其余各类域（TOC / PAGE / SEQ / REF …）成静态文本
+  #   为什么在这个位置：同上，也必须在字体统一之前。放在 freeze_heading_numbers 之
+  #     后：标题编号是专门处理（还要动 styles.xml 的 numPr），先做专项再做通扫，反过
+  #     来会让通扫把标题域也冻成普通文本、专项那步就找不到目标了。
+  freeze_all_fields:
+    # 冻结哪些域类型；"all" 或 "TOC,PAGEREF,SEQ" 这样的逗号串
+    freeze_types: all
+
+  # strip_style_outlinelvl —— 在 styles.xml 里摘掉题注**样式**上的 outlineLvl
+  #   为什么在这个位置：和 doc 阶段那步 strip_outlinelvl_from_captions 是**两处**：
+  #     那步摘段级直接格式，这步摘样式定义。只做一处的话，另一处会继续把题注推进大纲。
+  #     样式表要在 doc 存盘之后改，否则 python-docx 存盘会把它盖回去。
+  strip_style_outlinelvl:
+    # 要从 styles.xml 摘 outlineLvl 的样式名集合，逗号串；null = 脚本内置的
+    # 默认题注样式集
+    strip_styles: null
+
+  # ══ 三 · doc-post —— 重开一次 doc，跑「必须看见冻结结果」的动作，再存一次
+
+  # normalize_fonts —— 全文字体统一（正文中文 / 标题中文 / 西文 / 标题色）
+  #   为什么在这个位置：整条链最后一步，也是**唯一**要跑在 path 段之后的 doc 动作：
+  #     它得盖到所有新增文本 —— number_captions 补的题注号、fix_superscript_refs 拆
+  #     出的引用 run、以及 freeze_* 冻出来的编号文本。冻结产物只在 path 段落盘之后才
+  #     存在于 document.xml 里，所以必须重开一次 doc 才看得见。顺序反了，成品里会看
+  #     到零星几处字体不一样，而且不报任何错。
+  normalize_fonts:
+    # 正文中文字体（等线系在 spec 层就被 BANNED_FONTS 拦下）
+    body_cjk: 宋体
+    # 标题中文字体
+    heading_cjk: 黑体
+    # 中西文混排里的西文字体
+    latin: Times New Roman
+    # 标题字体颜色 hex
+    heading_color: "000000"
+
+# ── 本仓当前跑不了的动作：写进 actions: 会被判红并退出 ──────────────────
+#   fix_heading_disorder —— 修标题层级乱序（假晋级 / 级差跳跃 / 相邻重复）
+#       import 了 apply_body_styles —— 那是 qual-supply 的脚本，doctools 仓里没有这
+#       个模块，加载即 ModuleNotFoundError。本引擎不替它补依赖（那是改业务逻辑）；要
+#       用先把该模块搬进来。
+#   reorder_heading_blocks —— 按标题块重排/去重整块内容
+#       它 from fix_heading_disorder import …，连坐上面那条同样的缺失依赖。
+

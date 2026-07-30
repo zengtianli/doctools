@@ -116,11 +116,20 @@ def _all_tbl_elements(doc):
     return doc.element.body.iter(qn("w:tbl"))
 
 
-def process(docx_path: Path, val: str, sz: int, color: str, space: int,
-            keep_cell: bool, dry_run: bool, backup: bool) -> dict:
-    doc = Document(str(docx_path))
+def apply(doc, args=None) -> dict:
+    """在**已打开**的 doc 上把所有表格改成满格实线（表级 + 单元格级两手抓）。
+
+    之所以能纯内存做完：全部改动只落在 document.xml 的 <w:tbl> 子树上，
+    styles.xml / numbering.xml 一概不碰 —— 所以它是 doc-based step，能和别的
+    apply() 串在同一棵树上跑，全程只 parse 一次、只 save 一次（存盘是调用方的事）。
+    """
+    val = getattr(args, "val", "single") if args else "single"
+    sz = int(getattr(args, "sz", 4)) if args else 4
+    color = getattr(args, "color", "auto") if args else "auto"
+    space = int(getattr(args, "space", 0)) if args else 0
+    keep_cell = bool(getattr(args, "keep_cell_borders", False)) if args else False
+
     tbls = list(_all_tbl_elements(doc))
-    n_tbl = len(tbls)
     cell_changed = 0
     for tbl_el in tbls:
         _set_table_borders(tbl_el, val, sz, color, space)
@@ -129,14 +138,25 @@ def process(docx_path: Path, val: str, sz: int, color: str, space: int,
         else:
             cell_changed += _strip_cell_borders(tbl_el)
 
-    result = {
-        "file": str(docx_path),
-        "tables": n_tbl,
+    return {
+        "changed": len(tbls),
+        "tables": len(tbls),
         "mode": "keep-cell" if keep_cell else "strip-cell",
         "cell_changed": cell_changed,
         "border": f"{val}/sz{sz}/{color}",
+    }
+
+
+def process(docx_path: Path, val: str, sz: int, color: str, space: int,
+            keep_cell: bool, dry_run: bool, backup: bool) -> dict:
+    doc = Document(str(docx_path))
+    result = {
+        "file": str(docx_path),
+        **apply(doc, argparse.Namespace(
+            val=val, sz=sz, color=color, space=space, keep_cell_borders=keep_cell)),
         "dry_run": dry_run,
     }
+    n_tbl = result["tables"]
     if dry_run or n_tbl == 0:
         result["written"] = False
         return result
@@ -223,7 +243,11 @@ def main() -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply_path(docx_path, args=None) -> dict:
-    """pipeline-compatible adapter（原地 mutator）。"""
+    """原地 mutator（自己开文件、备份、存盘、复检）。
+
+    留着是为了不掐断已经按路径调它的老调用方；pipeline_lib.load_step 优先取
+    apply()，所以新链路一律走上面那个纯内存版本，这里不会被 pipeline 选中。
+    """
     val = getattr(args, "val", "single") if args else "single"
     sz = int(getattr(args, "sz", 4)) if args else 4
     color = getattr(args, "color", "auto") if args else "auto"

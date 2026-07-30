@@ -11,6 +11,8 @@
          裸院/元数据署名），仍报工具痕迹（python-docx）。
 exit 0 = PASS（0 findings）；exit 2 = FAIL n findings；exit 1 = 用法/IO 错误。
 检测逻辑 SSOT 在同目录 bid_residue_lib.py（bid_finalize_sweep 复扫共用）。
+
+pipeline 接口: apply_path(docx_path, args) -> dict（见下方 docstring；打印与退出码留在 main）。
 """
 import argparse
 import sys
@@ -18,6 +20,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bid_residue_lib as lib
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """只读扫 8 类残留，返回 findings 报告；不开 Document、不写盘、不 sys.exit。
+
+    为什么是 apply_path 而不是 apply(doc, args)：第 8 类身份泄漏要扫 docProps/core.xml、
+    页眉页脚、styles.xml 这些 document.xml 以外的部件，python-docx 的 Document 对象根本
+    看不到它们 —— 拿 doc 当入口只能扫到正文，覆盖面会静默缩水一半，正是最该抓的那一半。
+
+    args 取 mode / rules 两个属性（Namespace 或 None 都行）。
+    """
+    mode = getattr(args, "mode", "pei")
+    rules = lib.load_rules(getattr(args, "rules", None))
+    _, parts = lib.load_parts(docx_path)
+    if "word/document.xml" not in parts:
+        raise ValueError(f"不是有效 docx（缺 word/document.xml）: {docx_path}")
+    findings = lib.scan_parts(parts, mode=mode, rules=rules)
+    by_cat = {}
+    for f in findings:
+        by_cat[f["cat"]] = by_cat.get(f["cat"], 0) + 1
+    return {"changed": 0, "findings": findings, "分类计数": by_cat,
+            "残留条数": len(findings), "mode": mode}
 
 
 def main():
@@ -31,22 +55,16 @@ def main():
         print(f"错误: 文件不存在 {args.docx}", file=sys.stderr)
         return 1
     try:
-        rules = lib.load_rules(args.rules)
-        names, parts = lib.load_parts(args.docx)
-        if "word/document.xml" not in parts:
-            print(f"错误: 不是有效 docx（缺 word/document.xml）: {args.docx}", file=sys.stderr)
-            return 1
-        findings = lib.scan_parts(parts, mode=args.mode, rules=rules)
+        report = apply_path(args.docx, args)
     except (OSError, ValueError, RuntimeError) as e:
         print(f"错误: {e}", file=sys.stderr)
         return 1
+    findings = report["findings"]
 
     print(f"bid_residue_scan · {args.docx.name} · mode={args.mode}"
           f" · rules={args.rules.name if args.rules else '(内置通用)'}")
     if findings:
-        by_cat = {}
-        for f in findings:
-            by_cat[f["cat"]] = by_cat.get(f["cat"], 0) + 1
+        by_cat = report["分类计数"]
         print("分类计数:", " ".join(f"类别{c}({lib.CAT_NAMES[c]})={n}" for c, n in sorted(by_cat.items())))
         for line in lib.format_findings(findings):
             print(line)

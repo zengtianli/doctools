@@ -169,6 +169,27 @@ def process_document(doc, dry_run=False):
     return total_paras, total_refs, details
 
 
+def apply(doc, args=None) -> dict:
+    """在**已打开**的 doc 上把 [n] / [n-m] 引用拆成独立 run 并设上标。
+
+    改动只落在 document.xml 的 run 上（拆 run + 加 vertAlign），不碰别的部件，
+    所以是 doc-based step。dry_run 时只统计不动树 —— 这一层由 process_document
+    自己判，因为「哪些还不是上标」的口径要和真改时完全一致。
+
+    details 里 refs 字段两副面孔是沿用原行为：dry-run 给的是命中的引用**列表**
+    （要打给人看），真改给的是该段改了**几处**。
+    """
+    dry_run = bool(getattr(args, "dry_run", False)) if args else False
+    n_paras, n_refs, details = process_document(doc, dry_run=dry_run)
+    return {
+        "changed": n_refs,
+        "paragraphs": n_paras,
+        "refs": n_refs,
+        "dry_run": dry_run,
+        "details": [{"idx": i, "text": t, "refs": r} for i, t, r in details],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="修复 DOCX 文献引用角标（[数字] → 上标）"
@@ -185,12 +206,13 @@ def main():
         sys.exit(1)
 
     doc = Document(str(inp))
-    n_paras, n_refs, details = process_document(doc, dry_run=args.dry_run)
+    rep = apply(doc, args)
+    n_paras, n_refs, details = rep["paragraphs"], rep["refs"], rep["details"]
 
     if args.dry_run:
         print(f"扫描结果: {n_paras} 个段落, {n_refs} 处引用需要上标")
-        for idx, text, refs in details:
-            print(f"  段落{idx}: {text}... → {refs}")
+        for d in details:
+            print(f"  段落{d['idx']}: {d['text']}... → {d['refs']}")
         return
 
     if n_refs == 0:
@@ -201,8 +223,8 @@ def main():
     doc.save(str(out))
 
     print(f"✓ {n_paras} 个段落, {n_refs} 处引用已改为上标")
-    for idx, text, count in details:
-        print(f"  段落{idx}: {text}... ({count}处)")
+    for d in details:
+        print(f"  段落{d['idx']}: {d['text']}... ({d['refs']}处)")
     print(f"已保存: {out}")
 
 

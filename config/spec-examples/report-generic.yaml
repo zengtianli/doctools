@@ -1,0 +1,92 @@
+# report-generic.yaml · 通用技术报告版式（最小可用 spec）
+#
+#     cd ~/Dev/tools/doctools
+#     python3 scripts/document/typeset_apply.py <你的报告.docx> \
+#         --spec config/spec-examples/report-generic.yaml \
+#         --report /tmp/typeset.json
+#
+# 先 --dry-run 看一眼要改什么，再真跑。真跑默认留一份 .bak-N-日期.docx 在同目录。
+#
+# 这份 spec 只放**任何技术报告都要的那些**：清修订/书签、统一章号并重编、题注补号、
+# 冻结全部域、字体与表格统一、页眉页脚。三个需要「你先给判断结果」的动作
+# （relocate_orphan_blocks / pair_table_captions / docx_apply_image_caption）
+# 一律关掉 —— 它们要么吃外部 JSON、要么吃项目专属样式名，通用版给不了。
+#
+# 全量字段（每个动作的每个选项 + 为什么排在那个位置）看 config/docx_spec.schema.yaml，
+# 那份由引擎 `--dump-schema` 派生，永远和 ACTIONS 表一致。
+#
+# 顺序不在这里控：spec 只管「跑不跑」和参数，顺序写死在引擎里。
+
+version: 1
+
+actions:
+
+  # ── 一 · 先把「读到的文本」变成最终文本 ─────────────────────────────
+  # 带修订标记时，后面所有按文本匹配的动作（章号解析、题注识别）拿到的都是半成品。
+  strip_revisions:
+    revision_mode: accept-all
+  strip_bookmarks:
+    bookmark_prefixes: "_Toc,_Ref,_Hlk"    # _GoBack 恒清，不用写
+
+  # ── 二 · 结构清理（只收可逆的）───────────────────────────────────
+  strip_empty_captions: true               # 模板残留的空「表名/图名」壳子
+  delete_empty_h1: true                    # 空 H1 段，sectPr 迁到前一段保住分节
+  relocate_orphan_blocks: false            # 要搬游离块得先给 plan JSON，通用版没有
+
+  # ── 三 · 章号与编号 ─────────────────────────────────────────────
+  convert_chapter_format: true             # 「第X章 Y」/「X、Y」→「N Y」
+  renumber_headings:
+    h1_base: 1                             # 标书那种「从第 10 章起编」写 10，或写 auto 自动探测
+
+  # ── 四 · 题注 ───────────────────────────────────────────────────
+  strip_outlinelvl_from_captions: true     # 摘段级直接格式上的 outlineLvl
+  pair_table_captions: false               # 表↔表名配对要先给 decision JSON，通用版没有
+  number_captions: true                    # 补「表 X-Y」/「图 X-Y」
+
+  # ── 五 · 正文细节 ───────────────────────────────────────────────
+  fix_superscript_refs: true               # [1] / [3-4] 文献引用改上标
+  docx_apply_image_caption: false          # 要套的是项目模板里的图名样式（如 ZDWP图名），
+                                           # 通用报告没有这个样式，开了也是 noop
+
+  # ── 六 · 页眉页脚（doc 阶段最后一步，节结构稳定后才写）──────────────
+  add_header_footer:
+    header: 技术报告                        # ← 改成报告名；留空串 = 页眉不写字
+    footer_prefix: 浙江省水利水电勘测设计院有限责任公司   # ← 改成你的单位名
+    page_number: true
+    font_size: 10.0
+    gap_spaces: 13
+    header_align: right
+    footer_align: center
+
+  # ── 七 · 表格 ───────────────────────────────────────────────────
+  set_table_borders:
+    val: single
+    sz: 4                                  # 0.5pt
+    color: auto
+    keep_cell_borders: false               # 删掉单元格自带框线，让表级框线说了算
+  set_table_align:
+    cell_center: false                     # 只表格整体居中；单元格内文字保持原样
+
+  # ── 八 · 终态自检（只读，不改树，建议常开）────────────────────────
+  audit_caption_outline: true
+  audit_table_pairing: true
+  audit_bookmarks: true
+
+  # ── 九 · zip 层（存盘之后逐个改 document.xml 以外的部件）────────────
+  strip_doc_protection: true               # 摘掉只读保护 / 编辑限制
+  freeze_heading_numbers:
+    freeze_levels: "1,2,3,4"
+    unlink_style: true
+    num_id: "4"
+  freeze_all_fields:
+    freeze_types: all                      # TOC / PAGE / SEQ / REF … 全冻成静态文本
+  strip_style_outlinelvl:
+    strip_styles: null                     # null = 脚本内置的默认题注样式集
+
+  # ── 十 · 字体统一（整条链最后一步，重开 doc 后跑）───────────────────
+  # 它必须看得见前面所有新增的文本：题注号、上标引用、冻结出来的编号。
+  normalize_fonts:
+    body_cjk: 宋体
+    heading_cjk: 黑体
+    latin: Times New Roman
+    heading_color: "000000"

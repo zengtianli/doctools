@@ -255,10 +255,12 @@ def _process_promote_h1(doc, profile: StylesProfile, dry_run: bool) -> dict:
 
 
 def cmd_promote_h1(args) -> int:
+    # load_profile 先于 _common_setup:profile 名字打错要在碰文件之前就炸,
+    # 而不是等备份都做完了才发现。(cache 命中,apply 里再取一次是零成本)
     profile = load_profile(args.profile)
     src = _common_setup(args)
     doc = Document(str(src))
-    result = _process_promote_h1(doc, profile, args.dry_run)
+    result = _drop_pipeline_keys(apply(doc, args, subcommand="promote-h1"))
     bak = _save_with_backup(src, doc, args, wrote_needed=result["promote_count"] > 0)
 
     report = {
@@ -316,20 +318,44 @@ def _apply_demotion(doc, candidates: list[dict], h3_style):
         c["style_after"] = h3_style.name
 
 
+def _process_demote_h2(doc, profile: StylesProfile, dry_run: bool) -> dict:
+    """扫 H2 里文本形态是 H3 的段并降级。
+
+    「文档里根本没有可用的 H3 样式」不是异常而是常态(不同院模板样式名不同),
+    所以不抛,只记进 warnings 由调用方决定怎么喊 —— pipeline 里没有 stderr 可喊。
+    """
+    candidates = _scan_demote_candidates(doc, profile)
+    h3_style = _resolve_heading_style(doc, profile, 3)
+
+    warnings: list[str] = []
+    if h3_style is None and candidates:
+        warnings.append(f"no H3 style in document; profile.H3_STYLES={profile.H3_STYLES}")
+
+    applied = bool(candidates) and not dry_run and h3_style is not None
+    if applied:
+        _apply_demotion(doc, candidates, h3_style)
+
+    return {
+        "candidates_count": len(candidates),
+        "candidates": candidates,
+        "h3_style_used": h3_style.name if h3_style else None,
+        "demoted": len(candidates) if applied else 0,
+        "warnings": warnings,
+    }
+
+
 def cmd_demote_h2(args) -> int:
     profile = load_profile(args.profile)
     src = _common_setup(args)
     doc = Document(str(src))
-    candidates = _scan_demote_candidates(doc, profile)
+    result = _drop_pipeline_keys(apply(doc, args, subcommand="demote-h2"))
+    candidates = result["candidates"]
+    h3_style_name = result["h3_style_used"]
 
-    h3_style = _resolve_heading_style(doc, profile, 3)
-    if h3_style is None and candidates:
-        print(f"[WARN] no H3 style in document; profile.H3_STYLES={profile.H3_STYLES}", file=sys.stderr)
+    for w in result["warnings"]:
+        print(f"[WARN] {w}", file=sys.stderr)
 
-    if candidates and not args.dry_run and h3_style is not None:
-        _apply_demotion(doc, candidates, h3_style)
-
-    wrote_needed = bool(candidates) and h3_style is not None
+    wrote_needed = bool(candidates) and h3_style_name is not None
     bak = _save_with_backup(src, doc, args, wrote_needed=wrote_needed)
 
     report = {
@@ -338,12 +364,12 @@ def cmd_demote_h2(args) -> int:
         "profile": getattr(profile, "_name", args.profile),
         "dry_run": args.dry_run,
         "backup": str(bak) if bak else None,
-        "candidates_count": len(candidates),
+        "candidates_count": result["candidates_count"],
         "candidates": candidates,
-        "h3_style_used": h3_style.name if h3_style else None,
+        "h3_style_used": h3_style_name,
     }
     _emit_report(report, args)
-    print(f"[outline demote-h2] candidates={len(candidates)} h3_style={h3_style.name if h3_style else None!r}")
+    print(f"[outline demote-h2] candidates={len(candidates)} h3_style={h3_style_name!r}")
     for c in candidates[:10]:
         print(f"  idx={c['idx']:4d} {c['style_before']!r}→{c['style_after']!r} | {c['text']}")
     if bak:
@@ -514,7 +540,7 @@ def cmd_normalize_arabic(args) -> int:
     profile = load_profile(args.profile)
     src = _common_setup(args)
     doc = Document(str(src))
-    result = _process_normalize(doc, profile, args.dry_run)
+    result = _drop_pipeline_keys(apply(doc, args, subcommand="normalize-arabic"))
     bak = _save_with_backup(src, doc, args, wrote_needed=result["change_count"] > 0)
 
     report = {
@@ -536,6 +562,64 @@ def cmd_normalize_arabic(args) -> int:
     if bak:
         print(f"backup: {bak}")
     return 0
+
+
+# =============================================================================
+# pipeline adapter (sub/pipeline_lib.py 的 doc-based step 契约)
+# =============================================================================
+_SUBCOMMANDS = {
+    "promote-h1": _process_promote_h1,
+    "demote-h2": _process_demote_h2,
+    "normalize-arabic": _process_normalize,
+}
+
+# apply() 为 pipeline 补的通用键。CLI 的 JSON 报告有自己的键名与键序
+# (profile 排在 dry_run 前面),摘掉再拼报告,报告结构才不会因为
+# 「给 pipeline 加了个键」而悄悄漂移。
+_PIPELINE_KEYS = ("outline_cmd", "profile", "changed")
+
+
+def _drop_pipeline_keys(result: dict) -> dict:
+    for k in _PIPELINE_KEYS:
+        result.pop(k, None)
+    return result
+
+
+def apply(doc, args=None, *, subcommand: str | None = None) -> dict:
+    """在**已打开的** doc 上跑一个 outline 子动作,返回改动报告。
+
+    本脚本一个模块带三个互斥动作,所以 apply 必须先知道跑哪个:
+      - pipeline 通路:读 args.outline_cmd(与 CLI subparser 的 dest 同名,
+        所以 pipeline 和 CLI 喂的是同一个 Namespace,不用两套字段);
+      - CLI 通路:cmd_* 显式传 subcommand= 钉死。**不能只靠 args**,
+        因为 cmd_promote_h1 收到的 Namespace 若缺 outline_cmd(被程序化调用时),
+        落到默认值就会安静地跑成另一个动作。
+    未知/缺省一律抛,不静默 no-op —— 那会让 pipeline 报绿却什么都没干。
+    """
+    cmd = subcommand or (getattr(args, "outline_cmd", None) if args else None)
+    if cmd not in _SUBCOMMANDS:
+        raise ValueError(
+            f"outline.apply 需要子动作(args.outline_cmd 或 subcommand=),"
+            f"收到 {cmd!r};可用 {'/'.join(_SUBCOMMANDS)}"
+        )
+
+    requested = getattr(args, "profile", None) if args else None
+    profile = load_profile(requested)
+    dry_run = bool(getattr(args, "dry_run", False)) if args else False
+
+    result = _SUBCOMMANDS[cmd](doc, profile, dry_run)
+    # 三个动作各自的计数键不同名,再给一个统一的 changed 供 pipeline 汇总
+    changed = {
+        "promote-h1": lambda r: r["promote_count"],
+        "demote-h2": lambda r: r["demoted"],          # 无可用 H3 样式时确实一个没改
+        "normalize-arabic": lambda r: r["change_count"],
+    }[cmd](result)
+    return {
+        **result,
+        "outline_cmd": cmd,
+        "profile": getattr(profile, "_name", requested),
+        "changed": changed,
+    }
 
 
 # =============================================================================
