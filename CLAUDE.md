@@ -26,6 +26,29 @@ lib/                  # 公共模块
 └── lib/              # run_python.sh 运行器
 ```
 
+## 独立入口脚本（不走 `docx_cli`，直接敲）
+
+这几个不在 `docx_cli` 的命令表里、也没有 skill 指向，但**是活的**。登记在这里有两个作用：
+让人找得到；让 `tools/script_graph.py` 把它们算作「有文档点名」而不是孤儿。
+
+| 脚本 | 干什么 | 怎么跑 |
+|---|---|---|
+| `scripts/document/bid_deref.py` | 标书正文交叉引用去耦合（合稿人会删/调章节，写死编号=断链） | `python3 scripts/document/bid_deref.py <docx>` |
+| `scripts/document/gen_report.py` | 按参考报告逐章生成新县市报告（走 llm_client） | `python3 scripts/document/gen_report.py --help` |
+| `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run scripts/document/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
+
+**加新的独立入口脚本 → 必须在这张表里加一行**，否则它对全仓不可见：`script_graph` 会把它
+判成孤儿，下次清理就把它清了。
+
+## 全仓脚本关系图
+
+```bash
+python3 tools/script_graph.py --open     # 151 个脚本 · 谁调谁 · 双链可点
+```
+
+孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。
+**「代码里没人 import」单独不算死** —— 一多半脚本是文档告诉我去敲的。
+
 ## 开发约定
 
 ### 引用路径
