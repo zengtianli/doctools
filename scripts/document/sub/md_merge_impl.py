@@ -324,10 +324,15 @@ def apply(
         p_start = doc.paragraphs[start_idx]
         cur_title = (p_start.text or "").strip()
         if track_changes:
-            # 修订模式下不静默重写标题（会抹掉协作方的既有修订痕迹）
-            blocks = blocks[1:]
-            if cur_title != title_text:
-                print(f"标题保持原文不动: {cur_title!r}（MD 写的是 {title_text!r}）")
+            # 修订模式下不静默重写既有标题（会抹掉协作方的修订痕迹）。
+            # start_idx 落在节标题本身时：标题已在文档里 → 丢弃 MD 的重复标题。
+            # start_idx 落在区间前一段时（原标题在替换区间内、已被标删）：
+            #   必须把 MD 的标题作为新 block 插入，否则整节标题丢失。
+            if cur_title == title_text:
+                blocks = blocks[1:]
+                print(f"标题已在文档中，不重复插入: {title_text!r}")
+            else:
+                print(f"标题作为新增内容插入: {title_text!r}（start 段为 {cur_title!r}）")
         else:
             for run in p_start.runs:
                 run.text = ""
