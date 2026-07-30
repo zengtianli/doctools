@@ -21,3 +21,6 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
+
+# script_graph 派生产物（可随时用 tools/script_graph.py 重生成）
+reports/*.html
