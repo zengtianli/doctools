@@ -935,14 +935,16 @@ class DocxReviewer:
     """对 .docx 文件应用替换规则，生成带修订标记的新文件。保持原文格式不变。"""
 
     def __init__(
-        self, docx_path: str, author: str = "CC审阅", include_ins: bool = False
+        self, docx_path: str, author: str = "CC审阅", include_ins: bool = True
     ):
         self.docx_path = docx_path
         self._write_gate = WriteGate(docx_path)  # 读入时 capture,save 回源文件前 assert
         self.author = author
-        # include_ins：允许命中 <w:ins> 内的文字。
-        # 目标 docx 本身在修订模式协作、正文大量插入未接受时必须打开，
-        # 否则规则一条都匹配不到（w:del 内的文字任何情况下都跳过——那是已删除的字）。
+        # include_ins：允许命中 <w:ins> 内的文字。**默认 True**。
+        # 目标 docx 在修订模式协作、正文大量插入未接受时，关掉它规则一条都匹配不到
+        # （2026-07-29 缙云 v5 实证：2960 处 w:ins，目标文本全在别人的 ins 里，
+        #  默认 False 时静默报"0 处替换"）。关掉 = 制造假阴性，故逃生开关是 --no-include-ins。
+        # w:del 内的文字任何情况下都跳过——那是已删除的字。
         self.include_ins = include_ins
         self.date = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.comment_id_counter = 0
@@ -1307,13 +1309,14 @@ def review_docx(
     output_path: str,
     rules: list[dict],
     author: str = "CC审阅",
-    include_ins: bool = False,
-    strict: bool = False,
+    include_ins: bool = True,
+    strict: bool = True,
 ) -> int:
     """便捷函数：对 .docx 应用替换规则，输出带修订标记的新文件。
 
-    strict=True 时任一规则 0 命中即抛错（fail-closed）——避免"静默 0 处替换"
-    被当成执行成功。
+    strict **默认 True**：任一规则 0 命中即抛错（fail-closed）——避免"静默 0 处替换"
+    被当成执行成功（铁律 #2「守卫必须 fail-closed，禁静默跳过」）。
+    确实允许部分规则落空时才传 strict=False / CLI --no-strict。
     """
     reviewer = DocxReviewer(input_path, author=author, include_ins=include_ins)
     try:
@@ -1345,14 +1348,25 @@ def cmd_track_changes(args):
     elif args.tc_command == "review":
         with open(args.rules, encoding="utf-8") as f:
             rules = json.load(f)
-        count = review_docx(
-            args.input,
-            args.output,
-            rules,
-            author=args.author,
-            include_ins=bool(getattr(args, "include_ins", False)),
-            strict=bool(getattr(args, "strict", False)),
-        )
+        try:
+            count = review_docx(
+                args.input,
+                args.output,
+                rules,
+                author=args.author,
+                include_ins=bool(getattr(args, "include_ins", True)),
+                strict=bool(getattr(args, "strict", True)),
+            )
+        except ValueError as e:
+            print(f"错误：{e}", file=sys.stderr)
+            print(
+                "\n排查顺序："
+                "\n  1. 目标文本是否被 run 拆散或含全角/半角差异 → 用 track-changes read 看原文"
+                "\n  2. 目标文本是否在 <w:del> 里（已删除的字，任何情况都不命中）"
+                "\n  3. 确实允许部分规则落空 → 加 --no-strict",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(f"完成：{count} 处替换已写入 {args.output}")
     elif args.tc_command == "compare":
         print("compare 功能将在 v2 实现。")
@@ -1631,11 +1645,15 @@ def main():
     wp.add_argument("--output", "-o", required=True, help="输出 .docx 文件")
     wp.add_argument("--rules", "-r", required=True, help="替换规则 JSON 文件")
     wp.add_argument("--author", "-a", default="CC审阅", help="作者名")
-    wp.add_argument("--include-ins", action="store_true",
-                    help="允许命中 <w:ins> 内的文字（目标 docx 本身在修订模式协作、"
-                         "正文大量插入未接受时必须打开，否则规则一条都匹配不到）")
-    wp.add_argument("--strict", action="store_true",
-                    help="任一规则 0 命中即报错退出（fail-closed，防静默漏改）")
+    # 下面两项默认开启（主流用法），逃生开关是 --no-* 形式
+    wp.add_argument("--no-include-ins", dest="include_ins", action="store_false",
+                    default=True,
+                    help="不命中 <w:ins> 内的文字。默认命中——目标 docx 在修订模式协作、"
+                         "正文大量插入未接受时，关掉则规则一条都匹配不到（假阴性）")
+    wp.add_argument("--no-strict", dest="strict", action="store_false",
+                    default=True,
+                    help="允许部分规则 0 命中。默认 fail-closed：任一规则 0 命中即报错退出，"
+                         "防「静默 0 处替换」被当成执行成功")
 
     tcp = tc_sub.add_parser("compare", help="对比生成修订 (v2)")
     tcp.add_argument("original", help="原始 .docx")
