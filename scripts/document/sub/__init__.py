@@ -36,37 +36,30 @@ Each underlying script also remains independently runnable:
     python3 sub/<script>.py <docx> [--dry-run] [--no-backup] [--report x.json]
 """
 
+from . import _groups
 from . import (
-    audit,
     audit_styleset,
     blocks,
-    caption,
     captions,
     chapters_sync,
     chrome,
-    chapter,
     combine,
     compare,
     diff,
     docx_para,
     fix_styleset,
     fonts,
-    freeze,
-    header_footer,
     health,
     health_split,
     images,
-    legacy,
     md_merge,
     md_merge_track,
     outline,
     pipeline,
-    renumber,
     revise_rules,
     section,
     slim,
     split,
-    strip,
     styles,
     table,
 )
@@ -118,25 +111,32 @@ def register_all(subparsers) -> None:
         from sub import register_all
         register_all(top_subparsers)
     """
-    # Order: unique-group first, then shared-group contributors
-    for mod in (
-        audit, audit_styleset, freeze, strip, header_footer, outline, blocks, images, legacy,  # unique
-        docx_para,                                                               # 段落级 查-改-验 工作台 (locate/inspect/edit/fix-ppr/scan-ppr/render, 2026-07-03)
-        combine,                                                                 # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
-        chapters_sync,                                                           # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
-        chrome,                                                                  # 院报告版面装帧(逐章分节+横向节, distilled eco-flow 2026-06-04)
-        diff, compare, revise_rules,                                             # distilled from bid-diff-and-revise
-        health,                                                                  # health diagnose/fix/full
-        pipeline,                                                                # pipeline driver
-        section,                                                                 # section read/list (distilled from panan-rigid)
-        md_merge,                                                                # md merge-into-docx (distilled from panan-rigid)
-        md_merge_track,                                                          # md→track-changes 锚点前插 (上提 reclaim merge-tracked, 0-B 2026-05-29)
-        table,                                                                   # table structural ops (delete-rows / borders / center, W4 2026-05-26)
-        fonts,                                                                    # 字体/标题色规整 normalize (distilled reclaim 节水年会征文, 2026-06-21)
-        split,                                                                   # split docx by-h1 (distilled from eco-flow/taizhou-天台, W1 2026-05-26)
-        fix_styleset,                                                            # style-set fix family + shape_contract gate (W13 2026-05-26)
-        health_split,                                                            # one-shot health + split thin wrapper (distilled from 业务模板 SOP, 2026-05-28)
-        slim,                                                                    # docx-slim: safe ensemble + aggressive minimal skeleton (W docx-slim 2026-05-28)
-        chapter, renumber, caption, captions, styles,                           # shared
+    # 顺序 = 顶层 --help 里组的显示顺序，别随手调。
+    # `_G("x")` = 由 _groups.py 的声明表注册的组（2026-07-30 起，取代 8 个只做转发的
+    # group 模块）；`mod.register` = 还有自己逻辑、没被收编的模块。
+    def _G(name):
+        return lambda sp: _groups.register_group(sp, name)
+
+    for reg in (
+        _G("audit"), audit_styleset.register, _G("freeze"), _G("strip"),
+        _G("header-footer"), outline.register, blocks.register, images.register,
+        _G("legacy"),  # unique
+        docx_para.register,                                                               # 段落级 查-改-验 工作台 (locate/inspect/edit/fix-ppr/scan-ppr/render, 2026-07-03)
+        combine.register,                                                                 # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
+        chapters_sync.register,                                                           # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
+        chrome.register,                                                                  # 院报告版面装帧(逐章分节+横向节, distilled eco-flow 2026-06-04)
+        diff.register, compare.register, revise_rules.register,                                             # distilled from bid-diff-and-revise
+        health.register,                                                                  # health diagnose/fix/full
+        pipeline.register,                                                                # pipeline driver
+        section.register,                                                                 # section read/list (distilled from panan-rigid)
+        md_merge.register,                                                                # md merge-into-docx (distilled from panan-rigid)
+        md_merge_track.register,                                                          # md→track-changes 锚点前插 (上提 reclaim merge-tracked, 0-B 2026-05-29)
+        table.register,                                                                   # table structural ops (delete-rows / borders / center, W4 2026-05-26)
+        fonts.register,                                                                    # 字体/标题色规整 normalize (distilled reclaim 节水年会征文, 2026-06-21)
+        split.register,                                                                   # split docx by-h1 (distilled from eco-flow/taizhou-天台, W1 2026-05-26)
+        fix_styleset.register,                                                            # style-set fix family + shape_contract gate (W13 2026-05-26)
+        health_split.register,                                                            # one-shot health + split thin wrapper (distilled from 业务模板 SOP, 2026-05-28)
+        slim.register,                                                                    # docx-slim: safe ensemble + aggressive minimal skeleton (W docx-slim 2026-05-28)
+        _G("chapter"), _G("renumber"), _G("caption"), captions.register, styles.register,   # shared
     ):
-        mod.register(subparsers)
+        reg(subparsers)
