@@ -224,7 +224,10 @@ def scan(docx, mode, profile, jsonout, suggest):
     return total
 
 # ── apply ────────────────────────────────────────────────────
-def apply(docx, opsfile, no_backup):
+# 2026-07-30 从 `apply` 改名：顶层 `apply` 在本仓是 pipeline 契约的保留名
+# （`apply(doc, args)`）。这个函数签名是 (docx, opsfile, no_backup)，
+# pipeline_lib.load_step 一旦选中它就是 TypeError。名字不该假装实现了它没实现的契约。
+def apply_ops(docx, opsfile, no_backup):
     with open(opsfile) as f:
         ops = json.load(f)
     data, root = load(docx)
@@ -290,7 +293,7 @@ def main():
     if a.cmd == "scan":
         scan(a.docx, a.mode, a.profile, a.json, a.suggest); sys.exit(0)
     if a.cmd == "apply":
-        sys.exit(apply(a.docx, a.ops, a.no_backup))
+        sys.exit(apply_ops(a.docx, a.ops, a.no_backup))
     if a.cmd == "verify":
         sys.exit(verify(a.docx, a.profile, a.mode))
 

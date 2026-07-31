@@ -277,13 +277,20 @@ def _port_toc_block(md_root, gd_root):
 
 
 # ── --apply ──────────────────────────────────────────────────────────────────
-def cmd_apply(mine, golden, no_backup):
+def _sync(mine, golden, *, no_backup, dry=False) -> dict:
+    """目录同步的唯一实现，CLI 与 spec 引擎共用。"""
+    if golden is None:
+        return {"changed": 0, "skipped": "缺 --ref golden，没有目录块可移植"}
     md, ms = _load(mine)
     gd, gs = _load(golden)
 
     overw, imp = _reconcile_styles(ms, gs, md)
     removed, inserted = _port_toc_block(md, gd)
 
+    if dry:
+        return {"changed": 0, "would_change": len(overw) + removed + inserted,
+                "styles_overwritten": len(overw), "toc_removed": removed,
+                "toc_inserted": inserted}
     if not no_backup:
         bak = mine.with_suffix(mine.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(mine, bak)
@@ -304,14 +311,36 @@ def cmd_apply(mine, golden, no_backup):
             zout.writestr(item, data)
     tmp.replace(mine)
 
-    print(f"[目录同步] {mine.name}")
-    print(f"  样式对账: 覆盖 {len(overw)} 处 {overw}" + (f" + 导入依赖 {imp}" if imp else ""))
-    print(f"  目录块移植: 删 mine {removed} 段 → 插 golden {inserted} 段")
-    # 复验
+    # 复验：移植完的目录锚点是不是真能解析到正文书签。解析不到 = 目录点不动，
+    # 而 Word 里看上去一切正常 —— 所以这个数字必须进返回值，不能只 print。
     md2, ms2 = _load(mine)
     ma, mb = _toc_anchors(md2), _body_bookmarks(md2)
-    print(f"  复验锚点解析: {sum(1 for a in ma if a in mb)}/{len(ma)}  · 点导引 tab: {'有' if _has_leader_tab(md2) else '无'}")
+    return {"changed": len(overw) + removed + inserted,
+            "styles_overwritten": len(overw), "styles_imported": imp,
+            "toc_removed": removed, "toc_inserted": inserted,
+            "anchors_resolved": sum(1 for a in ma if a in mb), "anchors_total": len(ma),
+            "leader_tab": _has_leader_tab(md2)}
+
+
+def cmd_apply(mine, golden, no_backup):
+    r = _sync(mine, golden, no_backup=no_backup)
+    if "skipped" in r:
+        print(f"[目录同步] {mine.name}: {r['skipped']}", file=sys.stderr)
+        return 1
+    print(f"[目录同步] {mine.name}")
+    print(f"  样式对账: 覆盖 {r['styles_overwritten']} 处"
+          + (f" + 导入依赖 {r['styles_imported']}" if r["styles_imported"] else ""))
+    print(f"  目录块移植: 删 mine {r['toc_removed']} 段 → 插 golden {r['toc_inserted']} 段")
+    print(f"  复验锚点解析: {r['anchors_resolved']}/{r['anchors_total']}"
+          f"  · 点导引 tab: {'有' if r['leader_tab'] else '无'}")
     return 0
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """pipeline: 从同源 golden 移植目录块 + 对账目录样式。spec 里给 `sync_toc: {ref: <golden.docx>}`。"""
+    ref = getattr(args, "sync_toc_ref", None) if args else None
+    return _sync(Path(docx_path), Path(ref) if ref else None, no_backup=True,
+                 dry=bool(getattr(args, "dry_run", False)) if args else False)
 
 
 # ── --shot ───────────────────────────────────────────────────────────────────

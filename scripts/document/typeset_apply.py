@@ -104,7 +104,13 @@ from sub.pipeline_lib import load_step, lsof_check, make_backup_path  # noqa: E4
 HOMES = {"sub": SUB, "root": HERE}
 
 # 执行阶段。doc-pre 与 doc-post 的接口都是 apply(doc,args)，差别只在跑在存盘/path 段的哪一侧。
-PHASES = ("doc-pre", "path", "doc-post")
+# path-pre 为什么存在（2026-07-30 加）：restyle / sync_toc 这类「照 golden 对齐」的动作
+# 是**按段落文本匹配**去找对应段的。排版链里 convert_chapter_format / renumber_headings /
+# number_captions / fix_superscript_refs 全都会改文本，跑完之后目标件的文本已经和 golden
+# 对不上，匹配率塌到接近零 —— 而且它不报错，只是安静地「没什么可移植」。
+# 所以这类动作必须排在**整条链之前**，它们又是 zip 级的（path kind），doc-pre 之前没有
+# 可放的位置，故新开一段。别为了省一个 phase 把它们塞进 path：那等于让它们必然失效。
+PHASES = ("path-pre", "doc-pre", "path", "doc-post")
 
 
 @dataclass(frozen=True)
@@ -119,12 +125,39 @@ class Action:
     home: str = "sub"             # 脚本住哪，见 HOMES
     unavailable: str = ""         # 非空 = 本仓当前跑不了，值是原因
     readonly: bool = False        # True = 只读自检，不改树 → 全是只读时跳过存盘（见 run()）
+    count_keys: tuple[str, ...] = ()   # 该脚本用什么键报「改了多少」。空 = 用通用的 "changed"。
+                                  # 为什么要声明而不是猜：全仓 49 处用 changed，但 strip_* 一族
+                                  # 用的是领域名（bookmarks_removed / outlinelvl_removed）。
+                                  # 靠启发式去猜哪个键是「主计数」，猜错时的表现是**报个错数**，
+                                  # 比不报还糟。声明在表里 = 猜不着的时候必然报「键对不上」。
     tail_path: str = ""           # 非空 = 本动作在 path 段还有「另一半」(同模块的 apply_path)，
                                   # 值 = 为什么那一半必须跟着跑。两半绑定，spec 里只有一个开关。
 
 
 # 顺序 = 列表顺序（同一 phase 内）。三段的分界见模块 docstring「三段」。
 ACTIONS: list[Action] = [
+    # ── 〇 · path-pre：照 golden 对齐。按段落文本匹配，故必须跑在改文本的动作之前 ──
+    Action(
+        "restyle", "path", "path-pre",
+        "从同源 golden 整段克隆段落/字符格式（含媒体段兜底补 pStyle）",
+        "整条链的第一步。它拿目标件的段落文本去 golden 里找对应段，找到才移植格式；"
+        "而后面 convert_chapter_format / renumber_headings / number_captions / "
+        "fix_superscript_refs 每一个都会改文本。排在它们后面 = 匹配率塌到接近零，"
+        "而且**不报错**，只是安静地说「无需修改」。不给 ref 时 noop 并如实报 skipped。",
+        opts={"restyle_ref": None},
+        opt_docs={"restyle_ref": "同源 golden docx 路径（格式源）；null = 本动作跳过"},
+    ),
+    Action(
+        "sync_toc", "path", "path-pre",
+        "从同源 golden 移植目录块 + 对账目录样式（TOC 1/2/3 等）",
+        "同 restyle，也是照 golden 对账，必须在改文本之前。排在 restyle 之后："
+        "先把段落格式对齐，目录样式对账才是在同一套样式表上做的。返回值里带 "
+        "anchors_resolved/anchors_total —— 目录锚点解析不到时 Word 里看着完全正常、"
+        "只是点不动，这个数不进报告就没人会发现。",
+        opts={"sync_toc_ref": None},
+        opt_docs={"sync_toc_ref": "同源 golden docx 路径（目录源）；null = 本动作跳过"},
+    ),
+
     # ── 一 · doc-pre：parse 一次，下面这些顺序施加在同一棵内存树上 ────────────
     Action(
         "strip_revisions", "doc", "doc-pre",
@@ -132,6 +165,7 @@ ACTIONS: list[Action] = [
         "必须最先。带修订标记时 doc.paragraphs 读到的是「显示态」而非最终文本，"
         "后面所有按文本匹配的动作（章号解析、题注识别）拿到的都是半成品。",
         opts={"revision_mode": "accept-all", "keep_comments": False},
+        count_keys=("ins_accepted", "del_accepted", "comment_reference_removed"),
         opt_docs={"revision_mode": "修订处理模式；脚本 choices 当前只有 accept-all"
                                   "（ins 展开 + del 删除）",
                   "keep_comments": "true = 保留 word/comments.xml 里的批注定义。"
@@ -160,6 +194,7 @@ ACTIONS: list[Action] = [
         "要在任何搬段/删段动作之前。书签是 bookmarkStart/End 成对的空元素，"
         "段被搬走或删掉之后它们就变成对不上的孤儿，再清就得处理孤儿分支。",
         opts={"bookmark_prefixes": None},
+        count_keys=("bookmarks_removed",),
         opt_docs={"bookmark_prefixes": "要清的书签名前缀；逗号串或 list，"
                                        "\"all\"=清所有，_GoBack 恒清；null=脚本默认 _Toc,_Ref,_Hlk"},
     ),
@@ -213,6 +248,7 @@ ACTIONS: list[Action] = [
         "要在题注配对/编号之前。带 outlineLvl 的题注段会被当成大纲标题，"
         "配对与编号两步都按「这是不是标题」分流，先清干净它们看到的才是真题注集合。",
         opts={},
+        count_keys=("outlinelvl_removed",),
     ),
     Action(
         "pair_table_captions", "doc", "doc-pre",
@@ -370,6 +406,25 @@ ACTIONS: list[Action] = [
         opt_docs={"strip_styles": "要从 styles.xml 摘 outlineLvl 的样式名集合，逗号串；"
                                   "null = 脚本内置的默认题注样式集"},
     ),
+    Action(
+        "center_images", "path", "path",
+        "含图片的段显式居中 + 缩进清零",
+        "排在 path 段末尾。它写的是**段级直接格式**（jc/ind），直接格式在 Word 里压过"
+        "样式，所以任何改样式的动作（docx_apply_image_caption 套图名样式、restyle 克隆"
+        "格式）都得先跑完，否则它写的居中会被后面的样式变更盖住语义 —— 表现是「有的图"
+        "居中有的没有」，且不报错。",
+        opts={},
+    ),
+    Action(
+        "line_spacing", "path", "path",
+        "对照 golden 给正文段补固定行距（只补没有显式行距的段）",
+        "排在 center_images 之后、doc-post 之前。它按段落文本去 golden 取行距值，"
+        "所以理论上也怕文本被改 —— 但它只认**正文段**且逐段独立，题注/标题编号的改动"
+        "波及不到，实测放这里比放 path-pre 好：放前面的话，此后新增的段（题注号补出来的"
+        "那些）永远拿不到行距。不给 ref 时 noop 并如实报 skipped。",
+        opts={"line_spacing_ref": None},
+        opt_docs={"line_spacing_ref": "同源 golden docx 路径（行距值取其众数）；null = 本动作跳过"},
+    ),
 
     # ── 三 · doc-post：path 段改完重开一次 doc，跑「必须看见冻结结果」的动作 ────
     Action(
@@ -419,7 +474,7 @@ BY_NAME: dict[str, Action] = {a.name: a for a in ACTIONS}
 for _a in ACTIONS:
     if _a.phase not in PHASES:
         raise SystemExit(f"[ACTIONS 表错] {_a.name}: phase={_a.phase!r} 不在 {PHASES}")
-    if (_a.phase == "path") != (_a.kind == "path"):
+    if (_a.phase in ("path", "path-pre")) != (_a.kind == "path"):
         raise SystemExit(
             f"[ACTIONS 表错] {_a.name}: phase={_a.phase} 与 kind={_a.kind} 不自洽 —— "
             f"path 段只能放 apply_path 动作，doc-pre/doc-post 只能放 apply 动作"
@@ -622,18 +677,36 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
         shutil.copy2(docx, bak)
         report["backup"] = str(bak)
 
+    pathpre_plan = [a for a in plan if a.phase == "path-pre"]
     pre_plan = [a for a in plan if a.phase == "doc-pre"]
     path_plan = [a for a in plan if a.phase == "path"]
     post_plan = [a for a in plan if a.phase == "doc-post"]
 
     def _record(a: Action, rep: dict) -> None:
         report["actions"][a.name] = rep
-        changed = rep.get("changed")
+        if a.count_keys:
+            present = [k for k in a.count_keys if isinstance(rep.get(k), (int, float))]
+            changed = sum(rep[k] for k in present) if present else None
+        else:
+            changed = rep.get("changed") if isinstance(rep.get("changed"), (int, float)) else None
+
         if changed is not None:
             report["计数"][a.name] = changed
-            report["改了什么"].append(f"{a.name}: {a.what} → changed={changed}")
+            why = f"（{rep['skipped']}）" if rep.get("skipped") else ""
+            report["改了什么"].append(f"{a.name}: {a.what} → changed={changed}{why}")
+        elif a.readonly:
+            report["改了什么"].append(f"{a.name}: {a.what} → 只读自检，无计数")
         else:
-            report["改了什么"].append(f"{a.name}: {a.what} → 只读/无 changed 计数")
+            # 会写盘的动作却报不出计数 —— 从前这里和「只读」走同一条分支，于是
+            # strip_bookmarks 删掉 77 个书签、摘要上写「只读/无 changed 计数」。
+            # 报告说不出自己改了多少，就等于没有报告。这里判红，不静默降级。
+            keys = sorted(k for k, v in rep.items() if isinstance(v, (int, float)))
+            report.setdefault("计数键缺失", []).append(
+                {"action": a.name, "declared": list(a.count_keys) or ["changed"],
+                 "rep 里的数值键": keys})
+            report["改了什么"].append(
+                f"⚠ {a.name}: {a.what} → **计数键对不上**："
+                f"表里声明 {list(a.count_keys) or ['changed']}，脚本实际返回 {keys}")
 
     def _run_doc_phase(doc, actions: list[Action], *, phase_label: str) -> str | None:
         """在同一棵内存树上顺序施加 actions。返回 None = 全过，否则返回错误说明。"""
@@ -648,6 +721,46 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
             report["timing"][f"step:{a.name}"] = round(time.perf_counter() - t, 3)
             _record(a, rep if isinstance(rep, dict) else {"raw": repr(rep)})
         return None
+
+    def _run_path_phase(actions: list[Action], tails: list[Action]) -> str | None:
+        """逐个跑 path-kind 动作（直接改 zip）。path-pre 与 path 两段共用这一份实现 ——
+        抄第二份的那天，两段的错误处理就会开始分叉。返回 None = 全过。"""
+        for a in actions:
+            is_tail = a in tails
+            key = f"{a.name}::path" if is_tail else a.name
+            fn = (getattr(loaded[a.name].module, "apply_path", None) if is_tail
+                  else loaded[a.name].call)
+            if is_tail and fn is None:
+                report["error"] = (
+                    f"动作 '{a.name}' 声明了 tail_path，但它的模块里没有 apply_path —— "
+                    f"脚本接口变了，请同步 ACTIONS 表"
+                )
+                return report["error"]
+            t = time.perf_counter()
+            try:
+                args = _ns(spec[a.name], docx=docx, dry_run=dry_run)
+                rep = fn(docx, args) if is_tail else fn(docx_path=docx, args=args)
+            except Exception as exc:
+                report["actions"][key] = {"error": f"{type(exc).__name__}: {exc}"}
+                report["error"] = (
+                    f"动作 '{key}' 抛异常，已中止。注意 path 阶段在存盘之后，"
+                    f"此前的动作已经落盘 —— 要回退用备份 {report.get('backup', '(没备份)')}"
+                )
+                return report["error"]
+            report["timing"][f"step:{key}"] = round(time.perf_counter() - t, 3)
+            report["actions"][key] = rep if isinstance(rep, dict) else {"raw": repr(rep)}
+            if not is_tail:
+                _record(a, rep if isinstance(rep, dict) else {"raw": repr(rep)})
+            else:
+                report["改了什么"].append(f"{key}: {a.what} 的另一半（comments/settings 等部件）")
+        return None
+
+    # ⓪ path-pre：照 golden 对齐格式。必须在任何改文本的动作之前跑，理由见 PHASES 注释。
+    #    dry-run 时它们的 apply_path 自己认 dry_run（本轮接入时逐个加的），所以照跑。
+    if pathpre_plan:
+        err = _run_path_phase(pathpre_plan, [])
+        if err:
+            return report, 2
 
     # ① doc-pre：parse 一次，全部动作跑在同一棵树上，再 save 一次。
     doc = None
@@ -690,34 +803,9 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
             "dry-run：跳过 " + "、".join(f"{a.name}::path" for a in tails)
             + "（它们的 apply_path 不认 dry_run，跑了就会真写盘）")
         tails = []
-    for a in tails + path_plan:
-        is_tail = a in tails
-        key = f"{a.name}::path" if is_tail else a.name
-        fn = (getattr(loaded[a.name].module, "apply_path", None) if is_tail
-              else loaded[a.name].call)
-        if is_tail and fn is None:
-            report["error"] = (
-                f"动作 '{a.name}' 声明了 tail_path，但它的模块里没有 apply_path —— "
-                f"脚本接口变了，请同步 ACTIONS 表"
-            )
-            return report, 2
-        t = time.perf_counter()
-        try:
-            args = _ns(spec[a.name], docx=docx, dry_run=dry_run)
-            rep = fn(docx, args) if is_tail else fn(docx_path=docx, args=args)
-        except Exception as exc:
-            report["actions"][key] = {"error": f"{type(exc).__name__}: {exc}"}
-            report["error"] = (
-                f"动作 '{key}' 抛异常，已中止。注意 path 阶段在存盘之后，"
-                f"此前的动作已经落盘 —— 要回退用备份 {report.get('backup', '(没备份)')}"
-            )
-            return report, 2
-        report["timing"][f"step:{key}"] = round(time.perf_counter() - t, 3)
-        report["actions"][key] = rep if isinstance(rep, dict) else {"raw": repr(rep)}
-        if not is_tail:
-            _record(a, rep if isinstance(rep, dict) else {"raw": repr(rep)})
-        else:
-            report["改了什么"].append(f"{key}: {a.what} 的另一半（comments/settings 等部件）")
+    err = _run_path_phase(tails + path_plan, tails)
+    if err:
+        return report, 2
 
     # ③ doc-post：重开一次 doc，跑「必须看见 path 阶段产物」的动作（当前只有 normalize_fonts）。
     if post_plan:
@@ -744,12 +832,21 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
             report["timing"]["save2"] = round(time.perf_counter() - t, 3)
 
     report["timing"]["total"] = round(time.perf_counter() - t0, 3)
+    if report.get("计数键缺失"):
+        # 文件已经改好了（rc 不代表交付件坏了），但报告说不出某个动作改了多少 ——
+        # 那正是「守卫哑掉」的形状：跑完全绿、摘要上一行「无计数」，没人会去查。
+        # 全表 29 条实测 0 缺失，所以这里判红不会误伤存量；将来加动作忘了声明
+        # count_keys，第一次跑就会被拦下。
+        report["error"] = ("有动作报不出计数（见「计数键缺失」）—— 文件已改，但报告不完整。"
+                           "去 ACTIONS 表给它声明 count_keys。")
+        return report, 1
     return report, 0
 
 
 # ─────────────────────────── schema 派生（SSOT = ACTIONS）───────────────────────
 
 PHASE_TITLE = {
+    "path-pre": "〇 · path-pre —— 在任何动作之前，按 golden 参照件对齐格式（zip 级）",
     "doc-pre":  "一 · doc-pre —— parse 一次，下面这些按顺序施加在同一棵内存树上，然后存盘",
     "path":     "二 · path —— 存盘之后逐个改 zip 里 document.xml 以外的部件",
     "doc-post": "三 · doc-post —— 重开一次 doc，跑「必须看见冻结结果」的动作，再存一次",

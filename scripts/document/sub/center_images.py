@@ -117,7 +117,9 @@ def cmd_check(docx) -> int:
     return 0
 
 
-def cmd_apply(docx, no_backup) -> int:
+def _center(docx, *, no_backup: bool, dry: bool = False) -> dict:
+    """居中动作的唯一实现。cmd_apply（CLI）与 apply_path（spec 引擎）都走这里 ——
+    两条路各写一遍逻辑，就等于验证的时候测了个替身。返回 pipeline 约定的计数 dict。"""
     root, imgs, _ = _scan(docx)
     fixed = 0
     for p in imgs:
@@ -137,8 +139,9 @@ def cmd_apply(docx, no_backup) -> int:
         fixed += 1
 
     if fixed == 0:
-        print(f"[图片居中] {docx.name}: 无图片段")
-        return 0
+        return {"changed": 0, "images": len(imgs), "note": "无图片段"}
+    if dry:
+        return {"changed": 0, "images": len(imgs), "would_change": fixed}
     if not no_backup:
         bak = docx.with_suffix(docx.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(docx, bak)
@@ -151,8 +154,23 @@ def cmd_apply(docx, no_backup) -> int:
             data = new_doc if item.filename == "word/document.xml" else zin.read(item.filename)
             zout.writestr(item, data)
     tmp.replace(docx)
-    print(f"[图片居中] {docx.name}: {fixed} 个图片段显式居中+零缩进")
+    return {"changed": fixed, "images": len(imgs)}
+
+
+def cmd_apply(docx, no_backup) -> int:
+    r = _center(docx, no_backup=no_backup)
+    if r["changed"] == 0:
+        print(f"[图片居中] {docx.name}: 无图片段")
+        return 0
+    print(f"[图片居中] {docx.name}: {r['changed']} 个图片段显式居中+零缩进")
     return 0
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """pipeline: 图片段显式居中 + 缩进清零（zip 级，走 doc-post 之后的 path 段）。
+    备份由引擎统一做，这里恒 no_backup。"""
+    return _center(Path(docx_path), no_backup=True,
+                   dry=bool(getattr(args, "dry_run", False)) if args else False)
 
 
 def _img_pages(pdf):

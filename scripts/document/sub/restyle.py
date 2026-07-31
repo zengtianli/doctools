@@ -134,11 +134,13 @@ def cmd_check(target: Path, ref: Path) -> int:
     return 0
 
 
-def cmd_apply(target: Path, ref: Path, no_backup: bool) -> int:
+def _restyle(target: Path, ref: Path | None, *, no_backup: bool, dry: bool = False) -> dict:
+    """格式移植的唯一实现，CLI 与 spec 引擎共用。"""
+    if ref is None:
+        return {"changed": 0, "skipped": "缺 --ref golden，没有格式源可移植"}
     root, clone, restyle, kept, diff = _align(target, ref)
     if not clone and not restyle:
-        print(f"[restyle] {target.name}: 无需修改（kept={kept} 差异={diff}）")
-        return 0
+        return {"changed": 0, "kept": kept, "content_diff": diff}
 
     # ① 整段克隆：保留目标 <w:p> 元素本身，把子节点换成 golden 段的深拷贝。
     #    ⚠ 剥掉 pPr 内的 sectPr —— 节断引用 golden 的页眉页脚 rId，克隆进目标件=悬空
@@ -163,6 +165,9 @@ def cmd_apply(target: Path, ref: Path, no_backup: bool) -> int:
         ps.set(q("val"), st)
         pPr.insert(0, ps)
 
+    if dry:
+        return {"changed": 0, "would_change": len(clone) + len(restyle),
+                "kept": kept, "content_diff": diff}
     if not no_backup:
         bak = target.with_suffix(target.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(target, bak)
@@ -178,9 +183,25 @@ def cmd_apply(target: Path, ref: Path, no_backup: bool) -> int:
                 data = new_doc
             zout.writestr(item, data)
     tmp.replace(target)
-    print(f"[restyle] {target.name}: 整段克隆格式 {len(clone)} 段 + 媒体段兜底 pStyle {len(restyle)} 段"
-          f"（跳过 kept={kept} / 内容真差异 {diff} 段不动）")
+    return {"changed": len(clone) + len(restyle), "cloned": len(clone),
+            "pstyle_only": len(restyle), "kept": kept, "content_diff": diff}
+
+
+def cmd_apply(target: Path, ref: Path, no_backup: bool) -> int:
+    r = _restyle(target, ref, no_backup=no_backup)
+    if r["changed"] == 0:
+        print(f"[restyle] {target.name}: 无需修改（kept={r.get('kept')} 差异={r.get('content_diff')}）")
+        return 0
+    print(f"[restyle] {target.name}: 整段克隆格式 {r['cloned']} 段 + 媒体段兜底 pStyle "
+          f"{r['pstyle_only']} 段（跳过 kept={r['kept']} / 内容真差异 {r['content_diff']} 段不动）")
     return 0
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """pipeline: 从同源 golden 移植段落/字符格式。spec 里给 `restyle: {ref: <golden.docx>}`。"""
+    ref = getattr(args, "restyle_ref", None) if args else None
+    return _restyle(Path(docx_path), Path(ref) if ref else None, no_backup=True,
+                    dry=bool(getattr(args, "dry_run", False)) if args else False)
 
 
 def main(argv=None):

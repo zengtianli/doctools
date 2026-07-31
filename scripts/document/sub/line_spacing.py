@@ -160,10 +160,11 @@ def cmd_check(docx_path: Path, ref: Path | None) -> int:
     return 0
 
 
-def cmd_fix(docx_path: Path, ref: Path | None, no_backup: bool) -> int:
+def _fix(docx_path: Path, ref: Path | None, *, no_backup: bool, dry: bool = False) -> dict:
+    """行距修复的唯一实现，CLI 与 spec 引擎共用。ref 缺失时**不静默 noop** ——
+    这个动作没有参照件就无事可做，返回 skipped 让调用方能在报告里看见。"""
     if ref is None:
-        print("行距修复需 --ref 参照件", file=sys.stderr)
-        return 1
+        return {"changed": 0, "skipped": "缺 --ref 参照件，行距值无从取"}
     refmap = _ref_spacing_map(ref)
     root = _body_root(docx_path)
     body = root.find(q("body"))
@@ -188,8 +189,9 @@ def cmd_fix(docx_path: Path, ref: Path | None, no_backup: bool) -> int:
         fixed += 1
 
     if fixed == 0:
-        print(f"[行距修复] {docx_path.name}: 无需修改（已全部设固定行距）")
-        return 0
+        return {"changed": 0, "note": "已全部设固定行距"}
+    if dry:
+        return {"changed": 0, "would_change": fixed}
 
     if not no_backup:
         bak = docx_path.with_suffix(
@@ -209,8 +211,26 @@ def cmd_fix(docx_path: Path, ref: Path | None, no_backup: bool) -> int:
                 data = new_doc
             zout.writestr(item, data)
     tmp.replace(docx_path)
-    print(f"[行距修复] {docx_path.name}: 对照参照补固定行距于 {fixed} 段")
+    return {"changed": fixed}
+
+
+def cmd_fix(docx_path: Path, ref: Path | None, no_backup: bool) -> int:
+    if ref is None:
+        print("行距修复需 --ref 参照件", file=sys.stderr)
+        return 1
+    r = _fix(docx_path, ref, no_backup=no_backup)
+    if r["changed"] == 0:
+        print(f"[行距修复] {docx_path.name}: 无需修改（已全部设固定行距）")
+        return 0
+    print(f"[行距修复] {docx_path.name}: 对照参照补固定行距于 {r['changed']} 段")
     return 0
+
+
+def apply_path(docx_path, args=None) -> dict:
+    """pipeline: 按参照件众数补固定行距。spec 里给 `line_spacing: {ref: <golden.docx>}`。"""
+    ref = getattr(args, "line_spacing_ref", None) if args else None
+    return _fix(Path(docx_path), Path(ref) if ref else None, no_backup=True,
+                dry=bool(getattr(args, "dry_run", False)) if args else False)
 
 
 def main(argv=None):

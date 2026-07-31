@@ -203,7 +203,7 @@ def parse_md(filepath: str) -> list:
             blocks.append(("image", path, alt))
             i += 1
             continue
-        # 标题 #..######（含一级：首个 heading 用于更新被合并节的标题，见 apply() 内 blocks[0] 分支）
+        # 标题 #..######（含一级：首个 heading 用于更新被合并节的标题，见 merge_md_into_docx() 内 blocks[0] 分支）
         m = re.match(r"^(#{1,6})\s+(.+)$", line)
         if m:
             blocks.append(("heading", len(m.group(1)), m.group(2).strip()))
@@ -228,7 +228,9 @@ def resolve_anchor(doc, anchor: str, *, from_idx: int = 0) -> int:
     raise ValueError(f"anchor 未匹配: {anchor!r}")
 
 
-def apply(
+# 2026-07-30 从 `apply` 改名：顶层 `apply` 是 pipeline 契约的保留名 `apply(doc, args)`。
+# 本函数要 (md_file, docx_file, start_idx, end_idx, ...)，load_step 选中它必 TypeError。
+def merge_md_into_docx(
     md_file: str,
     docx_file: str,
     start_idx: int,
@@ -426,16 +428,34 @@ def apply(
     return output_file
 
 
-# Alias for pipeline adapter compatibility
 def apply_path(docx_path=None, args=None) -> dict:
-    """pipeline adapter — delegates to apply(); requires positional args via sys.argv."""
-    try:
-        main()
-        return {"status": "ok", "script": "md_merge_impl.py"}
-    except SystemExit as e:
-        return {"status": "sysexit", "code": e.code, "script": "md_merge_impl.py"}
-    except Exception as e:
-        return {"status": "error", "error": repr(e), "script": "md_merge_impl.py"}
+    """pipeline: 把一份 md 合并进 docx 的指定节区间。
+
+    2026-07-30 重写。旧版做的是三件都不该做的事：① 忽略传进来的 docx_path/args，
+    直接调 `main()` 去读 **sys.argv** —— 在 pipeline 里 sys.argv 是驱动程序的参数，
+    等于拿别人的命令行当自己的输入；② 把 SystemExit 和一切异常都包成
+    `{"status": ...}` 返回，调用方看到的是「正常返回」，于是失败被当成成功；
+    ③ 没有 `changed` 计数，报告里永远是一行「无计数」。
+    现在：参数从 args 取，缺一个就抛 —— 这个动作没有能猜的默认值。
+    """
+    need = ("md_merge_md_file", "md_merge_start_idx", "md_merge_end_idx")
+    missing = [k for k in need if getattr(args, k, None) is None]
+    if missing:
+        raise ValueError(
+            f"md_merge_impl.apply_path 缺参数 {missing} —— "
+            f"合并哪份 md、并进哪一节，没有能猜的默认值")
+    if docx_path is None:
+        raise ValueError("md_merge_impl.apply_path 需要 docx_path")
+    out = merge_md_into_docx(
+        str(getattr(args, "md_merge_md_file")), str(docx_path),
+        int(getattr(args, "md_merge_start_idx")), int(getattr(args, "md_merge_end_idx")),
+        output_file=getattr(args, "md_merge_output", None),
+        in_place=bool(getattr(args, "md_merge_in_place", True)),
+        no_backup=bool(getattr(args, "no_backup", True)),
+        track_changes=bool(getattr(args, "md_merge_track_changes", False)),
+        tc_author=str(getattr(args, "md_merge_tc_author", "CC")),
+    )
+    return {"changed": 1, "output": str(out)}
 
 
 def main() -> int:
@@ -474,7 +494,7 @@ def main() -> int:
         print("[md-merge] 需位置参数 start_idx/end_idx, 或 --start-anchor/--end-anchor", file=sys.stderr)
         return 2
 
-    apply(args.md_file, args.docx_file, start_idx, end_idx,
+    merge_md_into_docx(args.md_file, args.docx_file, start_idx, end_idx,
           args.output_file, in_place=args.in_place, no_backup=args.no_backup,
           track_changes=args.track_changes, tc_author=args.tc_author)
     return 0
