@@ -91,6 +91,49 @@ CASES: list[list[str]] = [
     ["md-merge", "/tmp/a.md", D, "--start-anchor", "第三章", "--in-place", "--no-backup"],
 ]
 
+# ─── CMD_TABLE fast-path（legacy REMAINDER 转发）──────────────────────────
+# 这些子命令不走 sub/* 的 exec_script，走 docx_cli 模块级 _exec_script +
+# mod.main() 里的手动分割 fast-path —— 上面的 CASES 完全覆盖不到。
+# 每条 = (敲进来的 argv, 预期转发 [{"script": stem, "argv": [...]}, ...])。
+# 预期是**写死的**：转发目标/前置 token 改错时 probe 直接红，不依赖外部 diff。
+# 覆盖 CMD_TABLE 全部 16 个 key（含 read/diff 两个 alias）。
+CMD_CASES: list[tuple[list[str], list[dict]]] = [
+    (["extract", D, "-o", "/tmp/out.md"],
+     [{"script": "docx_tools", "argv": ["extract", D, "-o", "/tmp/out.md"]}]),
+    (["read", D, "--tables"],                      # alias read → extract
+     [{"script": "docx_tools", "argv": ["extract", D, "--tables"]}]),
+    (["check", D],
+     [{"script": "docx_tools", "argv": ["check", D]}]),
+    (["snapshot", D],                              # 注入前置 token check
+     [{"script": "docx_tools", "argv": ["check", "snapshot", D]}]),
+    (["compare", D, G],
+     [{"script": "docx_tools", "argv": ["check", "compare", D, G]}]),
+    (["diff", D, G],                               # alias diff → compare
+     [{"script": "docx_tools", "argv": ["check", "compare", D, G]}]),
+    (["track", D, "--summary"],
+     [{"script": "docx_tools", "argv": ["track-changes", D, "--summary"]}]),
+    (["image-caption", D, "--dry-run"],
+     [{"script": "sub/docx_apply_image_caption", "argv": [D, "--dry-run"]}]),
+    (["template", D, "--ref", G],
+     [{"script": "docx_fmt", "argv": ["template", D, "--ref", G]}]),
+    (["format", "extract", G],
+     [{"script": "docx_fmt", "argv": ["clone", "extract", G]}]),
+    (["format", "apply", D, "--ref", G],
+     [{"script": "docx_fmt", "argv": ["clone", "apply", D, "--ref", G]}]),
+    (["renumber-fig", D],
+     [{"script": "renum", "argv": ["figures", D]}]),
+    (["text-fmt", D, "--dry-run"],
+     [{"script": "docx_fmt", "argv": ["text", D, "--dry-run"]}]),
+    (["fix-ref", D],
+     [{"script": "sub/fix_superscript_refs", "argv": [D]}]),
+    (["md-to-docx", "/tmp/a.md", "-o", "/tmp/o.docx"],
+     [{"script": "md_tools", "argv": ["md2docx", "/tmp/a.md", "-o", "/tmp/o.docx"]}]),
+    (["scan-sensitive", D],
+     [{"script": "sub/scan_sensitive_words", "argv": [D]}]),
+    (["md", "format", "-i", "/tmp/a.md"],
+     [{"script": "md_tools", "argv": ["format", "-i", "/tmp/a.md"]}]),
+]
+
 _calls: list[dict] = []
 
 
@@ -152,8 +195,40 @@ def main() -> int:
             continue
         out.append({"case": case, "rc": rc, "calls": list(_calls)})
 
+    # ── CMD_TABLE fast-path：patch 模块级 _exec_script，走真实 mod.main() ──
+    # cmd_* 函数引用的是 docx_cli 的模块全局 _exec_script，patch sub.* 对它无效。
+    if getattr(mod, "_exec_script", None) is None:
+        print("docx_cli 上没有 _exec_script —— CMD_TABLE 探针没法接线，判红。",
+              file=sys.stderr)
+        return 4
+    mod._exec_script = _recorder
+    for case, expected in CMD_CASES:
+        _calls.clear()
+        try:
+            rc = mod.main(case)
+        except SystemExit as e:
+            bad.append({"case": case, "err": f"main SystemExit={e.code}"})
+            continue
+        except Exception as e:   # noqa: BLE001
+            bad.append({"case": case, "err": f"{type(e).__name__}: {e}"})
+            continue
+        got = list(_calls)
+        if rc != 0:
+            bad.append({"case": case, "err": f"rc={rc}（fast-path 没接住这条子命令）",
+                        "calls": got})
+            continue
+        if not got:
+            bad.append({"case": case, "err": "零转发 —— 探针没录到任何 _exec_script 调用"})
+            continue
+        if got != expected:
+            bad.append({"case": case, "err": "转发 argv 与预期不符",
+                        "expected": expected, "got": got})
+            continue
+        out.append({"case": case, "rc": rc, "calls": got})
+
     print(json.dumps({"ok": out, "bad": bad}, ensure_ascii=False, indent=1))
-    print(f"[probe] 正常 {len(out)} 条 · 异常 {len(bad)} 条", file=sys.stderr)
+    print(f"[probe] 正常 {len(out)} 条 · 异常 {len(bad)} 条"
+          f"（distilled {len(CASES)} + cmd-table {len(CMD_CASES)}）", file=sys.stderr)
     return 0 if not bad else 1
 
 

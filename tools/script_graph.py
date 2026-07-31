@@ -42,7 +42,7 @@ SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools"]
 
 # 顶层 CLI = 人直接敲的入口，入度 0 也不算孤儿
 ENTRIES = {"docx_cli", "pdf_cli", "doc_dispatch", "typeset_pipeline", "doc_gui_backend",
-           "pptx_cli", "pptx_align", "md_tools", "script_graph", "blast_radius",
+           "pptx_cli", "md_tools", "script_graph", "blast_radius",
            "check_docx_collar", "_inventory",
            # 2026-07-30 登记：spec 引擎入口 + 两个等价闸门
            "typeset_apply", "cli_surface", "cli_forward_probe"}

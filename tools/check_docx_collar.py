@@ -24,7 +24,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCAN = ROOT / "scripts"
 
-IMPORTS_DOCX = re.compile(r"^\s*(from docx[\w.]*\s+import|import docx\b)", re.M)
+# 只认 python-docx 本尊：`import docx` / `from docx import` / `from docx.xxx import`。
+# 禁写成 docx[\w.]*——那会把自家 docx_parts/docx_xml/docx_safe_save 的 import 也判成
+# python-docx 存盘脚本（2026-07-31 实证：pptx_cli 挂部件断言反被本守卫误判红）。
+IMPORTS_DOCX = re.compile(r"^\s*(from docx(?:\.[\w.]+)?\s+import|import docx\b)", re.M)
 COLLAR = re.compile(r"^\s*import docx_safe_save\b", re.M)
 
 # ── 第二判据（2026-07-31 加）────────────────────────────────────────────
