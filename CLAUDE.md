@@ -40,10 +40,38 @@ lib/                  # 公共模块
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则它对全仓不可见：`script_graph` 会把它
 判成孤儿，下次清理就把它清了。
 
+## 子命令：加子命令 = 加一行数据，不是加一个文件（2026-07-30 立）
+
+`docx_cli.py` 的 128 个子命令，声明全在 **`scripts/document/sub/_groups.py` 的 `GROUPS` 表**。
+原来是 20 个只做「argparse 声明 + `exec_script` 转发」的 group 模块（2265 行），已折成一张表。
+
+`Opt` 里同时写「怎么声明给 argparse」和「怎么转发给实现脚本」，**这两件事必须挨着** ——
+原来它们分居 `register()` 与 `_run()` 两处，于是「加了选项忘了转发」是这类壳最常见的 bug：
+用户传了参数、脚本收不到、静默按默认值跑。
+
+改这张表**必须两道闸门都跑**：
+
+```bash
+python3 tools/cli_surface.py > /tmp/a.json        # 改之前
+python3 tools/cli_surface.py > /tmp/b.json        # 改之后 → diff 必须空
+python3 tools/cli_forward_probe.py                # 每条子命令真正转发出去的 argv
+```
+
+**只跑第一个不够**：它证明接口没变，证明不了参数传过去还是原样 —— 「命令能敲、
+跑出来的东西不对」这一类改动它完全看不见。`cli_forward_probe.py` 拦掉 `exec_script`
+把 argv 录下来，那才是折叠真正动到的东西。
+
+（`cli_surface` 加上「子命令组的 dest/required/metavar」之后，当场抓到 `header-footer`
+的 metavar 被从 `<action>` 写成了 `<target>` —— 这种差异不报错、只在 `--help` 里显示不同。）
+
+自带业务逻辑的模块（`outline` / `styles` / `health` / `slim` / `fix_styleset` /
+`docx_para` / `combine` / `md_merge_track` / `audit_styleset` / `chapters_sync` /
+`health_split` / `pipeline`）**不在表里**，各自 `register()`。
+
 ## 全仓脚本关系图
 
 ```bash
-python3 tools/script_graph.py --open     # 151 个脚本 · 谁调谁 · 双链可点
+python3 tools/script_graph.py --open     # 134 个脚本 · 谁调谁 · 双链可点
 ```
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。
