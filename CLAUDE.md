@@ -8,8 +8,13 @@
 
 ```
 scripts/
-├── document/ (29)    # 文档处理入口（docx_ + md_ + pptx_ + chart + bid_gate）
-│   └── sub/ (72)     # docx_cli 子命令实现（_groups 声明表 + 业务模块 + _cli_common 样板）
+├── document/ (23)    # 文档处理入口（docx_ + md_ + pptx_ + chart + bid_gate + renum + docx_fmt）
+│   └── sub/ (43)     # docx_cli 子命令实现（_groups 声明表 + 业务模块 + _cli_common 样板；
+│                     #   2026-07-31 家族折叠：strip/audit/freeze/image/table/caption/chapter/
+│                     #   renumber/blocks/split/typeset_ops/biddiff 12 族 42 旧件并成 12 个子命令族文件；
+│                     #   同日入口层折叠：chapter_renumber/tabfig_align/docx_renumber_figures →
+│                     #   renum.py，docx_apply_template/format_clone/font_normalize/text_formatter →
+│                     #   docx_fmt.py，docx_apply_image_caption 平移进 sub/）
 └── data/ (5)         # 数据转换（xlsx_ + convert）
 
 lib/                  # 公共模块
@@ -34,6 +39,8 @@ lib/                  # 公共模块
 | `scripts/document/bid_gate.py` | 标书终稿门检族（2026-07-31 原 bid_final/bid_residue_scan/bid_finalize_sweep/bid_identity_gate/bid_print_ready/bid_deref 6 件合并；检测逻辑 SSOT 仍在 `bid_residue_lib.py`）。子命令：`run`=四门 driver（原 bid_final）· `scan`/`sweep`/`identity`/`print`=单门 · `deref`=交叉引用去耦合（原 bid_deref） | `python3 scripts/document/bid_gate.py run <docx> --mode main\|pei [--rules Y] [--apply]`；单门 `bid_gate.py scan\|sweep\|identity\|print <docx>`；去耦合 `bid_gate.py deref <docx> --check` |
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run scripts/document/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
 | `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（w:ins/w:del+批注；锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `python3 scripts/document/docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |
+| `scripts/document/renum.py` | 编号/题注位移与重排族（2026-07-31 原 chapter_renumber/tabfig_align/docx_renumber_figures 3 件合并）。子命令：`chapter`=md 侧章号位移引擎（config 驱动，/renumber skill 指向）· `tabfig`=md 侧 表/图 题注号对齐（--check 机检门 exit 2）· `figures`=docx 图号重排+引用同步（docx_cli `renumber-fig` 即它） | `python3 scripts/document/renum.py chapter <chapters.yaml> [--apply]`；`renum.py tabfig <yaml\|目录> [--apply\|--check]`；`renum.py figures <docx> [--cn-section --kind 图\|表] [--dry-run\|--inplace]` |
+| `scripts/document/docx_fmt.py` | docx 版式/字体/文本规范化族（2026-07-31 原 docx_apply_template/docx_format_clone/docx_font_normalize/docx_text_formatter 4 件合并）。子命令：`template`=套模板+样式清理（docx_cli `template`）· `clone`=版式提取/外壳克隆复刻（docx_cli `format`）· `fonts`=去等线（docx-font-guard hook 指向）· `text`=引号/标点/单位规范化（docx_cli `text-fmt`） | `python3 scripts/document/docx_fmt.py template <docx> [-t 模板]`；`docx_fmt.py clone extract\|apply …`；`docx_fmt.py fonts <docx...> --check\|--apply`；`docx_fmt.py text [flags] <docx...>` |
 
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则它对全仓不可见：`script_graph` 会把它
 判成孤儿，下次清理就把它清了。
@@ -79,7 +86,7 @@ review 的 include_ins+strict 默认全开是机器强制条款，禁改）。
 ## 全仓脚本关系图
 
 ```bash
-python3 tools/script_graph.py --open     # 133 个脚本 · 谁调谁 · 双链可点
+python3 tools/script_graph.py --open     # 103 个脚本 · 谁调谁 · 双链可点
 ```
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。

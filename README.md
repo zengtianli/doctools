@@ -7,9 +7,8 @@
 | 脚本 | 功能 |
 |------|------|
 | `chart.py` | 数据驱动图表生成（JSON -> PNG） |
-| `docx_apply_image_caption.py` | 应用图片和图名样式 |
-| `docx_apply_template.py` | Word 文档样式套模板 + 清理 |
-| `docx_text_formatter.py` | 文本格式自动修复（DOCX） |
+| `sub/docx_apply_image_caption.py` | 应用图片和图名样式 |
+| `docx_fmt.py` | docx 版式/字体/文本规范化族（template/clone/fonts/text 子命令） |
 | `docx_tools.py` | Word 文档工具集 |
 | `md_docx_template.py` | Markdown 转 Docx（样式复刻） |
 | `md_tools.py` | Markdown 工具集 |

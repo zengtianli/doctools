@@ -1,40 +1,315 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""docx_renumber_figures.py — 按文档出现顺序重排 Figure 编号 + 同步全部正文引用。
+"""renum.py — 编号/题注位移与重排族（原 3 个入口脚本 2026-07-31 合并为子命令）。
 
-用途：论文/报告里图被增删/挪位后，图题号与正文 "Figure N" 引用全乱。本脚本扫
-所有图题（caption），按它们在文档里**实际出现的物理顺序**重编号为 1..N，并把
-captions + 所有正文引用（含范围 "Figures N–M"、列举 "Figures N, M and K"）一并改对。
+子命令（CLI 表面与原脚本零改动，banner/usage/退出码逐字保留）:
+  chapter <chapters.yaml> [--apply]                原 chapter_renumber.py（md 侧章号位移引擎，config 驱动）
+  tabfig  <chapters.yaml|章节目录> [--apply|--check]  原 tabfig_align.py（md 侧 表/图 题注号对齐章号）
+  figures <docx> [...]                             原 docx_renumber_figures.py（docx 侧图号重排+引用同步）
 
-为什么不是简单 str.replace：
-  1. **跨 run 分裂**：Word 常把 "Figure " 和 "23" 拆进相邻 w:r/w:t，朴素正则
-     按单个 w:t 改会漏掉数字在独立节点的 caption。本脚本按"段落级 concat 文本 +
-     字符偏移定位 → 写回覆盖该偏移所在 w:t"，跨 run 也能改。
-  2. **轮转/置换防碰撞**：重排常是置换（如 28→20, 20→21…27→28）。逐个 token
-     读旧值、原子写新值，绝不串改（朴素全局 replace 会把 23→25 又被 25→27 二次改）。
-  3. **排除 w:del**：track-changes 删除态(w:del/delText)里的旧文本不能算数、不改。
-  4. ⚠ **python-docx 陷阱**：`Paragraph.text` 静默漏掉 `w:ins`（修订插入）里的
-     run 文本 → 用它扫图题会漏掉"修订态插入的图/引用"。本脚本直接走 lxml 遍历
-     w:t（含 w:ins、排除 w:del），不踩这个坑。
-
-CLI:
-  docx_renumber_figures.py <docx> [-o OUT] [--dry-run] [--prefix Figure] [--inplace]
-  --dry-run : 只打印 现号→新号 映射 + 受影响引用，不写
-  -o OUT    : 输出路径（默认 <name>.renumbered.docx）
-  --inplace : 覆盖原文件（自动留 <name>.bak）
-  --prefix  : 图前缀，默认 "Figure"（也匹配 "Fig."/"Fig"）
-
-退出码：0 成功且重编号后 captions 连续 1..N；2 检测到重复图号（引用无法安全remap）。
+exit 契约不变: chapter 0 · tabfig 0/1/2（--check 漂移=2）· figures 0/2。
+figures 的 WriteGate 并发门与 assert_parts_intact 部件完整性断言原样保留；
+_body_start_idx / serialize 惯用法 2026-07-31 起改用 lib/docx_surgical 的 SSOT 版
+（body_start_idx 抽取时即与本脚本逐字一致，见该文件自注）。
 """
-import argparse, re, shutil, sys, zipfile
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
+
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
+from docx_write_gate import WriteGate  # noqa: E402  原地写回并发门（同目录 SSOT）
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+from chapter_numbering import ChapterNumbering  # noqa: E402
 from docx_parts import assert_parts_intact  # noqa: E402
+from docx_surgical import body_start_idx as _lib_body_start_idx  # noqa: E402
+from docx_surgical import serialize as _serialize  # noqa: E402
+
+# ════════════════════════════════════════════════════════════════════════════
+# chapter — 原 chapter_renumber.py：章号统一位移引擎(通用·config 驱动)
+#
+# 改章号 = 只改项目 chapters.yaml 的 number_base 一个数,跑本引擎 --apply;
+# 源码/正文不用手改。按「当前号→目标号」整数映射,位移所有引用点的前导章号:
+#   ① 章节 md: H1 首行章号 + 图题注号(默认 【图 X-Y】)
+#   ② 章节文件名: ch<号>-<slug>.md
+#   ③ 成图 PNG: 图<号>-<k>_<名>.png   (两段式改名防撞号)
+#   ④ FACTS.md facts-machine 块的章号键 "X"/"X.Y"
+#   ⑤ 目录大纲: 第N章 / chN / 列表与标题前导号 / N—M 区间
+# 目标路径来自 chapters.yaml 的 renumber_targets(缺省=标书/报告约定,见
+# chapter_numbering.DEFAULT_TARGETS)。幂等: 磁盘已达标 → no-op。
+# 位移后需项目侧重跑 number_headings(重派子号)+ 重渲。
+# chapters.yaml 最小 schema 见 lib/chapter_numbering.py 顶部。
+# ════════════════════════════════════════════════════════════════════════════
+
+FACTS_FENCE = re.compile(r"(```yaml[ \t]+facts-machine[ \t]*\n)(.*?)(\n```)", re.DOTALL)
+
+
+def find_config(argv):
+    for a in argv:
+        if a.endswith(".yaml") or a.endswith(".yml"):
+            return Path(a).resolve()
+    for cand in (Path("技术标/chapters.yaml"), Path("chapters.yaml")):
+        if cand.exists():
+            return cand.resolve()
+    sys.exit("错误: 未找到 chapters.yaml,请显式传入路径。")
+
+
+def remap_num(numstr, imap):
+    head, dot, tail = numstr.partition(".")
+    if not head.isdigit() or int(head) not in imap:
+        return numstr
+    return str(imap[int(head)]) + (dot + tail if dot else "")
+
+
+def xform_chapter_md(text, imap, caption_prefix):
+    n = [0]
+
+    def h1_sub(m):
+        new = remap_num(m.group(2), imap)
+        if new == m.group(2):
+            return m.group(0)
+        n[0] += 1
+        return f"{m.group(1)}{new}{m.group(3)}"
+
+    def cap_sub(m):
+        new = remap_num(m.group(2), imap)
+        if new == m.group(2):
+            return m.group(0)
+        n[0] += 1
+        return f"{m.group(1)}{new}{m.group(3)}"
+
+    lines = text.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.startswith("# "):  # 只动 H1;H2+ 由 number_headings 从新 base 派生
+            lines[i] = re.sub(r"^(#\s+)(\d+(?:\.\d+)*)(\s.*)$", h1_sub, ln)
+    text = "\n".join(lines)
+    text = re.sub(
+        r"(" + re.escape(caption_prefix) + r"\s*)(\d+(?:\.\d+)*)(-\d+)", cap_sub, text
+    )
+    return text, n[0]
+
+
+def xform_facts(text, imap):
+    def block_sub(bm):
+        body = re.sub(
+            r'"(\d+(?:\.\d+)*)"(\s*):',
+            lambda m: f'"{remap_num(m.group(1), imap)}"{m.group(2)}:',
+            bm.group(2),
+        )
+        return bm.group(1) + body + bm.group(3)
+
+    return FACTS_FENCE.sub(block_sub, text)
+
+
+def xform_outline(text, imap):
+    lines = text.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.startswith(">"):  # 引语/说明行(语义)人工维护,引擎不碰
+            continue
+        s = ln
+        s = re.sub(r"第(\d+)章", lambda m: f"第{remap_num(m.group(1), imap)}章", s)
+        s = re.sub(r"ch(\d+(?:\.\d+)*)", lambda m: f"ch{remap_num(m.group(1), imap)}", s)
+        s = re.sub(
+            r"^(\s*(?:#{2,}\s+|-\s+))(\d+(?:\.\d+)*)(\s|　)",
+            lambda m: f"{m.group(1)}{remap_num(m.group(2), imap)}{m.group(3)}",
+            s,
+        )
+        s = re.sub(
+            r"(\d+)—(\d+)",
+            lambda m: f"{remap_num(m.group(1), imap)}—{remap_num(m.group(2), imap)}",
+            s,
+        )
+        lines[i] = s
+    return "\n".join(lines)
+
+
+def new_leading(name_pat, name, imap):
+    m = re.match(name_pat, name)
+    if not m:
+        return None
+    new = remap_num(m.group(1), imap)
+    if new == m.group(1):
+        return None
+    return new, m
+
+
+def chapter_main(argv):
+    apply = "--apply" in argv
+    cfg_path = find_config(argv)
+    cn = ChapterNumbering(cfg_path)
+    root = cn.root
+    t = cn.targets()
+    ch_dir = (root / t["chapters_glob"]).parent
+    imap = cn.integer_map(ch_dir)
+    identity = all(k == v for k, v in imap.items())
+    print(f"=== 章号位移引擎(通用) ({'APPLY' if apply else 'DRY-RUN'}) · {cfg_path} ===")
+    print(f"number_base={cn.load()['number_base']} · 整数章号映射: {dict(sorted(imap.items()))}")
+    if identity:
+        print("磁盘已与 config 一致,无需位移 (no-op)。")
+        return
+
+    # ① + ② 章节 md 内容 + 文件重命名
+    md_files = sorted(ch_dir.glob(Path(t["chapters_glob"]).name))
+    print(f"\n[md] {len(md_files)} 个章节文件:")
+    for f in md_files:
+        text = f.read_text(encoding="utf-8")
+        new_text, nchg = xform_chapter_md(text, imap, t["caption_prefix"])
+        r = new_leading(r"^ch(\d+(?:\.\d+)*)-", f.name, imap)
+        nn = (f"ch{r[0]}-" + f.name[r[1].end():]) if r else None
+        print(f"  {f.name}  H1/题注×{nchg}" + (f"  → {nn}" if nn else ""))
+        if apply:
+            if new_text != text:
+                f.write_text(new_text, encoding="utf-8")
+            if nn and nn != f.name:
+                subprocess.run(["git", "mv", f.name, nn], cwd=str(ch_dir), capture_output=True)
+                if (ch_dir / f.name).exists():
+                    os.rename(ch_dir / f.name, ch_dir / nn)
+
+    # ③ 成图 PNG 两段式改名
+    png_dir = (root / t["figure_png_glob"]).parent
+    pngs = sorted(png_dir.glob(Path(t["figure_png_glob"]).name)) if png_dir.is_dir() else []
+    renames = []
+    for p in pngs:
+        r = new_leading(r"^图(\d+(?:\.\d+)*)(-\d+_)", p.name, imap)
+        if r:
+            renames.append((p, f"图{r[0]}" + p.name[r[1].start(2):]))
+    print(f"\n[png] {len(renames)}/{len(pngs)} 个成图改名:")
+    for p, nn in renames:
+        print(f"  {p.name}  → {nn}")
+    if apply and renames:
+        for p, _ in renames:
+            os.rename(p, p.with_name("__tmp__" + p.name))
+        for p, nn in renames:
+            os.rename(p.with_name("__tmp__" + p.name), png_dir / nn)
+
+    # ④ FACTS
+    facts = root / t["facts_file"]
+    if facts.exists():
+        ftxt = facts.read_text(encoding="utf-8")
+        fnew = xform_facts(ftxt, imap)
+        print(f"\n[FACTS] facts-machine 键位移: {'有改动' if fnew != ftxt else '无'}")
+        if apply and fnew != ftxt:
+            facts.write_text(fnew, encoding="utf-8")
+
+    # ⑤ 目录大纲
+    for outline in sorted(root.glob(t["outline_glob"])):
+        otxt = outline.read_text(encoding="utf-8")
+        onew = xform_outline(otxt, imap)
+        print(f"[大纲] {outline.name} 章号位移: {'有改动' if onew != otxt else '无'}")
+        if apply and onew != otxt:
+            outline.write_text(onew, encoding="utf-8")
+
+    print(f"\n{'✅ 已执行' if apply else '（干跑,加 --apply 执行）'}")
+    print("后续: 项目侧 number_headings.py --apply(重派子号) → 重渲 docx。")
+    print("提示: 引擎不碰散文类 SSOT(CLAUDE.md/总纲/大纲引语行),需人工同步语义。")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# tabfig — 原 tabfig_align.py：表/图题注号与所在章号对齐
+# ════════════════════════════════════════════════════════════════════════════
+
+# 原 tabfig_align.py 的模块 docstring —— 无参时打印的 usage 文案，逐字保留（对拍契约）。
+TABFIG_DOC = """tabfig_align — 表/图题注号与所在章号对齐（单一职责,报告/标书通用）。
+
+问题域: 章号位移(chapter_renumber)后,正文里的 `表 9.2-1　…` / `图 8-1` 类编号
+前缀还是旧章号。本脚本只干一件事: **让每个 表/图 编号的章号段 = 它所在
+章文件的章号**(从文件名 ch<N>-*.md 取),自愈式、幂等、与位移映射解耦——
+不管中间改过几轮章号,跑一次就对。
+
+不做的事(各归各的脚本): 章文件名/H1/PNG/FACTS 位移=chapter_renumber.py;
+子标题派生=项目 number_headings.py;渲染=gen_bid_docx.py。
+
+用法:
+  python3 tabfig_align.py <chapters.yaml|章节目录> [--apply|--check]
+    (默认)   干跑,列出待改项,exit 0
+    --apply  写回文件
+    --check  机检门: 有漂移 exit 2,干净 exit 0
+"""
+
+TOKEN_RE = re.compile(r"([表图])(\s*)(\d+(?:\.\d+)*)(-\d+)")
+CH_RE = re.compile(r"^ch(\d+(?:\.\d+)*)-")
+
+
+def chapter_files(arg: Path):
+    if arg.is_dir():
+        return sorted(arg.glob("ch*.md"))
+    # chapters.yaml → 走总部 lib 的 targets(chapters_glob 相对 config 目录)
+    cn = ChapterNumbering(arg)
+    return sorted(cn.root.glob(cn.targets()["chapters_glob"]))
+
+
+def align_text(text: str, ch_num: str):
+    """返回 (新文本, [(旧token, 新token), ...])。只改章号段,保留序号与空白。"""
+    changes = []
+
+    def sub(m):
+        kind, sp, num, tail = m.groups()
+        if num == ch_num:
+            return m.group(0)
+        new = f"{kind}{sp}{ch_num}{tail}"
+        changes.append((m.group(0), new))
+        return new
+
+    return TOKEN_RE.sub(sub, text), changes
+
+
+def tabfig_main(argv):
+    args = [a for a in argv if not a.startswith("--")]
+    if not args:
+        print(TABFIG_DOC)
+        return 1
+    apply_ = "--apply" in argv
+    check = "--check" in argv
+    src = Path(args[0]).expanduser().resolve()
+
+    total = 0
+    for f in chapter_files(src):
+        m = CH_RE.match(f.name)
+        if not m:
+            continue
+        new_text, changes = align_text(f.read_text(encoding="utf-8"), m.group(1))
+        if not changes:
+            continue
+        total += len(changes)
+        print(f"{f.name}  ({len(changes)} 处)")
+        for old, new in changes:
+            print(f"  {old}  →  {new}")
+        if apply_:
+            f.write_text(new_text, encoding="utf-8")
+
+    if total == 0:
+        print("✅ 表/图编号与章号全部对齐,无需改动")
+        return 0
+    if apply_:
+        print(f"✅ 已写回 {total} 处")
+        return 0
+    print(f"⚠ 共 {total} 处待对齐(干跑未写)。--apply 执行,--check 作机检门")
+    return 2 if check else 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# figures — 原 docx_renumber_figures.py：按文档出现顺序重排 Figure 编号
+#           + 中文章节式 图X.Y-N 节内重排/补号 + 同步全部正文引用
+#
+# 为什么不是简单 str.replace：
+#   1. **跨 run 分裂**：Word 常把 "Figure " 和 "23" 拆进相邻 w:r/w:t，朴素正则
+#      按单个 w:t 改会漏掉数字在独立节点的 caption。按"段落级 concat 文本 +
+#      字符偏移定位 → 写回覆盖该偏移所在 w:t"，跨 run 也能改。
+#   2. **轮转/置换防碰撞**：重排常是置换（如 28→20, 20→21…27→28）。逐个 token
+#      读旧值、原子写新值，绝不串改。
+#   3. **排除 w:del**：track-changes 删除态(w:del/delText)里的旧文本不能算数、不改。
+#   4. ⚠ **python-docx 陷阱**：`Paragraph.text` 静默漏掉 `w:ins`（修订插入）里的
+#      run 文本 → 直接走 lxml 遍历 w:t（含 w:ins、排除 w:del）。
+#
+# 退出码：0 成功且重编号后 captions 连续 1..N；2 检测到重复图号（引用无法安全remap）。
+# ════════════════════════════════════════════════════════════════════════════
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -118,7 +393,7 @@ def renumber(docx_path, prefix="Figure", dry_run=False):
 
 
 def _write(src_docx, root, out_path):
-    new_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    new_xml = _serialize(root)   # lib/docx_surgical.serialize —— 与旧内联 tostring 逐字一致
     zin = zipfile.ZipFile(src_docx)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
         for it in zin.infolist():
@@ -208,19 +483,15 @@ def _para_centered(p, center_ids):
 
 
 def _body_start_idx(paras):
-    """正文起始段索引 = 目录(TOC)字段之后。
+    """正文起始段索引 = 目录(TOC)字段之后。实现 = lib/docx_surgical.body_start_idx
+    （抽取时与本脚本逐字一致，2026-07-31 起直接引 SSOT 版）。
 
     封面/批准页/落款/目录都在 TOC 之前；其中院 logo 图旁的文本（日期/署名/编制单位）
     **不是图题**，必须排除出 caption 采集——否则补号会把「二○二六年二月」误标成
     图X.Y-N（景宁 0313 成品踩坑：日期紧跟院 logo 图、又恰好同款 caption 样式）。
     判据 = 最后一个 TOC 字段 / PAGEREF 锚点段之后；无 TOC 则返 0（不排除，保持旧行为）。
     """
-    last = -1
-    for idx, p in enumerate(paras):
-        instr = "".join(n.text or "" for n in p.iter(f"{W}instrText"))
-        if "TOC" in instr or "PAGEREF _Toc" in instr:
-            last = idx
-    return last + 1
+    return _lib_body_start_idx(paras)
 
 
 def _collect_captions(paras, kind):
@@ -458,8 +729,9 @@ def _verify_cn(out_path, kind):
     return by_sec, ok
 
 
-def main():
-    ap = argparse.ArgumentParser(description="按出现顺序重排 docx 图号 + 同步正文引用")
+def figures_main(argv):
+    ap = argparse.ArgumentParser(prog="docx_renumber_figures.py",
+                                 description="按出现顺序重排 docx 图号 + 同步正文引用")
     ap.add_argument("docx")
     ap.add_argument("-o", "--output")
     ap.add_argument("--dry-run", action="store_true")
@@ -475,7 +747,7 @@ def main():
                     help="--cn-section 重排时不给无号题注补号（默认补号）")
     ap.add_argument("--fix-center", action="store_true",
                     help="--cn-section 重排时顺带把含图段落居中")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     write_gate = WriteGate(a.docx) if a.inplace else None  # 读入前 capture 基线
 
     # 只读机检模式（gate / report figs 调用入口）
@@ -544,5 +816,41 @@ def main():
     sys.exit(0 if seq else 2)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# 首 token 分发
+# ════════════════════════════════════════════════════════════════════════════
+
+USAGE = """renum.py — 编号/题注位移与重排族
+
+子命令:
+  chapter <chapters.yaml> [--apply]                  章号位移引擎（原 chapter_renumber.py）
+  tabfig  <chapters.yaml|章节目录> [--apply|--check]   表/图题注号对齐章号（原 tabfig_align.py）
+  figures <docx> [--dry-run|--inplace|-o OUT] [--cn-section --kind 图|表 --check ...]
+                                                     docx 图号重排+引用同步（原 docx_renumber_figures.py）
+"""
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        print(USAGE)
+        return 1
+    if argv[0] in ("-h", "--help"):
+        print(USAGE)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "chapter":
+        rc = chapter_main(rest)
+        return 0 if rc is None else rc
+    if cmd == "tabfig":
+        return tabfig_main(rest)
+    if cmd == "figures":
+        rc = figures_main(rest)
+        return 0 if rc is None else rc
+    print(USAGE)
+    print(f"未知子命令: {cmd}", file=sys.stderr)
+    return 2
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

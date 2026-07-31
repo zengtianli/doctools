@@ -161,7 +161,7 @@ OPS = [
     },
     {
         # 2026-07-27 从「TL 代笔台」收编(该 app 实测 18 天开过 1 次共 0 分钟,
-        # 唯一动作就是调 docx_format_clone.py)。能力留在这里,壳退役。
+        # 唯一动作就是调 docx_fmt.py clone,原 docx_format_clone.py)。能力留在这里,壳退役。
         # 引擎是 HQ SSOT(/docx format 也在用),此处只做编排。
         "id": "formatclone",
         "aliases": "format clone style template reference 版式 复刻 公文",

@@ -1,4 +1,5 @@
-"""docx surgical 惯用法公共库 — 从 restyle.py / center_images.py / docx_renumber_figures.py 抽取。
+"""docx surgical 惯用法公共库 — 从 restyle.py / center_images.py / docx_renumber_figures.py
+（现 renum.py figures，2026-07-31 家族折叠时已回迁改用本库）抽取。
 
 收口「一次解压、只重写 word/document.xml、其余 zip 项 verbatim」这套复制粘贴 ≥10 处的
 surgical 惯用法。只供新工具（docx_para.py）用；存量脚本不强制回迁（防 balloon）。
@@ -105,7 +106,8 @@ def para_text(p, *, normalize: bool = False) -> str:
 def body_start_idx(paras) -> int:
     """正文起始段索引 = 目录(TOC)字段之后(封面/批准/落款/目录都在 TOC 之前)。
 
-    抽自 docx_renumber_figures.py:199 / center_images.py:41(逐字一致)。
+    抽自 docx_renumber_figures.py:199 / center_images.py:41(逐字一致；前者 2026-07-31
+    折进 renum.py figures 后已直接引本函数,景宁 0313 坑注释见 renum._body_start_idx)。
     判据 = 最后一个 TOC / PAGEREF _Toc 字段段之后;无 TOC 则返 0(保持旧行为)。
     """
     last = -1

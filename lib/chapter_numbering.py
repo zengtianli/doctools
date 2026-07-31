@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """章号 SSOT 解析器(通用) —— 报告/标书「章号从几开始」config 的读取与派生。
 
-一个项目建一份 chapters.yaml(见 chapter_renumber.py 顶部 schema),声明 number_base + 章序;
+一个项目建一份 chapters.yaml(见 renum.py chapter 段顶部 schema,原 chapter_renumber.py),声明 number_base + 章序;
 本 lib 把它派生成: 显示章号 / 合并序列 / 章头块 / 宽图关键词 / 整数章号映射 / 位移目标路径。
 报告与标书通用: 项目的 merge/gen 脚本 import 本 lib 取派生值,renumber 引擎 import 本 lib 做位移,
 章号只存 chapters.yaml 一处,散在多处(文件名/H1/图号/FACTS/大纲)全派生 —— 铁律#5 SSOT。

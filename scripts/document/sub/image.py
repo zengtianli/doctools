@@ -1,42 +1,21 @@
 #!/usr/bin/env python3
-r"""relink_images_from_source.py — 把另一份 source docx 的图片重嵌进 target docx.
+# -*- coding: utf-8 -*-
+"""image.py — image 家族三合一（2026-07-31 家族折叠）
 
-单功能: target docx 的 "图位段" 是 placeholder 形状 (wsp/v:rect 空框, 无
-       <a:blip> embed), 但 caption 段还在; source docx 同主题对应位置有真实
-       图片 <a:blip r:embed=rIdN> 指向 word/media/imageN.png. 本脚本:
-       1. source 找 (caption text -> imageN binary) 映射
-       2. target 找 placeholder 形状所在段 + 附近 caption text
-       3. 文本启发匹配 source caption (字面/规整化对比)
-       4. 把 source media 二进制复制到 target zip
-       5. 给 target rels 加 Image rId
-       6. 把 target 的 placeholder <w:drawing>/<w:pict> AlternateContent 块
-          整段替换为一个 inline image drawing (a:blip 指向新 rId)
-       7. 给 [Content_Types].xml 补 Default Extension (png/jpeg/jpg)
+子命令 ↔ 原脚本（函数体逐字搬移；模块级 main/apply_path 改名
+main_<sub>/apply_path_<sub>，其余公有名一律保留）：
 
-触发场景:
-  W4 — 整合多份 docx 时图片二进制丢了只剩空形状, 用 source 重嵌.
+    dedup    ← image_dedup.py（media_hashes 公有名保留：slim.py 靠它）
+    extract  ← image_extract.py（extract_images 公有名保留：pipeline_lib builtin step 靠它）
+    relink   ← relink_images_from_source.py
 
-CLI:
-  python3 relink_images_from_source.py <target_docx> --source <source_docx>
-                                       [--dry-run] [--no-backup] [--report <json>]
-  python3 relink_images_from_source.py <target_docx> --apply-patch <patch_json>
-                                       [--no-backup]
-
-启发匹配规则 (caption 文本规整化对比):
-  - 移除 "图\s*\d+-\d+" 编号前缀 + 全角空格
-  - 余下 caption 子串 ≥ 8 字符 + 完全相等  -> 强匹配 (score=100)
-  - 长子串包含关系                            -> 中匹配 (score=70)
-  - 段顺序相近 (target idx ≈ source idx ± 5)  -> 弱匹配 (score=30)
-
-不许做:
-  - 改 audit_images.py / number_captions.py / 任何已 working 旧脚本
-  - 用 sed 改 XML, 必走 zipfile + lxml
-  - commit / push (主进程收口)
-  - 跨段重排 (本脚本只动 placeholder 段内的 drawing/pict, 不挪段)
+各子命令 CLI 与原独立脚本逐字一致：python3 sub/image.py <sub> …。
+退役原件在 ~/.Trash/consolidation-20260731/image/（含 MANIFEST.md）。
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -46,6 +25,7 @@ import zipfile
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from lxml import etree
 
@@ -55,7 +35,365 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / 'lib'))
 from docx_parts import assert_parts_intact  # noqa: E402
 
-# ----- XML namespaces -----
+from docx import Document  # noqa: E402
+
+
+# ══════════ dedup ← image_dedup.py ══════════
+
+def media_hashes(docx_path: Path) -> dict:
+    out = {}
+    with zipfile.ZipFile(docx_path) as z:
+        for name in z.namelist():
+            if name.startswith("word/media/") and not name.endswith("/"):
+                fn = name.split("/")[-1]
+                if not fn:
+                    continue
+                data = z.read(name)
+                h = hashlib.sha256(data).hexdigest()
+                out[fn] = (h, len(data))
+    return out
+
+
+def rels_map(docx_path: Path) -> dict:
+    out = {}
+    with zipfile.ZipFile(docx_path) as z:
+        rels_xml = z.read("word/_rels/document.xml.rels")
+    root = ET.fromstring(rels_xml)
+    for rel in root:
+        if rel.tag.endswith("Relationship"):
+            target = rel.get("Target", "")
+            if "media/" in target:
+                rid = rel.get("Id")
+                out[rid] = target.split("/")[-1]
+    return out
+
+
+def image_positions(docx_path: Path) -> list:
+    doc = Document(str(docx_path))
+    positions = []
+    heading_stack = {}
+    for i, p in enumerate(doc.paragraphs):
+        style = (p.style.name or "").strip()
+        m = re.match(r"^(?:Heading|标题)\s*(\d+)$", style, re.IGNORECASE)
+        if m and p.text.strip():
+            lvl = int(m.group(1))
+            heading_stack[lvl] = p.text.strip()
+            for k in list(heading_stack):
+                if k > lvl:
+                    del heading_stack[k]
+        xml = p._p.xml
+        for embed in re.findall(r'r:embed="([^"]+)"', xml):
+            chain = " > ".join(heading_stack[k] for k in sorted(heading_stack))
+            positions.append((i, embed, chain or "（前言）"))
+    return positions
+
+
+def main_dedup():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--src", required=True, help="源 docx")
+    ap.add_argument("--dst", required=True, help="目标 docx")
+    ap.add_argument("--out", required=True, help="输出 MD 路径")
+    args = ap.parse_args()
+
+    SRC, DST = Path(args.src), Path(args.dst)
+    src_hashes = media_hashes(SRC)
+    dst_hashes = media_hashes(DST)
+    print(f"源 {SRC.name}: {len(src_hashes)} 张", file=sys.stderr)
+    print(f"目标 {DST.name}: {len(dst_hashes)} 张", file=sys.stderr)
+
+    src_by_hash = {}
+    for fn, (h, sz) in src_hashes.items():
+        src_by_hash.setdefault(h, []).append((fn, sz))
+
+    duplicates = {}
+    for fn, (h, sz) in dst_hashes.items():
+        if h in src_by_hash:
+            duplicates[fn] = (h, sz, [n for n, _ in src_by_hash[h]])
+
+    dst_rels = rels_map(DST)
+    dst_pos = image_positions(DST)
+    media_to_chains = {}
+    for _, rid, chain in dst_pos:
+        media = dst_rels.get(rid)
+        if media:
+            media_to_chains.setdefault(media, []).append(chain)
+
+    lines = [f"# 图片重复清单 — {SRC.stem} → {DST.stem}\n",
+             f"> 源 {len(src_hashes)} 张 / 目标 {len(dst_hashes)} 张 / **重复 {len(duplicates)} 张**\n",
+             ""]
+    if not duplicates:
+        lines.append("✅ 无重复图片。\n")
+    else:
+        lines.append("## 二进制完全相同的图片\n")
+        lines.append("| 目标文件 | 源文件 | KB | 出现章节 |")
+        lines.append("|---------|--------|-----|---------|")
+        for fn in sorted(duplicates, key=lambda x: int(re.sub(r"\D", "", x) or 0)):
+            h, sz, src_fns = duplicates[fn]
+            chains = media_to_chains.get(fn, ["（未在文档中引用）"])
+            chains_str = "<br>".join(chains)
+            lines.append(f"| {fn} | {', '.join(src_fns)} | {sz//1024} | {chains_str} |")
+
+    Path(args.out).write_text("\n".join(lines), encoding="utf-8")
+    print(f"OK -> {args.out}", file=sys.stderr)
+    print(f"重复 {len(duplicates)} 张", file=sys.stderr)
+
+
+# ---------------- pipeline adapter ----------------
+def apply_path_dedup(docx_path, args=None) -> dict:
+    """pipeline-compatible adapter (跨文件 analyzer).
+
+    docx_path = dst (新版 / 待查重). args 透传:
+      - src (必需): 源 docx
+      - out / out_dir: 输出 MD 路径
+    """
+    from pathlib import Path as _P
+    src_path = getattr(args, "src", None) if args else None
+    if not src_path:
+        return {"skipped": "no --src; image_dedup needs source docx"}
+    SRC = _P(src_path)
+    DST = _P(docx_path)
+    out_path = getattr(args, "out", None)
+    out_dir = getattr(args, "out_dir", None)
+    if out_path:
+        out = _P(out_path)
+    elif out_dir:
+        out = _P(out_dir) / f"image-dedup-{SRC.stem}-vs-{DST.stem}.md"
+    else:
+        out = DST.parent / "reports" / f"image-dedup-{SRC.stem}-vs-{DST.stem}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    src_hashes = media_hashes(SRC)
+    dst_hashes = media_hashes(DST)
+    src_by_hash = {}
+    for fn, (h, sz) in src_hashes.items():
+        src_by_hash.setdefault(h, []).append((fn, sz))
+    duplicates = {}
+    for fn, (h, sz) in dst_hashes.items():
+        if h in src_by_hash:
+            duplicates[fn] = (h, sz, [n for n, _ in src_by_hash[h]])
+    dst_rels = rels_map(DST)
+    dst_pos = image_positions(DST)
+    media_to_chains = {}
+    for _, rid, chain in dst_pos:
+        media = dst_rels.get(rid)
+        if media:
+            media_to_chains.setdefault(media, []).append(chain)
+    lines = [f"# 图片重复清单 — {SRC.stem} → {DST.stem}\n",
+             f"> 源 {len(src_hashes)} / 目标 {len(dst_hashes)} / **重复 {len(duplicates)}**\n"]
+    if not duplicates:
+        lines.append("✅ 无重复图片。\n")
+    else:
+        lines.append("| 目标文件 | 源文件 | KB | 章节 |")
+        lines.append("|---------|--------|-----|------|")
+        for fn in sorted(duplicates, key=lambda x: int(re.sub(r"\D", "", x) or 0)):
+            h, sz, src_fns = duplicates[fn]
+            chains = media_to_chains.get(fn, ["（未引用）"])
+            lines.append(f"| {fn} | {', '.join(src_fns)} | {sz//1024} | {'<br>'.join(chains)} |")
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "src": str(SRC),
+        "dst": str(DST),
+        "src_images": len(src_hashes),
+        "dst_images": len(dst_hashes),
+        "duplicates": len(duplicates),
+        "out": str(out),
+    }
+
+
+# ══════════ extract ← image_extract.py ══════════
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+V_NS = "urn:schemas-microsoft-com:vml"
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+
+NS_EXTRACT = {
+    "w": W_NS,
+    "a": A_NS,
+    "r": R_NS,
+    "v": V_NS,
+    "wp": WP_NS,
+    "pic": PIC_NS,
+}
+
+ILLEGAL_FS = re.compile(r'[\\/:*?"<>|\r\n\t]')
+WS_RUN = re.compile(r"\s+")
+CAPTION_PREFIX = re.compile(r"^图")
+
+
+def _para_text(p: etree._Element) -> str:
+    """Concatenate visible text in a <w:p>."""
+    parts = []
+    for t in p.iter(f"{{{W_NS}}}t"):
+        if t.text:
+            parts.append(t.text)
+    return "".join(parts)
+
+
+def _sanitize_stem(text: str, max_len: int = 100) -> str:
+    s = ILLEGAL_FS.sub("_", text)
+    s = WS_RUN.sub(" ", s).strip()
+    s = s.rstrip(".")  # windows trailing dot
+    if len(s) > max_len:
+        s = s[:max_len].rstrip()
+    return s
+
+
+def _load_rels(z: zipfile.ZipFile) -> dict[str, str]:
+    """Return rId -> target (e.g. media/image3.png) for word/_rels/document.xml.rels."""
+    rels_path = "word/_rels/document.xml.rels"
+    if rels_path not in z.namelist():
+        return {}
+    data = z.read(rels_path)
+    root = etree.fromstring(data)
+    out: dict[str, str] = {}
+    for rel in root.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"):
+        rid = rel.get("Id")
+        target = rel.get("Target")
+        if rid and target:
+            out[rid] = target
+    return out
+
+
+def _iter_image_anchors(body: etree._Element):
+    """Yield (paragraph_element, rid) in document order for each embedded image.
+
+    Walks <w:p> in body; for each paragraph, finds nested <a:blip r:embed=rId>
+    and <v:imagedata r:id=rId>. Yields paragraph element + rid per image.
+    """
+    for p in body.iter(f"{{{W_NS}}}p"):
+        # drawing-based images (modern)
+        for blip in p.iter(f"{{{A_NS}}}blip"):
+            rid = blip.get(f"{{{R_NS}}}embed") or blip.get(f"{{{R_NS}}}link")
+            if rid:
+                yield p, rid
+        # legacy VML <v:imagedata>
+        for vid in p.iter(f"{{{V_NS}}}imagedata"):
+            rid = vid.get(f"{{{R_NS}}}id") or vid.get(f"{{{R_NS}}}href")
+            if rid:
+                yield p, rid
+
+
+def _find_caption(body_paras: list[etree._Element], idx: int, lookahead: int = 2) -> str | None:
+    """Look at body_paras[idx+1 .. idx+lookahead] for a paragraph starting with 图 and < 80 chars."""
+    n = len(body_paras)
+    for k in range(1, lookahead + 1):
+        j = idx + k
+        if j >= n:
+            break
+        txt = _para_text(body_paras[j]).strip()
+        if not txt:
+            continue
+        if CAPTION_PREFIX.match(txt) and len(txt) < 80:
+            return txt
+    return None
+
+
+def extract_images(docx_path: Path, out_dir: Path, quiet: bool = False) -> int:
+    if not docx_path.exists():
+        print(f"[image_extract] docx not found: {docx_path}", file=sys.stderr)
+        return 2
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(docx_path, "r") as z:
+        if "word/document.xml" not in z.namelist():
+            print(f"[image_extract] word/document.xml missing in {docx_path}", file=sys.stderr)
+            return 2
+        rels = _load_rels(z)
+        doc_xml = etree.fromstring(z.read("word/document.xml"))
+        body = doc_xml.find(f"{{{W_NS}}}body")
+        if body is None:
+            print(f"[image_extract] no <w:body> in {docx_path}", file=sys.stderr)
+            return 2
+
+        body_paras = list(body.iter(f"{{{W_NS}}}p"))
+        para_index = {id(p): i for i, p in enumerate(body_paras)}
+
+        # Build image entries in physical order, dedupe by (paragraph_id, rid) tuple
+        seen_keys: set[tuple[int, str]] = set()
+        entries: list[tuple[etree._Element, str]] = []
+        for p, rid in _iter_image_anchors(body):
+            key = (id(p), rid)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            entries.append((p, rid))
+
+        if not entries:
+            if not quiet:
+                print(f"[image_extract] no images in {docx_path}")
+            return 0
+
+        used_names: set[str] = set()
+        written: list[tuple[str, str]] = []
+        for idx, (p, rid) in enumerate(entries, start=1):
+            target = rels.get(rid)
+            if not target:
+                if not quiet:
+                    print(f"[image_extract] WARN rId {rid} not in rels, skip", file=sys.stderr)
+                continue
+            # Resolve relative path from word/_rels/document.xml.rels
+            # Most targets look like 'media/image3.png' -> word/media/image3.png
+            if target.startswith("/"):
+                zip_path = target.lstrip("/")
+            else:
+                zip_path = "word/" + target
+            # normalize ../ if any
+            zip_path = str(Path(zip_path)).replace("\\", "/")
+            # collapse any leading word/.. patterns
+            while "/../" in zip_path:
+                head, _, tail = zip_path.partition("/../")
+                head_parts = head.split("/")
+                if head_parts:
+                    head_parts.pop()
+                zip_path = "/".join(head_parts + [tail])
+            if zip_path not in z.namelist():
+                if not quiet:
+                    print(f"[image_extract] WARN media path missing: {zip_path}", file=sys.stderr)
+                continue
+            ext = Path(zip_path).suffix.lower() or ".bin"
+
+            p_idx = para_index.get(id(p))
+            caption = _find_caption(body_paras, p_idx) if p_idx is not None else None
+            if caption:
+                stem = _sanitize_stem(caption)
+                if not stem:
+                    stem = f"image-{idx:02d}"
+            else:
+                stem = f"image-{idx:02d}"
+
+            # Dedupe filename within out_dir
+            base = stem
+            suffix_n = 1
+            final_name = f"{base}{ext}"
+            while final_name in used_names or (out_dir / final_name).exists():
+                suffix_n += 1
+                final_name = f"{base}-{suffix_n}{ext}"
+            used_names.add(final_name)
+
+            data = z.read(zip_path)
+            (out_dir / final_name).write_bytes(data)
+            written.append((final_name, zip_path))
+
+        if not quiet:
+            print(f"[image_extract] wrote {len(written)} image(s) to {out_dir}")
+            for name, src in written:
+                print(f"  {name}  <- {src}")
+    return 0
+
+
+def main_extract() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("docx", type=Path, help="source docx (read-only)")
+    ap.add_argument("--out-dir", type=Path, required=True, help="output directory")
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+    return extract_images(args.docx, args.out_dir, quiet=args.quiet)
+
+
+# ══════════ relink ← relink_images_from_source.py ══════════
+
 W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
@@ -689,7 +1027,7 @@ def apply_patch(target_path: Path, patch: dict, backup: bool = True) -> dict:
 
 
 # ---- CLI ----
-def main():
+def main_relink():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('target_docx', type=Path)
     ap.add_argument('--source', type=Path, help='Source docx with real images')
@@ -739,7 +1077,7 @@ def main():
 
 
 # ---------------- pipeline adapter ----------------
-def apply_path(docx_path, args=None) -> dict:
+def apply_path_relink(docx_path, args=None) -> dict:
     """pipeline: 仅当 args.relink_source 提供时执行"""
     source = getattr(args, "relink_source", None) if args else None
     if not source:
@@ -756,5 +1094,35 @@ def apply_path(docx_path, args=None) -> dict:
     }
 
 
-if __name__ == '__main__':
-    main()
+# ──────────────────────────── 家族入口（子命令分发）────────────────────────────
+
+SUBCOMMANDS = {
+    "dedup": main_dedup,
+    "extract": main_extract,
+    "relink": main_relink,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        print("usage: image.py {" + ",".join(SUBCOMMANDS) + "} <args…>\n"
+              "每个子命令的参数与原独立脚本逐字一致：image.py <sub> --help 查看。")
+        return 0 if args else 2
+    sub, rest = args[0], args[1:]
+    fn = SUBCOMMANDS.get(sub)
+    if fn is None:
+        print(f"[image] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
+              file=sys.stderr)
+        return 2
+    saved = sys.argv[:]
+    sys.argv = [sys.argv[0]] + rest
+    try:
+        rc = fn()
+        return int(rc) if isinstance(rc, int) else 0
+    finally:
+        sys.argv = saved
+
+
+if __name__ == "__main__":
+    sys.exit(main())

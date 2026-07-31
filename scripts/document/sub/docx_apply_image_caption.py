@@ -22,15 +22,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 # ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+# 2026-07-31 从 scripts/document/ 平移进 sub/（typeset_apply ACTIONS 回默认 home="sub"），
+# 仓根层数 parents[2] → parents[3]（同 sub/docx_track.py 先例）。
 import sys as _sys
 from pathlib import Path as _Path
-_sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
 from docx import Document
 from docx.oxml.ns import qn
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 from file_ops import clear_quarantine
 from finder import get_input_files

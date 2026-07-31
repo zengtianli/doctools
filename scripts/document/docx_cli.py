@@ -6,10 +6,11 @@
 
 子命令:
   extract / check / snapshot / compare / track   ← docx_tools.py
-  image-caption                                   ← docx_apply_image_caption.py
-  template                                        ← docx_apply_template.py
-  renumber-fig                                    ← docx_renumber_figures.py
-  text-fmt                                        ← docx_text_formatter.py
+  image-caption                                   ← sub/docx_apply_image_caption.py
+  template                                        ← docx_fmt.py template（原 docx_apply_template.py）
+  format                                          ← docx_fmt.py clone（原 docx_format_clone.py）
+  renumber-fig                                    ← renum.py figures（原 docx_renumber_figures.py）
+  text-fmt                                        ← docx_fmt.py text（原 docx_text_formatter.py）
   fix-ref                                         ← fix_superscript_refs.py
   md-to-docx                                      ← md_docx_template.py
   scan-sensitive                                  ← scan_sensitive_words.py
@@ -118,7 +119,7 @@ def _exec_script(filename_stem: str, argv: list[str]) -> int:
                 return int(rc) if isinstance(rc, int) else 0
             # 无 main → 已在 exec_module 阶段执行了顶层逻辑（含 __main__ 块？否，
             # 因为 spec 模式 __name__ != "__main__"，所以无 main 脚本需 re-exec）
-            # 对 docx_text_formatter.py 等：用 runpy 形式重跑（__name__ = '__main__'）
+            # （2026-07-31 后本表脚本全都有 main()；runpy 分支留作无 main 脚本的兜底）
             import runpy
             runpy.run_path(str(_HERE / filename), run_name="__main__")
             return 0
@@ -158,21 +159,21 @@ def cmd_track(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("docx_tools", ["track-changes"] + rest)
 
 def cmd_image_caption(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("docx_apply_image_caption", rest)
+    return _exec_script("sub/docx_apply_image_caption", rest)
 
 def cmd_template(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("docx_apply_template", rest)
+    return _exec_script("docx_fmt", ["template"] + rest)
 
 def cmd_format(args: argparse.Namespace, rest: list[str]) -> int:
     # 提取/复刻版式: format extract <ref> / format apply <content> --ref <ref>
-    return _exec_script("docx_format_clone", rest)
+    return _exec_script("docx_fmt", ["clone"] + rest)
 
 def cmd_renumber_fig(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("docx_renumber_figures", rest)
+    return _exec_script("renum", ["figures"] + rest)
 
 def cmd_text_fmt(args: argparse.Namespace, rest: list[str]) -> int:
-    # docx_text_formatter.py 无 def main() → spec 执行
-    return _exec_script_file("docx_text_formatter.py", rest)
+    # 2026-07-31 折进 docx_fmt.py text（有 def main() 了，不再走 runpy 分支）
+    return _exec_script("docx_fmt", ["text"] + rest)
 
 def cmd_fix_ref(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("sub/fix_superscript_refs", rest)

@@ -24,7 +24,7 @@ qual-supply 的 `_pipeline_lib.py` 已改为 thin shim (`from sub.pipeline_lib i
    - 返回 report dict
    - 适用: 6 个 zip-write 脚本 (freeze_heading_numbers / freeze_all_fields /
      strip_style_outlinelvl / audit_heading_numbers / audit_word_fields /
-     relink_images_from_source)
+     image relink —— 2026-07-31 家族折叠后住 freeze.py/strip.py/audit.py/image.py)
 
 pipeline 执行顺序
 -----------------
@@ -268,7 +268,7 @@ def _builtin_image_extract(doc, args) -> dict:
       args.image_extract_out_dir — explicit out dir; if None → <docx-parent>/images/
       args.image_extract_quiet — suppress per-file log lines (default True in pipeline)
     """
-    from . import image_extract
+    from . import image as image_extract  # 2026-07-31 image_extract 并入 image.py
     docx_path = Path(str(getattr(args, "docx", "")))
     out_dir = getattr(args, "image_extract_out_dir", None)
     if not out_dir:
@@ -300,7 +300,7 @@ def _builtin_table_extract(doc, args) -> dict:
       args.table_extract_name_pattern — filename pattern (default '{stem}.docx')
       args.table_extract_dry_run — print plan only, don't write files
     """
-    from . import extract_tables
+    from . import table as extract_tables  # 2026-07-31 extract_tables 并入 table.py
     docx_path = Path(str(getattr(args, "docx", "")))
     out_dir = getattr(args, "table_extract_out_dir", None)
     if not out_dir:
@@ -357,7 +357,7 @@ def _builtin_split_by_h1(doc, args) -> dict:
                    split_name_pattern (str), split_dry_run (bool).
     Raises RuntimeError on h1_count=0 + not allow_no_h1 (per fail-fast contract).
     """
-    from . import split_by_h1
+    from . import split as split_by_h1  # 2026-07-31 split_by_h1 并入 split.py
     docx_path = Path(str(getattr(args, "docx", "")))
     out_dir = getattr(args, "split_out_dir", None)
     if not out_dir:

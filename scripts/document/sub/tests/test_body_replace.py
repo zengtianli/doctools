@@ -1,4 +1,4 @@
-"""tests for body_replace.py"""
+"""tests for split.py body-replace (原 body_replace.py, 2026-07-31 家族折叠)"""
 from __future__ import annotations
 
 import importlib.util
@@ -13,7 +13,7 @@ _SUB_DIR = _HERE.parent
 
 # Load module directly without requiring package context.
 spec = importlib.util.spec_from_file_location(
-    "body_replace_under_test", str(_SUB_DIR / "body_replace.py")
+    "body_replace_under_test", str(_SUB_DIR / "split.py")
 )
 br = importlib.util.module_from_spec(spec)
 sys.modules["body_replace_under_test"] = br
@@ -110,7 +110,7 @@ def test_dry_run_does_not_create_output(tmp_path: Path, capsys):
         "--dry-run",
     ]
     try:
-        rc = br.main()
+        rc = br.main_body_replace()
     finally:
         sys.argv = saved
     assert rc == 0
@@ -150,7 +150,7 @@ def test_main_smoke(tmp_path: Path):
         "--out", str(out),
     ]
     try:
-        rc = br.main()
+        rc = br.main_body_replace()
     finally:
         sys.argv = saved
     assert rc == 0
@@ -170,7 +170,7 @@ def test_missing_input_returns_error(tmp_path: Path):
         "--out", str(out),
     ]
     try:
-        rc = br.main()
+        rc = br.main_body_replace()
     finally:
         sys.argv = saved
     assert rc == 2

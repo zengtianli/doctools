@@ -3,7 +3,7 @@ name: doctools
 domain: dev-infra
 function: 让我读、改、审阅、修订 docx/md/有声书文档(含批注/编号/模板/质检),入口=docx_cli 与命令行
 public_api: doctools CLI
-key_scripts: [docx_cli.py, typeset_apply.py, docx_revise.py, doc_dispatch.py, bid_gate.py, md_docx_template.py]
+key_scripts: [docx_cli.py, typeset_apply.py, docx_revise.py, doc_dispatch.py, bid_gate.py, renum.py, docx_fmt.py, md_docx_template.py]
 depends_on: [dev-corelib, dockit, mailroom, llm-client, photo-app, mactools]
 tier: CORE
 owner: tianli

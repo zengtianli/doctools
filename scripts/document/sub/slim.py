@@ -10,9 +10,9 @@ slim.py
 统一入口,两 mode:
 
 * ``safe`` (默认): ensemble 串跑 strip_revisions / strip_bookmarks /
-  strip_empty_captions / image_dedup (intra-doc) / strip_orphan_media,
+  strip_empty_captions / image dedup (intra-doc) / strip_orphan_media,
   **保所有引用内容**, audit-styleset 不受影响, 典型 30-50% 瘦身.
-* ``aggressive``: 套用 ``sub/extract_tables.py`` 的"最小 docx 骨架"
+* ``aggressive``: 套用 ``sub/table.py extract`` 的"最小 docx 骨架"
   构造范式 — 重建 docx 只保 ``[Content_Types].xml`` / ``_rels/.rels`` /
   ``word/document.xml`` / ``word/styles.xml`` / (按需) ``numbering.xml``
   / ``theme/theme1.xml`` + document.xml.rels 实际引用的 media. 砍掉
@@ -31,7 +31,7 @@ CLI
 * ``sub.strip revisions``    — body 内 ins/del/comment* 接受 + 清 trackChanges/comments.xml
 * ``sub.strip bookmarks``    — _Toc / _Ref / _Hlk / _GoBack 自动 bookmark
 * ``sub.strip empty-captions`` — caption 样式 strict-empty 段
-* ``sub.image_dedup``        — ``media_hashes`` 复用做 intra-doc 同源图去重
+* ``sub.image dedup``        — ``media_hashes`` 复用做 intra-doc 同源图去重
 * ``sub.strip orphan-media`` — 删 word/media/* 未被任何 rId 引用的孤儿
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ except ImportError as e:
 # strip_orphan_media 四件并入 strip.py（子命令族），经 _call_strip_module 带
 # 子命令 token 调用；scan_orphans 等公有名保留。
 from . import strip
-from . import image_dedup  # media_hashes 函数复用
+from . import image  # media_hashes 函数复用（2026-07-31 image_dedup 并入 image.py）
 
 # 仓根 lib 进 sys.path —— 部件完整性断言（B 类：删除是有意的,用 diff_parts 对账；
 # append 不是 insert(0)，防顶掉 sub/ 里同名模块）
@@ -137,14 +137,14 @@ def _find_next_backup(docx_path: Path) -> Path:
 
 def _intra_doc_image_dedup(docx_path: Path) -> dict:
     """**单 docx 内**图片去重:
-    使用 ``image_dedup.media_hashes`` 复用计算 SHA256 → 同 hash 多图保 1 张 +
+    使用 ``image.media_hashes`` 复用计算 SHA256 → 同 hash 多图保 1 张 +
     重写 ``word/_rels/document.xml.rels`` (+ header/footer rels) 让所有原引用 rId
     指向保留下来的那张. 删冗余 media 文件.
 
     Returns: {"duplicate_groups": N, "media_removed": K, "bytes_freed": B}
     """
-    # 1. 算 SHA256 (复用 image_dedup)
-    hash_map = image_dedup.media_hashes(docx_path)  # {filename: (sha256, size)}
+    # 1. 算 SHA256 (复用 image dedup)
+    hash_map = image.media_hashes(docx_path)  # {filename: (sha256, size)}
     if not hash_map:
         return {"duplicate_groups": 0, "media_removed": 0, "bytes_freed": 0}
 

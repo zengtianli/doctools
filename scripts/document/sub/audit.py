@@ -1067,7 +1067,7 @@ _DOC_TABLE_PAIRING = """audit_table_pairing.py — 只读 audit docx 中"表名�
   4. duplicate-caption-name            两个或多个表名段名字完全相同 (合并冲突)
   5. two-captions-compete-same-tbl     两个表名段都紧邻同一 tbl
 
-输出 audit JSON 让人 (主会话/用户) 拍板 decision, 再喂给 pair_table_captions.py 改.
+输出 audit JSON 让人 (主会话/用户) 拍板 decision, 再喂给 caption.py pair 改.
 
 接口:
   python3 audit_table_pairing.py <docx> [--report <json>] [--quiet]

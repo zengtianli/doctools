@@ -11,7 +11,7 @@ r"""chapters_sync.py — 成品 docx 校核修改后, 反向回写/重生「成�
 动作 (execute 时):
     1. 备份: 现有章节目录里将被替换的章 docx / 已失效(stale)的章目录
        → mv 到 ``~/.Trash/<proj>-chapters-sync-<ts>/`` (禁 rm, 全程可回溯)
-    2. 切分: 按 H1 切分成品 (复用 split_by_h1.plan_slices / write_slice)
+    2. 切分: 按 H1 切分成品 (复用 split.plan_slices / write_slice)
     3. 媒体去冗余: 每章内置 orphan-media deep 清理 (write_slice prune_media=True,
        复用 strip_orphan_media) — 否则整本 27MB → 每章 27MB (历史踩坑, 硬需求)
     4. 语义命名: ``{章序:02d}-{章标题}`` (去标题前导阿拉伯编号 + 去空白),
@@ -45,15 +45,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# 复用 split_by_h1 的切分引擎 (plan_slices / write_slice / sanitize_filename)。
+# 复用 split.py(原 split_by_h1)的切分引擎 (plan_slices / write_slice / sanitize_filename)。
 # 三态 import 兼容: 包内(pipeline) / 脚本(sys.path[0]=sub/) / docx_cli runpy。
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 try:
-    from . import split_by_h1 as _split  # type: ignore
+    from . import split as _split  # type: ignore  # 2026-07-31 split_by_h1 并入 split.py
 except ImportError:
-    import split_by_h1 as _split  # type: ignore
+    import split as _split  # type: ignore
 
 
 # 章节实体命名: NN-章名 (两位序号 + 连字符)

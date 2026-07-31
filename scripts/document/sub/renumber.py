@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-# distilled from qual-supply/scripts/renumber_headings.py (2026-05-25 W1)
-r"""renumber_headings.py — 按当前段物理顺序统一重编 H 段编号 + 表号。
+# -*- coding: utf-8 -*-
+"""renumber.py — 标题重编号家族二合一（2026-07-31 家族折叠）
 
-接口:
-    python3 scripts/renumber_headings.py <docx_path> [--dry-run] [--no-backup] [--report <json_path>]
+子命令 ↔ 原脚本（函数体逐字搬移；模块级 apply/main 改名 _<sub> 后缀；
+seq 原 from renumber_headings import 的 4 个符号变同文件内引用；
+make_backup 机制收敛 _cli_common（同构：<stem>.bak-N-YYYY-MM-DD.docx 自增+copy2））：
 
-算法 (顺序扫 doc.paragraphs, 不动 table cell 段, 不动 Title 段):
-    H1 段 (style="Heading 1"):       h1++;  h2=h3=tbl=0;  新编号 = f"{h1}"
-    H2 段 (style="Heading 2"):       h2++;  h3=0;          新编号 = f"{h1}.{h2}"
-    H3 段 (style="Heading 3"):       h3++;                 新编号 = f"{h1}.{h2}.{h3}"
-    zdwp表名 段:                     tbl++;                新编号 = f"{h1}-{tbl}"
-                                                          (整段前缀 "表 X-Y ")
+    headings  ← renumber_headings.py（plan_renumber / rewrite_paragraph_with_prefix 等
+                                      公有名保留：health.py safe-fix 与 seq 段靠它）
+    seq       ← renumber_headings_seq.py（doc_dispatch.py do_renum 的标题号引擎）
 
-旧编号剥离正则:
-    heading:  ^(?:\d+(?:\.\d+)*|第[一二三四五六七八九十\d]+章|[一二三四五六七八九十]+、)\s*
-    table  :  ^表\s*[\d一二三四五六七八九十]+[-—]?[\d一二三四五六七八九十]*\s*
-
-run 级编号替换:
-    找段内第一个非空 run, 改它的 <w:t> text; 其他 run 不动 (保留 bold/size 等格式).
-    若旧编号串跨越 run 边界, 在 split run 处砍掉前缀字符, 前面的 run 清空.
-
-反模式:
-    - paragraph.text = ...  (会清空 run 列表, 丢失格式) — 禁用
-    - 动 Title 段 / table cell 段 — 禁用
+各子命令 CLI 与原独立脚本逐字一致：python3 sub/renumber.py <sub> <docx> …。
+退役原件在 ~/.Trash/consolidation-20260731/renumber/（含 MANIFEST.md）。
 """
 from __future__ import annotations
 
@@ -32,15 +21,19 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  备份机制 SSOT
 
-import argparse
-import json
-import re
-import shutil
-import sys
-from datetime import date
-from pathlib import Path
-from typing import Optional
+import argparse  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402,F401
+import sys  # noqa: E402
+from datetime import date  # noqa: E402,F401
+from pathlib import Path  # noqa: E402
+from typing import Optional  # noqa: E402
 
 try:
     from docx import Document
@@ -49,6 +42,8 @@ except ImportError:
     print("ERROR: python-docx 未安装,请 pip install python-docx", file=sys.stderr)
     sys.exit(2)
 
+
+# ══════════ headings ← renumber_headings.py ══════════
 
 # --------- 编号剥离正则 ----------
 # heading 旧编号: 阿拉伯数字点串 / 第X章 / 一、 / 1、 等
@@ -321,19 +316,10 @@ def verify_strict_sequence(doc, h1_base: int = 1) -> tuple[bool, list[str]]:
 
 def make_backup(docx_path: Path) -> Path:
     """生成 .bak-N-YYYY-MM-DD.docx, N 自增不覆盖."""
-    today = date.today().isoformat()
-    stem = docx_path.stem
-    parent = docx_path.parent
-    n = 1
-    while True:
-        candidate = parent / f"{stem}.bak-{n}-{today}.docx"
-        if not candidate.exists():
-            shutil.copy2(docx_path, candidate)
-            return candidate
-        n += 1
+    return _cc.make_backup(docx_path)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main_headings(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="按当前段物理顺序统一重编 H1/H2/H3 + 表号"
     )
@@ -402,7 +388,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 # ---------------- pipeline adapter ----------------
-def apply(doc, args=None) -> dict:
+def apply_renumber_headings(doc, args=None) -> dict:
     """按层级重排标题编号（内存版，不开文件不存盘）。
 
     h1_base 走 args 而不是写死 1：main() 一直是 `plan_renumber(doc, h1_base)`
@@ -423,6 +409,157 @@ def apply(doc, args=None) -> dict:
         "h1_base": h1_base,
         **stats,
     }
+
+
+# ══════════ seq ← renumber_headings_seq.py ══════════
+
+HEAD_STYLES = {"Heading 1", "Heading 2", "Heading 3", "Heading 4"}
+NUM_RE = re.compile(r"^\s*(\d+(?:[.．]\d+)*)[\s　.．、]")
+
+
+def plan(doc):
+    """返回 (plan_items, warnings)。plan_items=[(para_idx, old_num, new_num)]。"""
+    items, warns = [], []
+    path: list[int] = []  # 修正后的编号链,如 [12, 3] = 12.3
+    base_locked = False
+    for idx, p in enumerate(doc.paragraphs):
+        if get_style_name(p) not in HEAD_STYLES:
+            continue
+        m = NUM_RE.match(get_paragraph_text(p))
+        if not m:
+            continue  # 无编号标题(前言/附录)不发明编号
+        old = m.group(1).replace("．", ".")
+        depth = old.count(".") + 1
+        if depth == 1:
+            if not base_locked:
+                path = [int(old)]  # 首个一级号 = base,原样保留(标书从10起仍是10)
+                base_locked = True
+            else:
+                path = [_next_top(items, int(old))]
+        else:
+            if depth > len(path) + 1:
+                warns.append(f"#{idx} 深度突跳: {old} (当前链 {'.'.join(map(str, path))})")
+                while depth > len(path) + 1:
+                    path.append(1)
+            path = path[: depth - 1] + [_next_sibling(items, path[: depth - 1])]
+        new = ".".join(map(str, path))
+        items.append((idx, old, new, depth))
+    return items, warns
+
+
+def _next_top(items, _old):
+    tops = [int(n.split(".")[0]) for _, _, n, d in items if d == 1]
+    return tops[-1] + 1 if tops else 1
+
+
+def _next_sibling(items, parent: list[int]):
+    pre = ".".join(map(str, parent)) + "."
+    sibs = [int(n[len(pre):]) for _, _, n, d in items
+            if d == len(parent) + 1 and n.startswith(pre) and "." not in n[len(pre):]]
+    return sibs[-1] + 1 if sibs else 1
+
+
+def verify(doc):
+    """复检: 再按 plan 模型扫一遍,所有 old==new 即连贯。"""
+    items, _ = plan(doc)
+    return [(i, o, n) for i, o, n, _ in items if o != n]
+
+
+def apply_seq(doc, args=None) -> dict:
+    """在**已打开**的 doc 上按现有编号深度重排标题号（不动层级）。
+
+    改写走 renumber_headings 的 run 级 rewrite_paragraph_with_prefix，只碰
+    document.xml 的段首 run，所以是 doc-based step。
+
+    dry_run 只出计划不改树 —— 计划和真改用的是同一个 plan()，不存在「预览的和
+    实际改的不是一回事」。存盘后的连贯性复检留给调用方（verify() 要重开文件，
+    那是 apply() 契约里明确不做的事）。
+    """
+    dry_run = bool(getattr(args, "dry_run", False)) if args else False
+    items, warns = plan(doc)
+    changes = [(i, o, n) for i, o, n, _ in items if o != n]
+    if not dry_run:
+        paras = doc.paragraphs
+        for i, _o, n in changes:
+            rewrite_paragraph_with_prefix(paras[i], f"{n} ")
+    return {
+        "changed": len(changes),
+        "headings": len(items),
+        "dry_run": dry_run,
+        "changes": [{"idx": i, "old": o, "new": n} for i, o, n in changes],
+        "warnings": warns,
+    }
+
+
+def main_seq(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="标题编号按现有深度重排序(修断号/重号/错号,不动层级)")
+    ap.add_argument("docx_path")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-backup", action="store_true")
+    ap.add_argument("--report", default=None)
+    a = ap.parse_args(argv)
+    path = Path(a.docx_path)
+    if not path.exists():
+        print(f"ERROR: {path} 不存在", file=sys.stderr)
+        return 2
+
+    doc = Document(str(path))
+    rep = apply_seq(doc, a)
+    changes = rep["changes"]
+    print(f"[plan] 带编号标题 {rep['headings']} 段, 需修 {len(changes)} 段")
+    for c in changes:
+        print(f"  #{c['idx']} {c['old']} → {c['new']}")
+    for w in rep["warnings"]:
+        print(f"  ⚠ {w}")
+    if a.report:
+        Path(a.report).write_text(json.dumps(
+            {"changes": changes, "warnings": rep["warnings"]},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+    if a.dry_run:
+        print("[dry-run] 未写文件")
+        return 0
+    if not changes:
+        print("✓ 标题编号已连贯,无需改写")
+        return 0
+    # 备份放在内存改写之后不影响内容：磁盘上的文件直到下面 doc.save 才动
+    if not a.no_backup:
+        print(f"[backup] {make_backup(path).name}")
+    doc.save(str(path))
+    left = verify(Document(str(path)))
+    if left:
+        print(f"✗ 复检仍有 {len(left)} 处不连贯: {left[:5]}", file=sys.stderr)
+        return 4
+    print(f"✓ 已修 {len(changes)} 处,复检连贯")
+    return 0
+
+
+# ──────────────────────────── 家族入口（子命令分发）────────────────────────────
+
+SUBCOMMANDS = {
+    "headings": main_headings,
+    "seq": main_seq,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        print("usage: renumber.py {" + ",".join(SUBCOMMANDS) + "} <args…>\n"
+              "每个子命令的参数与原独立脚本逐字一致：renumber.py <sub> --help 查看。")
+        return 0 if args else 2
+    sub, rest = args[0], args[1:]
+    fn = SUBCOMMANDS.get(sub)
+    if fn is None:
+        print(f"[renumber] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
+              file=sys.stderr)
+        return 2
+    saved = sys.argv[:]
+    sys.argv = [sys.argv[0]] + rest
+    try:
+        rc = fn()
+        return int(rc) if isinstance(rc, int) else 0
+    finally:
+        sys.argv = saved
 
 
 if __name__ == "__main__":

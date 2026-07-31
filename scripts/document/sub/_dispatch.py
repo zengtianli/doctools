@@ -10,11 +10,19 @@ import importlib.util
 import os
 import runpy
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
 _LOADED: dict[str, Any] = {}
+
+# sys.argv / cwd 是进程级全局，而 health.HealthChecker.run_all 用 ThreadPoolExecutor
+# 并发跑 check、每个 check 都可能 exec_script —— 无锁时并发调用互相覆盖 sys.argv。
+# 折叠前这个 race 是静默的（两个 audit 脚本 argv 形状相同，只会互串 --report 路径）；
+# 2026-07-31 家族折叠后 argv[0] 是子命令 token，被覆盖就成了显性 "unknown subcommand"。
+# 锁住整个 exec_script = 该类竞态在结构上不可能再犯。
+_EXEC_LOCK = threading.RLock()
 
 
 def _load(filename: str) -> Any:
@@ -39,8 +47,15 @@ def _load(filename: str) -> Any:
 
 
 def exec_script(filename_stem: str, argv: list[str]) -> int:
-    """Execute sub/<filename_stem>.py main() with given argv. Returns int rc."""
+    """Execute sub/<filename_stem>.py main() with given argv. Returns int rc.
+
+    Thread-safe：全程持 _EXEC_LOCK（见上）。"""
     filename = filename_stem if filename_stem.endswith(".py") else f"{filename_stem}.py"
+    with _EXEC_LOCK:
+        return _exec_script_locked(filename, argv)
+
+
+def _exec_script_locked(filename: str, argv: list[str]) -> int:
     saved_argv = sys.argv[:]
     saved_cwd = os.getcwd()
     sys.argv = [filename] + list(argv)

@@ -1,4 +1,4 @@
-"""tests for docx_text_formatter.py —— 规范化的**覆盖面**回归门。
+"""tests for docx_fmt.py text（原 docx_text_formatter.py）—— 规范化的**覆盖面**回归门。
 
 2026-07-26 起因：规范化对「审阅」无效。python-docx 的 `Document.paragraphs` 只认
 `w:body/./w:p`、`Paragraph.runs` 只认 `./w:r`，于是 `w:ins`/`w:del`（修订）、
@@ -26,7 +26,7 @@ from docx.oxml.ns import nsdecls, qn
 _DOC = Path(__file__).resolve().parent.parent
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
-spec = importlib.util.spec_from_file_location("dtf_uut", str(_DOC / "docx_text_formatter.py"))
+spec = importlib.util.spec_from_file_location("dtf_uut", str(_DOC / "docx_fmt.py"))
 assert spec and spec.loader
 dtf = importlib.util.module_from_spec(spec)
 sys.modules["dtf_uut"] = dtf

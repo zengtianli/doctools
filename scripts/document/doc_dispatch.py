@@ -142,7 +142,7 @@ def _clean_flags(opts: dict | None) -> list[str]:
 def route_clean(f: str, opts: dict | None = None) -> tuple[list[str], str] | None:
     e = _ext(f)
     if e == "docx":
-        return _py("docx_text_formatter.py", f, *_clean_flags(opts)), "docx → 文本修复(引号/标点/单位)"
+        return _py("docx_fmt.py", "text", f, *_clean_flags(opts)), "docx → 文本修复(引号/标点/单位)"
     if e == "md":
         rules = [a for a in _clean_flags(opts) if a in ("--quotes", "--punct", "--units")]
         return _py("md_tools.py", "format", *rules, f), "md → 格式标准化"
@@ -168,7 +168,7 @@ def route_quotes(f: str, opts: dict | None = None) -> tuple[list[str], str] | No
     if "--scope" in flags:
         extra += ["--scope", flags[flags.index("--scope") + 1]]
     if e == "docx":
-        return _py("docx_text_formatter.py", f, "--quotes", *extra), "docx → 只统一引号"
+        return _py("docx_fmt.py", "text", f, "--quotes", *extra), "docx → 只统一引号"
     if e == "md":
         return _py("md_tools.py", "format", "--quotes", f), "md → 只统一引号"
     return None
@@ -191,7 +191,7 @@ def route_lowercase(f: str) -> tuple[list[str], str] | None:
 def route_stripchrome(f: str) -> tuple[list[str], str] | None:
     """只删页眉页脚,不动一个字(--strip-only)。⚠ 不可撤销,产出 _fixed 副本。"""
     if _ext(f) == "docx":
-        return (_py("docx_text_formatter.py", f, "--strip-only"),
+        return (_py("docx_fmt.py", "text", f, "--strip-only"),
                 "docx → 清除页眉页脚(不改文字)")
     return None
 
@@ -218,7 +218,7 @@ def route_formatclone(f: str, opts: dict | None = None) -> tuple[list[str], str]
 
     2026-07-27 从「TL 代笔台」收编 —— 那个 app 实测 18 天里开过 1 次共 0 分钟,
     而它唯一的动作就是调本引擎。能力留下,壳退役(见 ~/Apps/mac/handoffs/fleet-consolidation-plan.md)。
-    引擎 docx_format_clone.py 是 HQ SSOT(/docx format 也在用),此处只做编排,不碰它。
+    引擎 docx_fmt.py clone(原 docx_format_clone.py)是 HQ SSOT(/docx format 也在用),此处只做编排,不碰它。
     """
     o = opts or {}
     ref = (o.get("ref") or "").strip()
@@ -231,7 +231,7 @@ def route_formatclone(f: str, opts: dict | None = None) -> tuple[list[str], str]
     if _ext(f) not in ("docx", "md"):
         return None
     out = _nonclobber(Path(f).with_name(f"{Path(f).stem}_成品.docx"))
-    cmd = _py("docx_format_clone.py", "apply", f, "--ref", ref, "-o", str(out))
+    cmd = _py("docx_fmt.py", "clone", "apply", f, "--ref", ref, "-o", str(out))
     sig = str(o.get("signature", "0")).lower() in ("1", "true", "yes", "on")
     if not sig:
         cmd.append("--no-signature")
@@ -245,7 +245,7 @@ def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
         ("pptx", "md"): (_py("pptx_to_md.py", f), "pptx → Markdown"),
         ("ppt", "md"): (_py("pptx_to_md.py", f), "ppt → Markdown"),
         ("md", "word"): (_py("md_docx_template.py", f), "md → Word(套模板)"),
-        ("docx", "word"): (_py("docx_apply_template.py", f), "docx → 套模板重排"),
+        ("docx", "word"): (_py("docx_fmt.py", "template", f), "docx → 套模板重排"),
         ("csv", "xlsx"): (_data("convert.py", "xlsx-from-csv", f), "csv → Excel"),
         ("txt", "xlsx"): (_data("convert.py", "xlsx-from-txt", f), "txt → Excel"),
         ("xls", "xlsx"): (_data("convert.py", "xlsx-from-xls", f), "老 xls → xlsx"),
@@ -338,7 +338,7 @@ def _word_textfix(out: Path) -> int:
     if not out.exists():
         warn(f"未找到转换产出 {out.name},跳过文本修复")
         return 1
-    if _run(_py("docx_text_formatter.py", str(out)), "文本修复(引号/标点/单位)"):
+    if _run(_py("docx_fmt.py", "text", str(out)), "文本修复(引号/标点/单位)"):
         return 1
     fixed = out.with_name(f"{out.stem}_fixed{out.suffix}")
     if not fixed.exists():
@@ -353,7 +353,7 @@ def _word_output(f: str) -> Path:
     """convert→word 各引擎的默认产出路径。"""
     p = Path(f)
     if _ext(f) == "docx":
-        return p.with_name(f"{p.stem}_styled.docx")   # docx_apply_template.py
+        return p.with_name(f"{p.stem}_styled.docx")   # docx_fmt.py template
     return p.with_suffix(".docx")                     # md_docx_template.py / soffice
 
 
@@ -509,17 +509,17 @@ def do_typeset(files) -> int:
             if _run(_py("md_docx_template.py", str(p)), "1/3 md → Word(套模板)"): rc |= 1; continue
             step1 = d / f"{stem}.docx"; final = d / f"{stem}.docx"
         else:
-            if _run(_py("docx_apply_template.py", str(p)), "1/3 docx 套模板重排"): rc |= 1; continue
+            if _run(_py("docx_fmt.py", "template", str(p)), "1/3 docx 套模板重排"): rc |= 1; continue
             step1 = d / f"{stem}_styled.docx"; final = d / f"{stem}_styled.docx"
         if not step1.exists():
             warn(f"Step1 未产出 {step1.name},中止该文件"); rc |= 1; continue
         # Step 2: 文本修复 → <name>_fixed.docx
-        if _run(_py("docx_text_formatter.py", str(step1)), "2/3 文本修复"): rc |= 1; continue
+        if _run(_py("docx_fmt.py", "text", str(step1)), "2/3 文本修复"): rc |= 1; continue
         step2 = step1.with_name(step1.stem + "_fixed.docx")
         if not step2.exists():
             warn(f"Step2 未产出 {step2.name},中止该文件"); rc |= 1; continue
         # Step 3: 图注居中(就地)
-        _run(_py("docx_apply_image_caption.py", str(step2)), "3/3 图注样式")
+        _run(_py("sub/docx_apply_image_caption.py", str(step2)), "3/3 图注样式")
         # 收尾:step2 → final,清中间
         step2.replace(final)
         if step1 != final and step1.exists():
@@ -550,10 +550,10 @@ def do_renum(files, target: str = "all") -> int:
     """序号修正:docx 的标题号/图号/表号 断号·错号·缺号 一键重排,产出 <stem>_序号修正.docx(原件不动)。
 
     纯路由,组合单一职责引擎(引擎零改):
-      标题号 = sub/renumber_headings.py       (按段落物理顺序重编 H1/H2/H3)
-      图号   = docx_renumber_figures.py --cn-section --kind 图 (节内重排+补号+正文引用同步)
+      标题号 = sub/renumber.py seq            (按段落物理顺序重编 H1/H2/H3)
+      图号   = renum.py figures --cn-section --kind 图 (节内重排+补号+正文引用同步)
       表号   = 同上 --kind 表
-      英文稿 = 无中文题注但有 Figure N → docx_renumber_figures.py 英文模式(1..N+引用同步)
+      英文稿 = 无中文题注但有 Figure N → renum.py figures 英文模式(1..N+引用同步)
     """
     rc = 0
     for f in files:
@@ -567,15 +567,15 @@ def do_renum(files, target: str = "all") -> int:
         shutil.copy2(p, out)
         failed = False
         if target in ("all", "headings"):
-            if _run(_py("sub/renumber_headings_seq.py", str(out), "--no-backup"), "标题号重排(按现有深度)"):
+            if _run(_py("sub/renumber.py", "seq", str(out), "--no-backup"), "标题号重排(按现有深度)"):
                 failed = True
         if not failed and target in ("all", "tabfig"):
             if _renum_has_en_figures(str(out)):
-                if _run(_py("docx_renumber_figures.py", str(out), "--inplace"), "Figure 号重排(英文)"):
+                if _run(_py("renum.py", "figures", str(out), "--inplace"), "Figure 号重排(英文)"):
                     failed = True
             else:
                 for kind in ("图", "表"):
-                    if _run(_py("docx_renumber_figures.py", str(out),
+                    if _run(_py("renum.py", "figures", str(out),
                                 "--cn-section", "--kind", kind, "--inplace"), f"{kind}号重排"):
                         failed = True; break
         bak = Path(str(out) + ".bak")

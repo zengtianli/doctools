@@ -32,7 +32,7 @@ import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 # file_ops 的 canonical 家在 dev/lib（doctools/lib/file_ops.py 2026-05-21 已删；
 # docx_cli / doc_dispatch 同样以 dev/lib 为准）。append 不 insert(0)。
 _sys.path.append(str(_Path.home() / "Dev" / "tools" / "dev" / "lib"))
-# docx_write_gate 在 scripts/document/（同 docx_renumber_figures / docx_text_formatter 共用的 SSOT）
+# docx_write_gate 在 scripts/document/（同 renum.py figures / docx_fmt.py text 共用的 SSOT）
 _sys.path.append(str(_Path(__file__).resolve().parents[1]))
 
 from lxml import etree  # noqa: E402

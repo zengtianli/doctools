@@ -127,7 +127,6 @@ actions:
   #     体。放在 number_captions 之后：图名文本先定下来再套样式，避免样式套到随后又
   #     被改写的段上。样式名走模糊匹配，匹配不到时它 noop 并如实报style_resolved=nul
   #     l，不静默假装干过。
-  #   脚本位置：scripts/document/docx_apply_image_caption.py（不在 sub/ 下）
   docx_apply_image_caption:
     # 套给图片段与图名段的段落样式名；模糊匹配，"ZDWP 图名" 这类空格变体也命
     # 中。文档里没有这个样式 → 整步 noop

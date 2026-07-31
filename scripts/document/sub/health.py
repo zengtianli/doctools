@@ -4,7 +4,7 @@
 8 病种诊断 (ThreadPoolExecutor 并发), 委托已有 sub/*.py 脚本，新增 2 个原生 check:
   heading-level-skew  (新写 ~15 行)
   heading-gap         (新写 ~20 行)
-其余 6 种委托现有 audit_* / strip_* / apply_body_styles / renumber_headings。
+其余 6 种委托现有 audit / strip / renumber headings 等子命令族(2026-07-31 家族折叠)。
 
 CLI (via docx_cli.py health <subcommand>):
   health diagnose <docx> [--checks all|<list>] [--report path.json] [--html] [--workers N]
@@ -1045,7 +1045,7 @@ SAFE_FIX_SCRIPTS: dict[str, list[tuple[str, list[str]]]] = {
     "caption-outline-pollution": [("strip", ["outlinelvl"])],
     "revision-tracking-residue": [("strip", ["revisions"])],
     "field-not-frozen":          [("freeze", ["fields"])],
-    "heading-number-stale":      [("renumber_headings", [])],
+    "heading-number-stale":      [("renumber", ["headings"])],
 }
 
 

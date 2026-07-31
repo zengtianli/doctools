@@ -21,7 +21,7 @@ from docx.oxml.ns import nsdecls, qn
 _DOC = Path(__file__).resolve().parent.parent
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
-spec = importlib.util.spec_from_file_location("dtf_safety_uut", str(_DOC / "docx_text_formatter.py"))
+spec = importlib.util.spec_from_file_location("dtf_safety_uut", str(_DOC / "docx_fmt.py"))
 assert spec and spec.loader
 dtf = importlib.util.module_from_spec(spec)
 sys.modules["dtf_safety_uut"] = dtf

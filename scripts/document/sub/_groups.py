@@ -208,7 +208,7 @@ GROUPS: list[Group] = [
         "DEPRECATED catch-all scripts (fix-heading-disorder)",
         "legacy_target",
         {"fix-heading-disorder": Target(
-            "fix_heading_disorder", rest_help="extra args forwarded",
+            "blocks", impl_argv=("fix-heading-disorder",), rest_help="extra args forwarded",
             deprecated="[sub.legacy] WARNING: 'fix-heading-disorder' is DEPRECATED; "
                        "拆分后的单功能替代见 sub/_groups.py 本条注释："
                        "outline normalize-arabic / promote-h1 / demote-h2 / "
@@ -220,8 +220,9 @@ GROUPS: list[Group] = [
         "paragraph-block structural ops (reorder/relocate)",
         "block_target",
         {
-            "reorder": "reorder_heading_blocks",
-            "relocate": Target("relocate_orphan_blocks", opts=STD + (
+            "reorder": Target("blocks", impl_argv=("reorder",),
+                              rest_help="extra args forwarded"),
+            "relocate": Target("blocks", impl_argv=("relocate",), opts=STD + (
                 Opt("--plan", help="plan JSON path (schemas/plan.schema.json v1)"),)),
         },
         shared=True,
@@ -235,7 +236,7 @@ GROUPS: list[Group] = [
         "image_action",
         {
             "relink": Target(
-                "relink_images_from_source",
+                "image", impl_argv=("relink",),
                 help="relink/re-embed images from a source docx",
                 opts=(
                     Opt("target_docx", nargs="?", help="target docx (with dangling drawings)"),
@@ -248,7 +249,7 @@ GROUPS: list[Group] = [
                 ),
                 rest_help="extra args forwarded"),
             "extract": Target(
-                "image_extract",
+                "image", impl_argv=("extract",),
                 help="extract images by neighboring caption text",
                 opts=(
                     Opt("docx", nargs="?", help="source docx (read-only)"),
@@ -264,14 +265,16 @@ GROUPS: list[Group] = [
         "docx seqdiff ops: seq (逐段对照) / image (图片去重) — distilled from bid-diff-and-revise",
         "diff_action",
         {
-            "seq": Target("seqdiff", help="逐段 sequence diff: src vs dst → MD 报告", opts=(
+            "seq": Target("biddiff", impl_argv=("seq",),
+                          help="逐段 sequence diff: src vs dst → MD 报告", opts=(
                 Opt("--src", help="源 docx（旧版）"),
                 Opt("--dst", help="目标 docx（新版）"),
                 Opt("--out", help="输出 MD 路径"),
                 Opt("--noise-len", type_int=True, default=8, dest="noise_len",
                     help="短于 N 字符视为噪声（默认 8）", emit_zero=True),
             ), rest_help=""),
-            "image": Target("image_dedup", help="SHA256 图片去重: src vs dst → 重复清单 MD", opts=(
+            "image": Target("image", impl_argv=("dedup",),
+                            help="SHA256 图片去重: src vs dst → 重复清单 MD", opts=(
                 Opt("--src", help="源 docx"),
                 Opt("--dst", help="目标 docx"),
                 Opt("--out", help="输出 MD 路径"),
@@ -283,7 +286,8 @@ GROUPS: list[Group] = [
         "compare-ref",
         "compare-ref: 改动 MD 改为段 vs 参考 docx 雷同检查 — distilled from bid-diff-and-revise",
         "compare_action",
-        {"ref": Target("compare_vs_ref", help="改动草稿 MD 改为段 vs 参考 docx 雷同检查", opts=(
+        {"ref": Target("biddiff", impl_argv=("ref",),
+                       help="改动草稿 MD 改为段 vs 参考 docx 雷同检查", opts=(
             Opt("--drafts-dir", dest="drafts_dir", help="改动草稿 MD 所在目录"),
             Opt("--ref", help="参考 docx（主标或基准）"),
             Opt("--out", help="输出 MD 路径"),
@@ -295,7 +299,8 @@ GROUPS: list[Group] = [
         "revise-rules",
         "revision rules ops: gen (改动 MD → rules JSON for track-changes)",
         "revise_rules_action",
-        {"gen": Target("gen_rules", help="解析改动草稿 MD → rules JSON", opts=(
+        {"gen": Target("biddiff", impl_argv=("gen",),
+                       help="解析改动草稿 MD → rules JSON", opts=(
             Opt("--drafts-dir", dest="drafts_dir", help="改动草稿 MD 目录"),
             Opt("--docx", help="目标 docx（find 存在性校验 + 引号自适配）"),
             Opt("--out", help="输出 rules JSON 路径"),
@@ -332,7 +337,8 @@ GROUPS: list[Group] = [
         "split / body-replace docx (by-h1, body-replace)",
         "split_action",
         {
-            "by-h1": Target("split_by_h1", help="split docx by Heading 1 into N files",
+            "by-h1": Target("split", impl_argv=("by-h1",),
+                            help="split docx by Heading 1 into N files",
                             add_help=True, rest_help="", opts=(
                 Opt("--docx", required=True, help="input docx path"),
                 Opt("--out-dir", dest="out_dir", required=True, help="output directory"),
@@ -346,7 +352,8 @@ GROUPS: list[Group] = [
                          "FAIL on 0 H1 and tell user to run /docx health first)"),
             )),
             "body-replace": Target(
-                "body_replace", help="keep shell styles/cover/H1, replace body with content",
+                "split", impl_argv=("body-replace",),
+                help="keep shell styles/cover/H1, replace body with content",
                 add_help=True, rest_help="", opts=(
                     Opt("--shell", required=True,
                         help="shell docx (styles/numbering/cover/H1 source)"),
@@ -403,7 +410,8 @@ GROUPS: list[Group] = [
         {
             # 2026-07-30 修：这条从写下那天起没有 func=，敲下去只得到「no handler for table」。
             "delete-rows": Target(
-                "delete_table_rows", help="删除指定表格的行范围（安全校验 + 原地保存）",
+                "table", impl_argv=("delete-rows",),
+                help="删除指定表格的行范围（安全校验 + 原地保存）",
                 add_help=True, rest_help=None,
                 description=(
                     "删除 docx 中指定表（0-based 索引）的行范围 FROM:TO（闭区间 0-based）。\n"
@@ -423,7 +431,8 @@ GROUPS: list[Group] = [
                         help="删后末行第二列期望值，校验删后结果"),
                 )),
             "extract": Target(
-                "extract_tables", help="抽 docx 内每张表为独立 docx（文件名=邻近 caption）",
+                "table", impl_argv=("extract",),
+                help="抽 docx 内每张表为独立 docx（文件名=邻近 caption）",
                 add_help=True, rest_help=None,
                 description=(
                     "遍历 docx body 内每张表 <w:tbl>，往前 1-2 段（或往后 1 段）扫"
@@ -443,7 +452,7 @@ GROUPS: list[Group] = [
                     Opt("--dry-run", action="store_true", help="只打印 plan，不写文件"),
                 )),
             "borders": Target(
-                "set_table_borders",
+                "table", impl_argv=("borders",),
                 help="把所有表格统一为满格实线（表级全 single + 清单元格 nil 覆盖）",
                 add_help=True, rest_help=None, chain=("center", "center"),
                 description=(
@@ -477,7 +486,8 @@ GROUPS: list[Group] = [
                     Opt("--dry-run", action="store_true", help="只报告不写盘"),
                 )),
             "center": Target(
-                "set_table_align", help="把所有表格整体在页面水平居中（含嵌套表）",
+                "table", impl_argv=("center",),
+                help="把所有表格整体在页面水平居中（含嵌套表）",
                 add_help=True, rest_help=None,
                 description=(
                     "把 docx 内所有表格（含嵌套表）整体在页面水平居中——写表级\n"
@@ -546,10 +556,11 @@ GROUPS: list[Group] = [
         "chapter ops (convert-arabic / delete-empty-h1 / delete)",
         "chapter_target",
         {
-            "convert-arabic": "convert_chapter_format",
-            "delete-empty-h1": "delete_empty_h1",
+            "convert-arabic": Target("chapter", impl_argv=("convert-arabic",)),
+            "delete-empty-h1": Target("chapter", impl_argv=("delete-empty-h1",)),
             # 注意：delete 没有 --report（原样保持）
-            "delete": Target("delete_chapter", help="delete an entire H1 chapter",
+            "delete": Target("chapter", impl_argv=("delete",),
+                             help="delete an entire H1 chapter",
                              rest_help="extra args forwarded", opts=(
                 Opt("docx_path", nargs="?", help="target docx path"),
                 Opt("--h1", help="H1 chapter number (e.g. 3)"),
@@ -564,7 +575,7 @@ GROUPS: list[Group] = [
         "renumber",
         "renumber headings + caption numbers",
         "renumber_target",
-        {"headings": "renumber_headings"},
+        {"headings": Target("renumber", impl_argv=("headings",))},
         shared=True,
     ),
     Group(
@@ -572,8 +583,8 @@ GROUPS: list[Group] = [
         "caption ops (number / pair / number-by-style)",
         "caption_target",
         {
-            "number": "number_captions",
-            "pair": Target("pair_table_captions",
+            "number": Target("caption", impl_argv=("number",)),
+            "pair": Target("caption", impl_argv=("pair",),
                            help="apply decision.json to fix caption-table pairing",
                            rest_help="extra args forwarded", opts=STD + (
                 Opt("--decision", help="decision JSON path (schemas/decision.schema.json v1)"),)),

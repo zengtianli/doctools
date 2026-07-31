@@ -154,6 +154,7 @@ ACTIONS: list[Action] = [
         "而且**不报错**，只是安静地说「无需修改」。不给 ref 时 noop 并如实报 skipped。",
         opts={"restyle_ref": None},
         opt_docs={"restyle_ref": "同源 golden docx 路径（格式源）；null = 本动作跳过"},
+        script="typeset_ops", entry="apply_path_restyle",
     ),
     Action(
         "sync_toc", "path", "path-pre",
@@ -164,6 +165,7 @@ ACTIONS: list[Action] = [
         "只是点不动，这个数不进报告就没人会发现。",
         opts={"sync_toc_ref": None},
         opt_docs={"sync_toc_ref": "同源 golden docx 路径（目录源）；null = 本动作跳过"},
+        script="typeset_ops", entry="apply_path_sync_toc",
     ),
 
     # ── 一 · doc-pre：parse 一次，下面这些顺序施加在同一棵内存树上 ────────────
@@ -223,6 +225,7 @@ ACTIONS: list[Action] = [
         "所有「按段落 index 生成计划」的动作都必须排在它后面 —— 它一删段，"
         "先前记下的 index 全部漂移。",
         opts={},
+        script="chapter", entry="apply_delete_empty_h1",
     ),
     Action(
         "relocate_orphan_blocks", "doc", "doc-pre",
@@ -231,6 +234,7 @@ ACTIONS: list[Action] = [
         "编号才有意义。没给 relocate_plan 时它自己 noop。",
         opts={"relocate_plan": None},
         opt_docs={"relocate_plan": "游离块搬迁 plan JSON 的路径；null 时脚本自己 noop"},
+        script="blocks", entry="apply_relocate",
     ),
     Action(
         "convert_chapter_format", "doc", "doc-pre",
@@ -238,6 +242,7 @@ ACTIONS: list[Action] = [
         "必须在 renumber_headings 之前：重编号解析的是转换之后的形态，"
         "顺序反了就等于拿旧格式去套新编号规则。",
         opts={},
+        script="chapter", entry="apply_convert_arabic",
     ),
     Action(
         "renumber_headings", "doc", "doc-pre",
@@ -252,6 +257,7 @@ ACTIONS: list[Action] = [
         # `plan_renumber(doc, h1_base)`，apply() 抽出来时写成了 `plan_renumber(doc)`。
         # 不接的话本引擎只能提供一个「引擎悄悄按 1 起编」的动作 —— 而「配了没生效」
         # 正是这一层最该防的失败模式，宁可补上也不留一个够不着的旋钮。
+        script="renumber", entry="apply_renumber_headings",
     ),
     Action(
         "strip_outlinelvl_from_captions", "doc", "doc-pre",
@@ -270,6 +276,7 @@ ACTIONS: list[Action] = [
         opts={"pair_decision": None},
         opt_docs={"pair_decision": "表↔表名配对 decision JSON 的路径。这是「你先给判断结果」"
                                    "而不是配置值（脚本自己猜不准）；null=noop"},
+        script="caption", entry="apply_pair",
     ),
     Action(
         "number_captions", "doc", "doc-pre",
@@ -277,6 +284,7 @@ ACTIONS: list[Action] = [
         "排在配对之后、字体统一之前：它会**新增文本 run**，那些新 run 得让后面的"
         "字体统一盖到，否则新补的号是继承字体、和正文不一致。",
         opts={},
+        script="caption", entry="apply_number",
     ),
     Action(
         "fix_superscript_refs", "doc", "doc-pre",
@@ -297,7 +305,7 @@ ACTIONS: list[Action] = [
         opts={"style_name": "ZDWP图名"},
         opt_docs={"style_name": "套给图片段与图名段的段落样式名；模糊匹配，"
                                 "\"ZDWP 图名\" 这类空格变体也命中。文档里没有这个样式 → 整步 noop"},
-        home="root",
+        # 2026-07-31 脚本平移 scripts/document/ → sub/（全表唯一 home=\"root\" 条目清零，回默认 sub）
         # 【调查者 Q3：图片这一节是空的，要不要这轮收编？】收了，位置按调查者建议
         # （number_captions 与 add_header_footer 之间）。center_images 仍不收：它走 lxml
         # 直接读 zip，apply / apply_path 两个接口都没有，收编要先给它补接口。
@@ -342,6 +350,7 @@ ACTIONS: list[Action] = [
             "keep_cell_borders": "true = 保留单元格自带 tcBorders，只把非实线改成实线；"
                                  "false = 直接删 tcBorders 让表级框线生效",
         },
+        script="table", entry="apply_borders",
     ),
     Action(
         "set_table_align", "doc", "doc-pre",
@@ -350,6 +359,7 @@ ACTIONS: list[Action] = [
         opts={"cell_center": False},
         opt_docs={"cell_center": "true = 单元格内文字水平+垂直也居中；"
                                  "表级 jc=center 是脚本写死的，没有 left/right 可选"},
+        script="table", entry="apply_center",
     ),
 
     # ── doc-pre 收尾自检（只读，不改树）─────────────────────────────
@@ -432,6 +442,7 @@ ACTIONS: list[Action] = [
         "格式）都得先跑完，否则它写的居中会被后面的样式变更盖住语义 —— 表现是「有的图"
         "居中有的没有」，且不报错。",
         opts={},
+        script="typeset_ops", entry="apply_path_center_images",
     ),
     Action(
         "line_spacing", "path", "path",
@@ -442,6 +453,7 @@ ACTIONS: list[Action] = [
         "那些）永远拿不到行距。不给 ref 时 noop 并如实报 skipped。",
         opts={"line_spacing_ref": None},
         opt_docs={"line_spacing_ref": "同源 golden docx 路径（行距值取其众数）；null = 本动作跳过"},
+        script="typeset_ops", entry="apply_path_line_spacing",
     ),
 
     # ── 三 · doc-post：path 段改完重开一次 doc，跑「必须看见冻结结果」的动作 ────
@@ -476,6 +488,7 @@ ACTIONS: list[Action] = [
         unavailable="import 了 apply_body_styles —— 那是 qual-supply 的脚本，"
                     "doctools 仓里没有这个模块，加载即 ModuleNotFoundError。"
                     "本引擎不替它补依赖（那是改业务逻辑）；要用先把该模块搬进来。",
+        script="blocks", entry="apply_fix_heading_disorder",
     ),
     Action(
         "reorder_heading_blocks", "doc", "doc-pre",
@@ -483,6 +496,7 @@ ACTIONS: list[Action] = [
         "本该紧跟 fix_heading_disorder。",
         opts={},
         unavailable="它 from fix_heading_disorder import …，连坐上面那条同样的缺失依赖。",
+        script="blocks", entry="apply_reorder",
     ),
 ]
 
@@ -542,7 +556,7 @@ FONT_OPT_KEYS = {"body_cjk", "heading_cjk"}
 #   fix_styleset —— 实测在本引擎的加载路径下 `ImportError: attempted relative import
 #   with no known parent package`（它 import 了同包兄弟模块），load_step 根本加载不到。
 #   收编前得先把它的包内相对 import 改成可独立加载 —— 那是改它的业务代码。
-#   docx_text_formatter —— 有 apply(doc,args) 了，但它的能力是「4 个规则开关 + 一条域白名单」，
+#   docx_fmt.py text（原 docx_text_formatter）—— 有 apply(doc,args) 了，但它的能力是「4 个规则开关 + 一条域白名单」，
 #   规则本身（引号/标点/单位替换表）硬编码在 lib/text_fixes.py。收编它得先决定
 #   scope 白名单怎么在 spec 里表达（它是唯一一个选项不是标量的动作），本轮不动。
 

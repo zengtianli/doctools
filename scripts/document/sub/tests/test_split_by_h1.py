@@ -1,4 +1,4 @@
-"""tests for split_by_h1.py"""
+"""tests for split.py by-h1 (原 split_by_h1.py, 2026-07-31 家族折叠)"""
 from __future__ import annotations
 
 import importlib.util
@@ -13,7 +13,7 @@ _SUB_DIR = _HERE.parent
 
 # Load module directly so test runs without requiring scripts to be a package.
 spec = importlib.util.spec_from_file_location(
-    "split_by_h1_under_test", str(_SUB_DIR / "split_by_h1.py")
+    "split_by_h1_under_test", str(_SUB_DIR / "split.py")
 )
 sbh = importlib.util.module_from_spec(spec)
 sys.modules["split_by_h1_under_test"] = sbh
@@ -51,7 +51,7 @@ def test_split_dry_run(tmp_path: Path, capsys):
     src = tmp_path / "in.docx"
     _make_docx(src)
     out = tmp_path / "out"
-    rc = sbh.main.__wrapped__ if hasattr(sbh.main, "__wrapped__") else None
+    rc = sbh.main_by_h1.__wrapped__ if hasattr(sbh.main_by_h1, "__wrapped__") else None
     # Use argparse path
     saved = sys.argv[:]
     sys.argv = [
@@ -62,7 +62,7 @@ def test_split_dry_run(tmp_path: Path, capsys):
         "--dry-run",
     ]
     try:
-        rc = sbh.main()
+        rc = sbh.main_by_h1()
     finally:
         sys.argv = saved
     assert rc == 0
@@ -85,7 +85,7 @@ def test_split_without_frontmatter(tmp_path: Path):
         "--out-dir", str(out),
     ]
     try:
-        rc = sbh.main()
+        rc = sbh.main_by_h1()
     finally:
         sys.argv = saved
     assert rc == 0
@@ -116,7 +116,7 @@ def test_split_with_frontmatter(tmp_path: Path):
         "--include-frontmatter",
     ]
     try:
-        rc = sbh.main()
+        rc = sbh.main_by_h1()
     finally:
         sys.argv = saved
     assert rc == 0
@@ -146,7 +146,7 @@ def test_illegal_filename_in_h1_title(tmp_path: Path):
         "--out-dir", str(out),
     ]
     try:
-        rc = sbh.main()
+        rc = sbh.main_by_h1()
     finally:
         sys.argv = saved
     assert rc == 0

@@ -6,13 +6,13 @@
 失败）自动回滚该步、标 ⚠ 跳过，不连累全局。
 
 步序（从 0624 vs 0625 真实 diff 推出，高价值优先）：
-  ⓪ restyle    重套院样式（对同源 golden，整段克隆 pPr+runs）   sub/restyle.py --apply
+  ⓪ restyle    重套院样式（对同源 golden，整段克隆 pPr+runs）   sub/typeset_ops.py restyle --apply
   ① styleset   样式池清理（去 TOC10 等重复后缀）             docx_cli styleset restore
-  ② spacing    正文固定行距（对参照, best-effort）            line_spacing --fix --ref
+  ② spacing    正文固定行距（对参照, best-effort）            typeset_ops line-spacing --fix --ref
   ③ figs       图号节内重排+补号+居中                       renumber-fig --cn-section --fix-center
-  ③.5 center   图片显式居中+零缩进（不赌样式）               sub/center_images.py --apply
-  ④ port_sect  节结构移植（对同源 golden 1:1：分节/横竖/页眉脚水印） sub/port_sections.py
-  ④.5 sync_toc 目录同步 golden（样式表对账+整个 TOC sdt 移植）   sub/sync_toc.py --apply
+  ③.5 center   图片显式居中+零缩进（不赌样式）               sub/typeset_ops.py center-images --apply
+  ④ port_sect  节结构移植（对同源 golden 1:1：分节/横竖/页眉脚水印） sub/typeset_ops.py port-sections
+  ④.5 sync_toc 目录同步 golden（样式表对账+整个 TOC sdt 移植）   sub/typeset_ops.py sync-toc --apply
   ⑤ gate       交付不变量自检（read-only 收尾）              docx_cli health gate
 
 surgical 安全网：每步后 unzip -t 验完整性，坏了回滚 → 全程不产出损坏 docx。
@@ -32,11 +32,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DC = HERE / "docx_cli.py"
-LINE_SPACING = HERE / "sub" / "line_spacing.py"
-RESTYLE = HERE / "sub" / "restyle.py"
-PORT_SECT = HERE / "sub" / "port_sections.py"
-CENTER_IMG = HERE / "sub" / "center_images.py"
-SYNC_TOC = HERE / "sub" / "sync_toc.py"
+# 2026-07-31 家族折叠：五件套并入 sub/typeset_ops.py（子命令族），argv 前插子命令 token
+TYPESET_OPS = HERE / "sub" / "typeset_ops.py"
 
 
 def _intact(p: Path) -> bool:
@@ -88,19 +85,20 @@ def main(argv=None):
     #    ref（别县范式）文本不匹配 → 近乎 no-op，安全。chrome 靠 pStyle 找章界，须在它前。
     if a.ref:
         steps.append(("⓪ restyle 重套院样式(对同源参照)",
-                      [sys.executable, str(RESTYLE), str(work),
+                      [sys.executable, str(TYPESET_OPS), "restyle", str(work),
                        "--ref", str(a.ref), "--apply", "--no-backup"]))
     steps.append(("① styleset 样式池清理",
                   [sys.executable, str(DC), "styleset", "restore", str(work)]))
     if a.ref:
         steps.append(("② spacing 固定行距(对参照)",
-                      [sys.executable, str(LINE_SPACING), str(work),
+                      [sys.executable, str(TYPESET_OPS), "line-spacing", str(work),
                        "--fix", "--ref", str(a.ref), "--no-backup"]))
     steps.append(("③ figs 图号节内重排+补无号题注",
                   [sys.executable, str(DC), "renumber-fig", "--cn-section",
                    "--fix-center", "--inplace", str(work)]))
     steps.append(("③.5 center-img 图片显式居中+零缩进",
-                  [sys.executable, str(CENTER_IMG), str(work), "--apply", "--no-backup"]))
+                  [sys.executable, str(TYPESET_OPS), "center-images", str(work),
+                   "--apply", "--no-backup"]))
 
     report = []
     for name, cmd in steps:
@@ -121,7 +119,7 @@ def main(argv=None):
     if a.ref:
         snap = work.with_suffix(work.suffix + ".snap")
         shutil.copy2(work, snap)
-        rc, out = _run([sys.executable, str(PORT_SECT), str(work),
+        rc, out = _run([sys.executable, str(TYPESET_OPS), "port-sections", str(work),
                         "--ref", str(a.ref), "--no-backup"], timeout=300)
         sect_out = work.with_name(work.stem + "_sect.docx")
         if rc == 0 and sect_out.exists() and _intact(sect_out):
@@ -141,7 +139,7 @@ def main(argv=None):
     if a.ref:
         snap = work.with_suffix(work.suffix + ".snap")
         shutil.copy2(work, snap)
-        rc, out = _run([sys.executable, str(SYNC_TOC), str(work),
+        rc, out = _run([sys.executable, str(TYPESET_OPS), "sync-toc", str(work),
                         "--ref", str(a.ref), "--apply", "--no-backup"])
         if rc != 0 or not _intact(work):
             shutil.copy2(snap, work)
