@@ -8,13 +8,14 @@
 
 ```
 scripts/
-├── document/ (23)    # 文档处理入口（docx_ + md_ + pptx_ + chart + bid_gate + renum + docx_fmt）
+├── document/ (17)    # 文档处理入口（docx_cli/typeset/revise/bid_gate/renum/docx_fmt/md_tools/pptx_cli/pdf_cli/chart…）
 │   └── sub/ (43)     # docx_cli 子命令实现（_groups 声明表 + 业务模块 + _cli_common 样板；
 │                     #   2026-07-31 家族折叠：strip/audit/freeze/image/table/caption/chapter/
 │                     #   renumber/blocks/split/typeset_ops/biddiff 12 族 42 旧件并成 12 个子命令族文件；
 │                     #   同日入口层折叠：chapter_renumber/tabfig_align/docx_renumber_figures →
 │                     #   renum.py，docx_apply_template/format_clone/font_normalize/text_formatter →
-│                     #   docx_fmt.py，docx_apply_image_caption 平移进 sub/）
+│                     #   docx_fmt.py，docx_apply_image_caption 平移进 sub/；
+│                     #   同日再折：pptx 4→1(pptx_cli) · pdf 3→1(pdf_cli) · md_docx_template 并入 md_tools）
 └── data/ (5)         # 数据转换（xlsx_ + convert）
 
 lib/                  # 公共模块
@@ -86,7 +87,7 @@ review 的 include_ins+strict 默认全开是机器强制条款，禁改）。
 ## 全仓脚本关系图
 
 ```bash
-python3 tools/script_graph.py --open     # 103 个脚本 · 谁调谁 · 双链可点
+python3 tools/script_graph.py --open     # 92 个脚本 · 谁调谁 · 双链可点
 ```
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。

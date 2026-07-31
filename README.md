@@ -10,10 +10,9 @@
 | `sub/docx_apply_image_caption.py` | 应用图片和图名样式 |
 | `docx_fmt.py` | docx 版式/字体/文本规范化族（template/clone/fonts/text 子命令） |
 | `docx_tools.py` | Word 文档工具集 |
-| `md_docx_template.py` | Markdown 转 Docx（样式复刻） |
+| `md_tools.py md2docx` | Markdown 转 Docx（样式复刻；2026-07-31 原 md_docx_template.py 并入） |
 | `md_tools.py` | Markdown 工具集 |
-| `pptx_to_md.py` | PPTX 转 Markdown |
-| `pptx_tools.py` | PPTX 文档标准化工具集 |
+| `pptx_cli.py` | PPTX 工具族（13 子命令：font/format/table/all/to-md/audit/layout/…；2026-07-31 原 pptx_tools/pptx_align/pptx_to_md 并入） |
 | `scan_sensitive_words.py` | AI 敏感词扫描器 |
 
 辅助文件：`heading_styles.xml`（标题样式定义）、`styles_config.json`（样式配置）、`docx_to_md.sh`（转换脚本）
@@ -77,11 +76,11 @@ python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py freeze headings X.docx
 python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py freeze fields X.docx
 
 # renumber + style(--profile 选样式族)
-python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py renumber headings X.docx --profile eco-flow
+python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py renumber headings X.docx
 python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py style body X.docx --profile zdwp
 
 # 各 distilled 脚本仍可独立 CLI 跑
-python3 ~/Dev/tools/doctools/scripts/document/sub/audit_heading_numbers.py X.docx --report /tmp/h.json
+python3 ~/Dev/tools/doctools/scripts/document/sub/audit.py headings X.docx --report /tmp/h.json
 ```
 
 **水利项目接入**(eco-flow 范例):

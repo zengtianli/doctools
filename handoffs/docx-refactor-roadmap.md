@@ -41,9 +41,9 @@
 
 ```bash
 cd ~/Dev/tools/doctools
-python3 -m pytest scripts/document/tests scripts/document/sub/tests -q   # 80 passed
+python3 -m pytest scripts/document/tests scripts/document/sub/tests -q   # 82 passed
 python3 tools/cli_surface.py > /tmp/surface.json                          # 与改前 diff
-python3 tools/cli_forward_probe.py > /tmp/probe.json                      # 50 条全正常
+python3 tools/cli_forward_probe.py > /tmp/probe.json                      # 67 条全正常(内嵌预期 argv,改错转发即红)
 python3 tools/script_graph.py                                             # 0 个没人引用
 python3 tools/check_docx_collar.py                                        # 收口全挂
 ```
@@ -58,6 +58,12 @@ python3 tools/check_docx_collar.py                                        # 收�
 | P4 | ~~**strip_\*/audit_\* 家族 main() 样板统一**~~ ✅ 2026-07-31 完成：抽 `sub/_cli_common.py`（111 行：argparse 骨架/backup/report/lsof 占用检查），strip_×5 + audit_×5 收编（`audit_styleset` 排除——自带 register() 多 target 结构，样板重合度低）；`import _cli_common` 带 self-dir append（`_dispatch._load` 不进 sys.path，漏了会静默 rc=2）；退出码不一致**保持现状**（消费点未核，不顺手统一）。工单 = 会话 scratchpad order-p4.json | 小 | 已验收：surface/probe diff 空 · 每脚本 `--help` 逐字不变 · slim 整链真跑（72 部件 sha256 全同，仅 zip mtime 噪音）· collar 绿 |
 | P5 | **docx_revise 扩 op**（表格加列/数据系列延展等） | 按需 | **需求驱动，别预建**——qual-supply 下一轮真用到再加，加时先写单测 |
 | P6 | `fix_styleset` 包内相对 import 重构（2007 行，`load_step` 加载不到） | 大 | 收益低，只在要接 spec 时做 |
+| P7 | ~~**pdf 族 3 文件 → 1**~~ ✅ 2026-07-31 完成：`pdf_pipeline_lib.py`（纯单消费方，pipeline 引擎段整段）+ `pdf_to_docx.py`（to-docx 引擎段，python-docx/docx_safe_save 改惰性 `_ensure_docx_deps()`，read 等子命令实测不再加载 python-docx）并入 `pdf_cli.py`（755→1971 行，bid_gate 单文件范式）；CLI surface 零改动。banner 主会话拍板 A：`convert to-docx` stdout 统一为原 pdf_to_docx 中文格式（doc_dispatch 机器链逐字节保真，pdf_cli convert 英文 banner 仅人眼消费承担 cosmetic 变化）。真重复去重 3 处（pdfimages 包装 ×3→`_run_pdfimages` / 3072 阈值→`MIN_IMAGE_BYTES` / sanitize 共底 `_sanitize_core`；outline 遍历 ×2 按工单不动）。外部指针：doc_dispatch:263 argv / hq_capabilities / Apps doc-tools catalog / wiki memory 两副本。旧 2 件 → `~/.Trash/consolidation-20260731/pdf/`（MANIFEST+sha256）。extract image 无噪音过滤/img-NNN 命名违反铁律 #6 = 已知现状，记 backlog 不借折叠改行为（OQ2）。工单 = 会话 scratchpad cons-order-pdf.json | 中 | 已验收：24 命令 stdout/stderr/rc 对拍（14-pipepar 真跑 spawn 并行）+ convert/dispatch 产物逐部件 sha256 全同 + 收口惰性 import 过守卫 regex 且反向验证转红 |
+| P8 | ~~**sub/ 12 族折叠**~~ ✅ 2026-07-31 完成：strip×7/audit×6/freeze×2/image×3/table×4/caption×2/chapter×3/renumber×2/blocks×3/split×2/typeset_ops×5/biddiff×3 共 42 旧件 → 12 个子命令族文件（sub/ 72→43）；`_groups` Target 加 impl_argv、`_dispatch.exec_script` 加 RLock（修 health 线程池 sys.argv 竞态——折叠前就在静默产错诊断，真 bug 修复）；typeset_apply Action 加 script/entry/tail_entry 三字段（spec 词汇 SSOT 不动）。工单 = cons-order-subf.json | 大 | surface 逐字节空 · probe diff 恰=映射 9+N 条 · 28 条 standalone 对拍 26 逐字节同/2 条仅迭代序与 SyntaxWarning 噪音 · slim/typeset 整链部件 sha 全同 |
+| P9 | ~~**入口散件 9→2+1**~~ ✅ 2026-07-31 完成：renum.py（chapter/tabfig/figures）+ docx_fmt.py（template/clone/fonts/text）+ image_caption 平移 sub/；chart/write_gate/docx_tools/四大引擎/dispatch/GUI 保留。46 条对拍逐字节全清。工单 = cons-order-dent.json | 中 | 同上闸门 + govern-ledger 3 条机检指向顺手修 |
+| P10 | ~~**pptx 4→1**~~ ✅ 2026-07-31 完成：pptx_cli.py 单骨架（顶层 stdlib-only 双解释器契约改写为按子命令），32 用例对拍；to-md 的死 flag `-o`（声明但恒忽略）删除=从静默忽略变 argparse 硬错，**主会话追认**（诚实报错优于假接受）。工单 = cons-order-pptx.json | 中 | 13 子命令 stdout/exit/产物对拍 + /usr/bin/python3 stdlib 契约实测 |
+| P11 | ~~**md 3→2**~~ ✅ 2026-07-31 完成：md_docx_template 并入 md_tools 子命令 md2docx；md_to_audiobook 保留（PEP-723 依赖隔离实测为真）。`to-docx`(pandoc 版) 保留原样——**已知它绕开 docx-gen-guard 字面匹配，属守卫旁路，建议下轮用户拍板退役**。工单 = cons-order-md.json | 小 | 7 条基线对拍全绿 |
+| P12 | ~~**折叠断链修复轮**~~ ✅ 2026-07-31 三向核验抓出后当场修：qual-supply 23 shim + bid-diff 5 shim 重写为 exec 转发（21/23 可用；fix_heading_disorder/reorder 两条 2026-05-26 起依赖已死，忠实保留断态）；bids 4 驱动脚本/eco-flow report_gate/yazi keymap/panan split.sh 改指；collar 第一判据正则精修（docx_parts 不再误判为 python-docx，双向反向验证）；cli_forward_probe 重建为 67 条内嵌预期 argv（录音机→比对器，反向验证：改错转发必红） | 中 | 每处真跑 --help/干跑验证 + 全生态旧名 grep 复核 |
 
 **不做清单（已核实，别再查一遍）**：`typeset_pipeline` vs `typeset_apply` 不合并（韧性 driver vs
 声明式引擎，职责不同）；`docx_apply_template` vs `docx_format_clone` 不重复（直排版问题，

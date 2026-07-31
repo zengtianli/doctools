@@ -11,10 +11,10 @@
 | `chart.py` | 数据驱动图表生成（JSON → PNG） |
 | `docx_fmt.py` | docx 版式/字体/文本规范化族（template/clone/fonts/text 子命令） |
 | `docx_tools.py` | Word 文档工具集 |
-| `md_docx_template.py` | Markdown 转 Docx（样式复刻） |
+| `md_tools.py md2docx` | Markdown 转 Docx（样式复刻） |
 | `md_tools.py` | Markdown 工具集 |
-| `pptx_to_md.py` | PPTX 转 Markdown |
-| `pptx_tools.py` | PPTX 文档标准化工具集 |
+| `pptx_cli.py to-md` | PPTX 转 Markdown |
+| `pptx_cli.py` | PPTX 文档标准化工具集 |
 | `scan_sensitive_words.py` | AI 敏感词扫描器 |
 
 ## 数据转换 (data/)
