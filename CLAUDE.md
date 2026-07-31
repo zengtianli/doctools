@@ -8,22 +8,20 @@
 
 ```
 scripts/
-├── document/ (13)    # 文档处理（docx_ + md_ + pptx_ + chart）
-└── data/ (4)         # 数据转换（xlsx_ + convert）
+├── document/ (29)    # 文档处理入口（docx_ + md_ + pptx_ + chart + bid_gate）
+│   └── sub/ (72)     # docx_cli 子命令实现（_groups 声明表 + 业务模块 + _cli_common 样板）
+└── data/ (5)         # 数据转换（xlsx_ + convert）
 
 lib/                  # 公共模块
-├── display.py        # 终端输出（颜色、进度）
-├── file_ops.py       # 文件操作工具函数
-├── finder.py         # Finder 选择/输入获取
-├── progress.py       # 进度条
-├── docx_xml.py       # DOCX XML 操作
-├── clipboard.py      # 剪贴板操作
-├── env.py            # 环境变量
-├── usage_log.py      # 使用日志
+├── docx_xml.py       # DOCX XML 元素级遍历（全文改写必走，见下节）
+├── docx_safe_save.py # surgical 收口（python-docx 存盘炸开面 60→1）
+├── docx_parts.py     # 部件完整性断言（zipfile 路线必挂）
+├── docx_surgical.py  # zipfile+lxml 手术引擎
+├── docx_revise.py    # 修订注入引擎（w:ins/w:del+批注）
 ├── llm_client.py     # AI 调用（claude -p 封装）
+├── styles.py · chapter_numbering.py · text_fixes.py · schemas.py · soffice.py
+├── clipboard.py · progress.py
 └── common.sh         # Shell 公共函数
-
-└── lib/              # run_python.sh 运行器
 ```
 
 ## 独立入口脚本（不走 `docx_cli`，直接敲）
@@ -81,7 +79,7 @@ review 的 include_ins+strict 默认全开是机器强制条款，禁改）。
 ## 全仓脚本关系图
 
 ```bash
-python3 tools/script_graph.py --open     # 134 个脚本 · 谁调谁 · 双链可点
+python3 tools/script_graph.py --open     # 133 个脚本 · 谁调谁 · 双链可点
 ```
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。
