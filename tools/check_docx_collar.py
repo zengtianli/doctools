@@ -140,7 +140,11 @@ def main() -> int:
               f"不介入，不会碍事。", file=sys.stderr)
         return 1
     print(f"✓ {len(need)} 个用 python-docx 存盘的脚本全部挂了 surgical 收口")
-    print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
+    if scan_roots:
+        print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
+    else:
+        # 没扫 = 没查，不许把「没查」说成「全挂了」（空集报绿）
+        print("· [zipfile] 第二判据默认未扫描（--all 看全量欠账，或显式传目录）")
     return 0
 
 
