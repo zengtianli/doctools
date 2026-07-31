@@ -4,19 +4,20 @@
 合并 12 个旧 docx/md 处理脚本为单一 multi-subcommand 入口。dispatcher 模式：
 每个子命令构造 argv 并调用旧脚本 `main()`，不复刻代码。
 
-子命令 (15+):
+子命令:
   extract / check / snapshot / compare / track   ← docx_tools.py
-  bullet                                          ← bullet_to_paragraph.py
   image-caption                                   ← docx_apply_image_caption.py
   template                                        ← docx_apply_template.py
   renumber-fig                                    ← docx_renumber_figures.py
   text-fmt                                        ← docx_text_formatter.py
   fix-ref                                         ← fix_superscript_refs.py
   md-to-docx                                      ← md_docx_template.py
-  quality-check                                   ← report_quality_check.py
-  review                                          ← review_deep.py
   scan-sensitive                                  ← scan_sensitive_words.py
   md ...                                          ← md_tools.py (sub-group: format/merge/split/strip/to-docx/to-html/frontmatter)
+
+（bullet / quality-check / review 2026-07-30 随 bullet_to_paragraph.py /
+  report_quality_check.py / review_deep.py 退役 —— 全域零消费，
+  见 ~/.Trash/doctools-orphans-20260730/MANIFEST.md）
 
 并行契约：消费 `parallel_contract.add_parallel_args` (--workers / --batch / --phases / --defer / --fanout-evidence)。
 单文件交付走旧脚本；多文件 --batch 走 `parallel_contract.run_batch`。
@@ -57,9 +58,9 @@ _HERE = Path(__file__).resolve().parent
 # ALL_DOCX_CMDS — for batch-all 编排（外部消费者读此常量）
 ALL_DOCX_CMDS = [
     "extract", "check", "snapshot", "compare", "track",
-    "bullet", "image-caption", "template", "format",
+    "image-caption", "template", "format",
     "renumber-fig", "text-fmt", "fix-ref",
-    "md-to-docx", "quality-check", "review", "scan-sensitive",
+    "md-to-docx", "scan-sensitive",
     "md",
 ]
 
@@ -156,9 +157,6 @@ def cmd_compare(args: argparse.Namespace, rest: list[str]) -> int:
 def cmd_track(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("docx_tools", ["track-changes"] + rest)
 
-def cmd_bullet(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("bullet_to_paragraph", rest)
-
 def cmd_image_caption(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("docx_apply_image_caption", rest)
 
@@ -182,12 +180,6 @@ def cmd_fix_ref(args: argparse.Namespace, rest: list[str]) -> int:
 def cmd_md_to_docx(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("md_docx_template", rest)
 
-def cmd_quality_check(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("report_quality_check", rest)
-
-def cmd_review(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("review_deep", rest)
-
 def cmd_scan_sensitive(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("scan_sensitive_words", rest)
 
@@ -204,7 +196,6 @@ CMD_TABLE: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "compare": cmd_compare,
     "diff": cmd_compare,      # alias: skill 叫 diff → cli compare
     "track": cmd_track,
-    "bullet": cmd_bullet,
     "image-caption": cmd_image_caption,
     "template": cmd_template,
     "format": cmd_format,
@@ -212,8 +203,6 @@ CMD_TABLE: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "text-fmt": cmd_text_fmt,
     "fix-ref": cmd_fix_ref,
     "md-to-docx": cmd_md_to_docx,
-    "quality-check": cmd_quality_check,
-    "review": cmd_review,
     "scan-sensitive": cmd_scan_sensitive,
     "md": cmd_md,
 }
@@ -267,10 +256,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="docx_cli",
         description=(
-            "doctools 文档处理统一 CLI (48 subcommands · 2026-07-19 计数核对)\n"
-            "Legacy (16 旧族): extract / check / snapshot / compare / track / bullet /\n"
+            "doctools 文档处理统一 CLI (45 subcommands · 2026-07-30 计数核对)\n"
+            "Legacy (13 旧族): extract / check / snapshot / compare / track /\n"
             "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
-            "  quality-check / review / scan-sensitive / md\n"
+            "  scan-sensitive / md\n"
             "Distilled (15 新族 · sub/*.py): audit / freeze / strip / header-footer /\n"
             "  chapter / renumber / caption / blocks / outline / style / image / legacy /\n"
             "  seqdiff / compare-ref / revise-rules\n"

@@ -8,7 +8,6 @@
 
 | 脚本 | 功能 |
 |------|------|
-| `bullet_to_paragraph.py` | 要点转公文段落/表格（AI） |
 | `chart.py` | 数据驱动图表生成（JSON → PNG） |
 | `docx_apply_template.py` | Word 文档样式套模板 + 清理 |
 | `docx_text_formatter.py` | 文本格式自动修复（DOCX） |
@@ -17,7 +16,6 @@
 | `md_tools.py` | Markdown 工具集 |
 | `pptx_to_md.py` | PPTX 转 Markdown |
 | `pptx_tools.py` | PPTX 文档标准化工具集 |
-| `report_quality_check.py` | 报告/标书质量检查 + 自动修复 |
 | `scan_sensitive_words.py` | AI 敏感词扫描器 |
 
 ## 数据转换 (data/)

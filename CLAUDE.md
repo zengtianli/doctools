@@ -34,7 +34,6 @@ lib/                  # 公共模块
 | 脚本 | 干什么 | 怎么跑 |
 |---|---|---|
 | `scripts/document/bid_deref.py` | 标书正文交叉引用去耦合（合稿人会删/调章节，写死编号=断链） | `python3 scripts/document/bid_deref.py <docx>` |
-| `scripts/document/gen_report.py` | 按参考报告逐章生成新县市报告（走 llm_client） | `python3 scripts/document/gen_report.py --help` |
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run scripts/document/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
 
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则它对全仓不可见：`script_graph` 会把它
@@ -42,7 +41,7 @@ lib/                  # 公共模块
 
 ## 子命令：加子命令 = 加一行数据，不是加一个文件（2026-07-30 立）
 
-`docx_cli.py` 的 128 个子命令，声明全在 **`scripts/document/sub/_groups.py` 的 `GROUPS` 表**。
+`docx_cli.py` 的 125 个子命令（2026-07-30 退役 bullet/quality-check/review 后），声明全在 **`scripts/document/sub/_groups.py` 的 `GROUPS` 表**。
 原来是 20 个只做「argparse 声明 + `exec_script` 转发」的 group 模块（2265 行），已折成一张表。
 
 `Opt` 里同时写「怎么声明给 argparse」和「怎么转发给实现脚本」，**这两件事必须挨着** ——
@@ -169,13 +168,12 @@ gui-run  --op clean --opt rule.units=0 --opt scope.comments=0 --files a.docx
 
 `raycast/` 整子树已进 `~/.Trash/dead-scripts-20260727/`：`commands/` 早就是空的，
 9 个 `doc_*.sh` 在它自己的 `_archive/` 里，只剩一个没人 source 的 `lib/run_python.sh`。
-现在的入口是 `/docx` skill 与直接命令行。
+现在的入口是直接命令行（`/docx` skill 已退役）。
 
 ## Claude CLI 依赖脚本
 
 | 脚本 | 功能 | 模型 |
 |------|------|------|
-| `document/bullet_to_paragraph.py` | 要点转公文段落/表格 | haiku |
 | `document/md_tools.py frontmatter` | 批量生成 MD frontmatter | haiku |
 | `document/scan_sensitive_words.py` | 标书敏感词检测 | haiku |
 

@@ -110,7 +110,7 @@ flowchart TB
 | `docx_apply_template` · `docx_format_clone` · `docx_renumber_figures` · `docx_write_gate` | python-docx 只读 |
 | `md_tools` | pandoc |
 | `doc_dispatch` | soffice |
-| `docx_cli` · `typeset_pipeline` · `docx_qa` · `review_deep` · `bid_final` 等 9 个 | 只调度，不碰内部 |
+| `docx_cli` · `typeset_pipeline` · `bid_final` 等 7 个 | 只调度，不碰内部（`docx_qa` / `review_deep` 2026-07-30 退役） |
 
 > `pdf_to_docx` 是唯一从零造新文件的（`Document()` 无参）。收口对它**自动不介入** —— 没有「原件」可保留。
 

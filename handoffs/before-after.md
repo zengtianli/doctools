@@ -19,7 +19,7 @@ out: /Users/tianli/Dev/tools/doctools/reports/before-after.html
 | python-docx 存一次盘 | 重写 **~60 个部件**（语义只变 1 个） | 重写 **1~2 个** |
 | 跑完一轮排版 | 存盘 **15 次** · 进程 **20 个** · **100 秒** | 存盘 **6 次** · 进程 **1 个** · **33 秒** |
 | 加一条横切改动（如收口） | 改 **35 处** | 改 **1 处** |
-| **涉 docx 的脚本** | **117 个** / 42,572 行 | **98 个** / 42,059 行 |
+| **涉 docx 的脚本** | **117 个** / 42,572 行 | **98 个** / 42,059 行 → 退孤儿后 **96 个**（§十一） |
 | 加一个子命令 | 新建一个 group 模块文件 | **加一行数据** |
 | 没挂收口就改 docx | 打一行提醒，照跑 | **hook 硬拦 exit 2** |
 
@@ -163,7 +163,7 @@ actions:
 | driver | `doc_dispatch` `docx_tools` `typeset_pipeline` `typeset_apply` | 它们是调别人的那一层 |
 | 库 | `pipeline_lib` `bid_residue_lib` `shape_contract` `styles` `health` | 没有「对一份 docx 做一件事」的语义 |
 | 不是单文档进出 | `split_by_h1` `combine` `body_replace` `extract_tables` `image_extract` `port_sections` | 一进多出 / 多进一出 |
-| 要外部参照件 | `docx_apply_template` `docx_format_clone` `md_docx_template` `docx_chrome` `docx_qa` | 是「照模板造新件」不是「调这份的版面」 |
+| 要外部参照件 | `docx_apply_template` `docx_format_clone` `md_docx_template` `docx_chrome` | 是「照模板造新件」不是「调这份的版面」 |
 
 **曾经只能串命令、本轮接进来的四个**：
 
@@ -349,3 +349,36 @@ python3 ~/Dev/tools/doctools/tools/script_graph.py --open
 | 计数键闸门有效 | 故意把 `count_keys` 写成不存在的键 → rc=1 且列出脚本实际返回的键 |
 | 守卫真能拦 | 11 条夹具 + 4 个真脚本走生产路径 + 摘掉收口那行立刻 rc=2 |
 | 没坏东西 | 74 个单测全绿 · 收口守卫 36/36 · 134 脚本 0 孤儿 · 真报告端到端 rc=0 |
+
+---
+
+## 十一 · 第二轮（2026-07-30 当天）：退役 5 个零消费孤儿
+
+上面 §九 说「真要再缩只剩退役功能这条路」—— 用户看完拍板走了这条路。换了四个角度
+重查（入口分发层重叠 / 老单体 vs sub 命令 / 全域零引用 / 血统重复），找到 5 个
+**全域（Dev/Work/Apps/Archives/Money/VPS）零消费**的孤儿，批准后退役：
+
+| 脚本 | 行数 | 判死证据 |
+|---|---|---|
+| `report_quality_check.py` | 953 | 全域零引用；2026-05-21 后零改动；它 import 的 bullet_to_paragraph 同退，不同退就成「依赖已进 Trash 的静默降级半残件」 |
+| `gen_report.py` | 484 | eco-flow 报告线在 Work/Archives 零痕迹；2026-04-16 生，此后只有机械改 |
+| `bullet_to_paragraph.py` | 364 | 2026-05-22 后零改动；唯一消费者是同退的 report_quality_check |
+| `review_deep.py` | 317 | 同 eco-flow 线；唯一入口 docx_cli review 转发 |
+| `docx_qa.py` | 301 | 自称 `/docx finalize` 后端 —— `/docx` skill 已不存在；全域零引用 |
+
+**账（口径写死，免得下次又对不上）**：
+
+| 尺子 | before | after |
+|---|---|---|
+| §零 同尺（`scripts/**` 非测试、原 docx 判据，inv.json 存档在会话 scratchpad） | 98 | **96**（5 个里只有 docx_qa / review_deep 在这个分母里，另 3 个原判 docx=False：主要操 md） |
+| 全仓透明尺（`find . -name '*.py'` 非测试 + `grep -li docx`） | 113 | **108** |
+| 仓内实际文件 / 行数 | — | **−5 个 / −2,419 行** |
+| docx_cli 子命令树（cli_surface 嵌套计数） | 128 | **125**（摘 bullet / quality-check / review 三条 legacy 转发） |
+
+**验证**：cli_surface 折前折后 diff = 恰好只少这 3 个子命令、零误伤；forward probe 50/50；
+`script_graph` 134 → 129 个脚本 0 孤儿；收口守卫 36/36；74 单测全绿。
+去向：`~/.Trash/doctools-orphans-20260730/`（带 MANIFEST），git 历史可捞回。
+
+顺手修正的一处 §十 遗留：「117 → 98 的尺子」当时没写进文档，本轮从会话 scratchpad 的
+`inv.json` 反查出来了 —— 范围 `scripts/**`、非测试、按源码 docx 特征判旗标。教训同 §四：
+**数字必须连尺子一起落盘**，只落数字的口径三天就丢。
