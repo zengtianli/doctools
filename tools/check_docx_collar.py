@@ -27,9 +27,21 @@ SCAN = ROOT / "scripts"
 IMPORTS_DOCX = re.compile(r"^\s*(from docx[\w.]*\s+import|import docx\b)", re.M)
 COLLAR = re.compile(r"^\s*import docx_safe_save\b", re.M)
 
+# ── 第二判据（2026-07-31 加）────────────────────────────────────────────
+# 上面那条只管住 python-docx 那一半。surgical 改法（zipfile+lxml 手工重打包）
+# 根本不 import docx，docx_safe_save 是 monkey-patch OpcPackage.save，
+# 在这条路上一个字节都管不到 —— 于是丢部件无人可挡，实测两次：
+#   162 部件 → 74（11 个原生图表 + 40 header + 18 footer 全丢）
+#   137 部件 → 35（对同一文件开两个 ZipFile 句柄，逐部件复制被截断）
+# 两次文件都照样能打开、Word 也不报错。
+# 判据：自己开 ZipFile 写 docx 的脚本，必须能找到部件完整性断言。
+WRITES_ZIP = re.compile(r"ZipFile\s*\([^)]*?['\"]w['\"]|ZIP_DEFLATED", re.S)
+TOUCHES_DOCX = re.compile(r"\.docx\b|word/document\.xml")
+PART_ASSERT = re.compile(r"\b(assert_parts_intact|diff_parts)\b")
+
 # 测试件豁免：它们在 tmp_path 里造玩具 docx，不碰交付件；而且好几个测试的断言就是
 # 「裸 python-docx 会怎样」，挂上收口反而测不到要测的东西。
-EXEMPT_DIR = re.compile(r"/tests?/")
+EXEMPT_DIR = re.compile(r"/tests?/|/_backup[-\w]*/|/_archive/|/archives?/")
 
 
 def offenders() -> tuple[list[Path], list[Path]]:
@@ -53,13 +65,65 @@ def offenders() -> tuple[list[Path], list[Path]]:
     return need, bad
 
 
+def zip_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
+    """第二判据：自己开 ZipFile 写 docx 的脚本，必须挂部件完整性断言。
+
+    与 offenders() 不同，这里**不要求非空** —— 一个仓里可以确实没有 surgical 脚本，
+    那是正常状态，不是判据坏了。
+    """
+    need, bad = [], []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for p in sorted(root.rglob("*.py")):
+            if EXEMPT_DIR.search(str(p)) or p.name.startswith("test_"):
+                continue
+            if p.name == "docx_parts.py":       # 断言本体
+                continue
+            src = p.read_text(encoding="utf-8", errors="replace")
+            if not (WRITES_ZIP.search(src) and TOUCHES_DOCX.search(src)):
+                continue
+            need.append(p)
+            if not PART_ASSERT.search(src):
+                bad.append(p)
+    return need, bad
+
+
 def main() -> int:
     need, bad = offenders()
+    # 第二判据的扫描范围：doctools 自己 + 命令行额外指定的目录
+    # （项目侧的一次性 surgical 脚本通常不在本仓，如
+    #   python3 check_docx_collar.py ~/Work/projects/qual-supply/scripts）
+    # 第二判据默认**只查显式传入的目录**。理由：本仓 28 个既有 surgical 脚本里 27 个
+    # 还没接线（都是 2026-07-31 立此判据之前写的），默认全仓开检会让守卫第一天就是红的，
+    # 而「长期红着的守卫」等于没有守卫。故：新写的脚本靠 code review + 本判据显式扫，
+    # 存量另行分批补（--all 可一次看全量欠账）。
+    extra = [Path(a).expanduser() for a in sys.argv[1:] if not a.startswith("-")]
+    scan_roots = ([SCAN, ROOT / "lib"] if "--all" in sys.argv else []) + extra
+    z_need, z_bad = zip_offenders(scan_roots)
     if "--list" in sys.argv:
         for p in need:
             mark = "✗" if p in bad else "✓"
-            print(f"{mark} {p.relative_to(ROOT)}")
+            print(f"{mark} [python-docx] {p.relative_to(ROOT)}")
+        for p in z_need:
+            mark = "✗" if p in z_bad else "✓"
+            print(f"{mark} [zipfile]     {p}")
         return 0
+    if z_bad:
+        print(f"⛔ {len(z_bad)}/{len(z_need)} 个脚本自己开 ZipFile 写 docx，"
+              f"但没挂部件完整性断言：", file=sys.stderr)
+        for p in z_bad:
+            print(f"    {p}", file=sys.stderr)
+        print(f"\n为什么要挂：docx_safe_save 只 monkey-patch python-docx 的存盘路径，"
+              f"zipfile 手工重打包它管不到。实测两次事故 162→74、137→35 部件，"
+              f"文件照样能打开、Word 不报错。\n"
+              f"修法：存盘后加\n"
+              f"    sys.path.append('{ROOT / 'lib'}')\n"
+              f"    from docx_parts import assert_parts_intact\n"
+              f"    assert_parts_intact(src, dst, allow_added={{'word/comments.xml'}})\n"
+              f"（本意就要减部件的场景改用 diff_parts + 自定白名单断言）",
+              file=sys.stderr)
+        return 1
     if bad:
         print(f"⛔ {len(bad)}/{len(need)} 个脚本用 python-docx 存盘但没挂 surgical 收口"
               f"（炸开面 ~60 个部件 vs 1 个）：", file=sys.stderr)
@@ -76,6 +140,7 @@ def main() -> int:
               f"不介入，不会碍事。", file=sys.stderr)
         return 1
     print(f"✓ {len(need)} 个用 python-docx 存盘的脚本全部挂了 surgical 收口")
+    print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
     return 0
 
 
