@@ -415,7 +415,7 @@ def do_view(files):
 def do_scan(target):
     d = target[0] if isinstance(target, list) else target
     print(f"{GREEN}● 扫描 {d}{RST}")
-    return _run(_py("scan_sensitive_words.py", d), "敏感词扫描(竞品名/过硬措辞)")
+    return _run(_py("sub/scan_sensitive_words.py", d), "敏感词扫描(竞品名/过硬措辞)")
 
 
 def do_merge(files):
@@ -592,7 +592,7 @@ def do_renum(files, target: str = "all") -> int:
 # ───────────────────────────────────────────── bidfinal(标书终稿门检,只诊断不改)
 
 def do_bidfinal(files, target: str = "pei") -> int:
-    """标书终稿门检:bid_final.py 干跑三道门(残留8类/身份/打印就绪),只诊断不改文件。
+    """标书终稿门检:bid_gate.py run 干跑三道门(残留8类/身份/打印就绪),只诊断不改文件。
     分工钉死:门检(确定性)→ GUI/cockpit;红门修复(人判改写)→ 终端 CC。
     mode: pei=陪标·通用稿(含身份零泄漏门) / main=主标·实名(只查过程稿标记)。
     项目若有 scripts/bidfinal_rules.yaml(按 docx 路径向上找)自动带上。
@@ -611,7 +611,7 @@ def do_bidfinal(files, target: str = "pei") -> int:
             if rules.exists():
                 args += ["--rules", str(rules)]
                 break
-        r = _run(_py("bid_final.py", *args), f"终稿门检({target})")
+        r = _run(_py("bid_gate.py", "run", *args), f"终稿门检({target})")
         if r:
             warn(f"{p.name}: 有红门,是半成品,禁交付(详见上方门控汇总)")
             rc |= 1

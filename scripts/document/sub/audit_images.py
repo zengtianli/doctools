@@ -21,7 +21,6 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -30,6 +29,13 @@ from pathlib import Path
 
 from docx import Document
 from lxml import etree
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 # rels 文件可能在 word/_rels/ 下任意 *.xml.rels (document / header* / footer* /
 # footnotes / endnotes / comments / numbering ...). 主 document 引用走
@@ -463,7 +469,7 @@ def audit(docx_path: Path) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit docx images (audit-only).")
     ap.add_argument("docx_path", type=Path)
-    ap.add_argument("--report", type=Path, default=None)
+    _cc.add_report_flag(ap)
     args = ap.parse_args()
 
     if not args.docx_path.exists():
@@ -472,7 +478,7 @@ def main() -> int:
 
     report_path = args.report or Path(f"/tmp/audit-images-{args.docx_path.stem}.json")
     result = audit(args.docx_path)
-    report_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    _cc.write_report(result, report_path, mkdir=False)
     s = result["summary"]
     print(
         f"audit done -> {report_path}\n"

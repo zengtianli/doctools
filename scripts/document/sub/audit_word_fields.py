@@ -14,7 +14,6 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import zipfile
@@ -22,6 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from lxml import etree
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{W_NS}}}"
@@ -229,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("docx", type=Path)
     ap.add_argument("--include-headers", action="store_true",
                     help="Also scan word/header*.xml and word/footer*.xml")
-    ap.add_argument("--report", type=Path, default=None, help="Write full JSON report to this path")
+    _cc.add_report_flag(ap, help="Write full JSON report to this path")
     args = ap.parse_args(argv)
 
     report = audit(args.docx, include_headers=args.include_headers)
@@ -245,13 +251,10 @@ def main(argv: list[str] | None = None) -> int:
         "nested_depth_max": report["nested_depth_max"],
         "type_distribution": report["type_distribution"],
     }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    _cc.print_json(summary)
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        # 全报告(含 fields 详情)
-        with args.report.open("w", encoding="utf-8") as fp:
-            json.dump(report, fp, ensure_ascii=False, indent=2)
+    # 全报告(含 fields 详情)
+    _cc.write_report(report, args.report)
     return 0
 
 

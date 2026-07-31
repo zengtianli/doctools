@@ -22,15 +22,20 @@ docx 的 `word/styles.xml` 里,样式定义自带 <w:pPr><w:outlineLvl/> 时,
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import sys
 import zipfile
-from datetime import date
 from pathlib import Path
 
 from lxml import etree
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = f"{{{NS['w']}}}"
@@ -129,30 +134,6 @@ def patch_styles_xml(docx_path: Path, target_names: set[str], dry_run: bool):
     return removed, skipped_protected, new_bytes
 
 
-def next_backup_path(docx_path: Path) -> Path:
-    today = date.today().isoformat()
-    n = 1
-    while True:
-        cand = docx_path.with_name(
-            f"{docx_path.stem}.bak-{n}-{today}.docx"
-        )
-        if not cand.exists():
-            return cand
-        n += 1
-
-
-def check_open(docx_path: Path):
-    """lsof 自检:打开中拒绝写"""
-    import subprocess
-    r = subprocess.run(
-        ["lsof", str(docx_path)], capture_output=True, text=True
-    )
-    if r.stdout.strip():
-        print(f"[abort] {docx_path} 被打开(Word/WPS),请关闭后重试:\n{r.stdout}",
-              file=sys.stderr)
-        sys.exit(2)
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("docx", help="目标 docx")
@@ -160,9 +141,12 @@ def main():
         "--styles",
         help=f"逗号分隔的样式名集合,默认: {','.join(sorted(DEFAULT_CAPTION_STYLES))}",
     )
-    ap.add_argument("--dry-run", action="store_true", help="只统计不写")
-    ap.add_argument("--no-backup", action="store_true", help="跳过 .bak 备份")
-    ap.add_argument("--report", help="写 JSON 报告路径")
+    _cc.add_write_flags(
+        ap,
+        dry_run_help="只统计不写",
+        no_backup_help="跳过 .bak 备份",
+        report_help="写 JSON 报告路径",
+    )
     args = ap.parse_args()
 
     docx_path = Path(args.docx).resolve()
@@ -171,7 +155,11 @@ def main():
         sys.exit(2)
 
     if not args.dry_run:
-        check_open(docx_path)
+        occ = _cc.lsof_check(docx_path)
+        if occ:
+            print(f"[abort] {docx_path} 被打开(Word/WPS),请关闭后重试:\n{occ}",
+                  file=sys.stderr)
+            sys.exit(2)
 
     if args.styles:
         target = {s.strip() for s in args.styles.split(",") if s.strip()}
@@ -192,8 +180,7 @@ def main():
     # 备份
     backup_path = None
     if not args.dry_run and not args.no_backup:
-        backup_path = next_backup_path(docx_path)
-        shutil.copy2(docx_path, backup_path)
+        backup_path = _cc.make_backup(docx_path)
         print(f"[backup] {backup_path.name}")
 
     removed, skipped_protected, _ = patch_styles_xml(
@@ -218,10 +205,7 @@ def main():
             "removed": removed,
             "skipped_protected": skipped_protected,
         }
-        Path(args.report).write_text(
-            json.dumps(rep, ensure_ascii=False, indent=2)
-        )
-        print(f"[report] {args.report}")
+        _cc.write_report(rep, args.report, mkdir=False, announce="[report] {path}")
 
 
 # ---------------- pipeline adapter ----------------

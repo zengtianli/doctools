@@ -273,7 +273,6 @@ ACTIONS: list[Action] = [
         "得让 doc-post 的字体统一盖到。放在 number_captions 之后是因为题注号里的"
         "方括号数字不该被误当成文献引用 —— 编完号再扫，看到的是最终文本。",
         opts={},
-        home="root",
     ),
     Action(
         "docx_apply_image_caption", "doc", "doc-pre",

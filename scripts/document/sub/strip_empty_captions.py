@@ -55,12 +55,12 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 import argparse
-import datetime
-import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -77,30 +77,6 @@ W = f"{{{NS}}}"
 CAPTION_STYLE_KEYWORDS = (
     "图名称", "图名", "表格标题", "表标题", "表名", "caption",
 )
-
-
-def lsof_check(p: Path) -> str | None:
-    try:
-        r = subprocess.run(
-            ["lsof", str(p)], capture_output=True, text=True, timeout=5
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def find_next_backup(docx_path: Path) -> Path:
-    today = datetime.date.today().isoformat()
-    n = 1
-    while True:
-        cand = docx_path.with_name(
-            f"{docx_path.stem}.bak-{n}-{today}{docx_path.suffix}"
-        )
-        if not cand.exists():
-            return cand
-        n += 1
 
 
 def is_caption_style(style_name: str | None) -> bool:
@@ -198,9 +174,7 @@ def main() -> int:
                     help="写到新路径(不动原文件,不留 bak)")
     mx.add_argument("--inplace", action="store_true", default=True,
                     help="原地改写(默认),自动留 .bak-N-YYYY-MM-DD")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-backup", action="store_true")
-    parser.add_argument("--report", type=Path, default=None)
+    _cc.add_write_flags(parser)
     args = parser.parse_args()
 
     if not args.docx.exists():
@@ -209,7 +183,7 @@ def main() -> int:
 
     inplace = args.output is None
     if not args.dry_run and inplace:
-        occ = lsof_check(args.docx)
+        occ = _cc.lsof_check(args.docx)
         if occ:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?), 立即停止:\n{occ}", file=sys.stderr)
             return 3
@@ -232,13 +206,7 @@ def main() -> int:
 
     if not hits:
         print("[INFO] 无空 caption 段, 不写")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     if args.dry_run:
@@ -248,18 +216,11 @@ def main() -> int:
                   f"prev='{h['prev_text']}'  next='{h['next_text']}'")
         if len(hits) > 50:
             print(f"  ... 共 {len(hits)} 段 (仅显示前 50)")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     if inplace and not args.no_backup:
-        bak = find_next_backup(args.docx)
-        shutil.copy2(args.docx, bak)
+        bak = _cc.make_backup(args.docx)
         report["backup"] = str(bak)
         print(f"[INFO] 备份 -> {bak.name}")
 
@@ -272,13 +233,7 @@ def main() -> int:
     report["wrote"] = True
     print(f"[OK] 删除 {deleted} 个空 caption 段, 写回 {out_path.name}")
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"[INFO] report -> {args.report}")
+    _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
 
     return 0
 

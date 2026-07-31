@@ -52,16 +52,19 @@ CLI
 - commit / push
 """
 import argparse
-import datetime
-import json
-import shutil
-import subprocess
 import sys
 import zipfile
 from collections import Counter
 from pathlib import Path
 
 from lxml import etree
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = f"{{{NS['w']}}}"
@@ -77,27 +80,6 @@ PROTECTION_ELEMENTS = [
 ]
 
 SETTINGS_PATH = "word/settings.xml"
-
-
-def lsof_check(p: Path) -> None:
-    try:
-        r = subprocess.run(["lsof", str(p)], capture_output=True, text=True, timeout=5)
-        if r.stdout.strip():
-            print(f"[ERR] 文件被占用 (Word/WPS 没关?):\n{r.stdout}", file=sys.stderr)
-            sys.exit(2)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-
-def backup(p: Path) -> Path:
-    today = datetime.date.today().isoformat()
-    n = 1
-    while True:
-        b = p.with_name(f"{p.stem}.bak-{n}-{today}{p.suffix}")
-        if not b.exists():
-            shutil.copy2(p, b)
-            return b
-        n += 1
 
 
 def _strip(root, dry_run: bool):
@@ -128,9 +110,12 @@ def main():
     ap = argparse.ArgumentParser(description="Strip document protection / edit limits / "
                                               "viewProtection from docx settings.xml.")
     ap.add_argument("docx", help="Path to .docx")
-    ap.add_argument("--dry-run", action="store_true", help="Report only, do not modify file")
-    ap.add_argument("--no-backup", action="store_true", help="Skip writing .bak-N-<date>.docx")
-    ap.add_argument("--report", help="Write JSON report to this path")
+    _cc.add_write_flags(
+        ap,
+        dry_run_help="Report only, do not modify file",
+        no_backup_help="Skip writing .bak-N-<date>.docx",
+        report_help="Write JSON report to this path",
+    )
     args = ap.parse_args()
 
     p = Path(args.docx).resolve()
@@ -139,7 +124,10 @@ def main():
         sys.exit(1)
 
     if not args.dry_run:
-        lsof_check(p)
+        occ = _cc.lsof_check(p)
+        if occ:
+            print(f"[ERR] 文件被占用 (Word/WPS 没关?):\n{occ}", file=sys.stderr)
+            sys.exit(2)
 
     # Load settings.xml
     with zipfile.ZipFile(p, "r") as z:
@@ -152,10 +140,8 @@ def main():
                 "removed": {},
                 "total": 0,
             }
-            print(json.dumps(report, ensure_ascii=False, indent=2))
-            if args.report:
-                Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                                             encoding="utf-8")
+            _cc.print_json(report)
+            _cc.write_report(report, args.report, mkdir=False)
             return
         settings_bytes = z.read(SETTINGS_PATH)
 
@@ -175,11 +161,9 @@ def main():
         "after": {k: v for k, v in after.items() if v > 0},
     }
 
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    _cc.print_json(report)
 
-    if args.report:
-        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                                     encoding="utf-8")
+    _cc.write_report(report, args.report, mkdir=False)
 
     if args.dry_run:
         print("[dry-run] no file written")
@@ -190,7 +174,7 @@ def main():
         return
 
     if not args.no_backup:
-        bp = backup(p)
+        bp = _cc.make_backup(p)
         print(f"[backup] {bp.name}")
 
     new_settings_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8",

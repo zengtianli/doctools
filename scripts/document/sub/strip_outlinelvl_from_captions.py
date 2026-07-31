@@ -44,12 +44,8 @@ CLI
 from __future__ import annotations
 
 import argparse
-import json
 import re
-import shutil
-import subprocess
 import sys
-from datetime import date
 from pathlib import Path
 
 # ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
@@ -58,37 +54,15 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+
 from docx import Document
 from docx.oxml.ns import qn
 
 CAPTION_PATTERN = re.compile(r'^(表|图)\s*\d+\.\d+-\d+')
-
-
-def find_next_backup(docx_path: Path) -> Path:
-    today = date.today().isoformat()
-    stem = docx_path.stem
-    parent = docx_path.parent
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}.docx"
-        if not cand.exists():
-            return cand
-        n += 1
-
-
-def lsof_check(docx_path: Path) -> str | None:
-    """返回非空字符串 = 被占用, 返回 None = 可写"""
-    try:
-        out = subprocess.run(
-            ["lsof", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        # lsof 退出码 1 = 没人开;退出码 0 = 有人开
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
 
 
 def scan_and_strip(doc: Document, apply: bool) -> dict:
@@ -136,9 +110,7 @@ def scan_and_strip(doc: Document, apply: bool) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("docx", type=Path)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-backup", action="store_true")
-    parser.add_argument("--report", type=Path, default=None)
+    _cc.add_write_flags(parser)
     args = parser.parse_args()
 
     if not args.docx.exists():
@@ -146,7 +118,7 @@ def main() -> int:
         return 2
 
     if not args.dry_run:
-        occ = lsof_check(args.docx)
+        occ = _cc.lsof_check(args.docx)
         if occ:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?), 立即停止:\n{occ}", file=sys.stderr)
             return 3
@@ -177,18 +149,14 @@ def main() -> int:
         print("[INFO] 无需移除, 不写文件")
     else:
         if not args.no_backup:
-            bak = find_next_backup(args.docx)
-            shutil.copy2(args.docx, bak)
+            bak = _cc.make_backup(args.docx)
             report["backup"] = str(bak)
             print(f"[INFO] 备份 -> {bak.name}")
         doc.save(str(args.docx))
         report["wrote"] = True
         print(f"[OK] 已移除 {result['outlinelvl_removed']} 个 outlineLvl, 写回 {args.docx.name}")
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[INFO] report -> {args.report}")
+    _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
 
     return 0
 

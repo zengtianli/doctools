@@ -35,11 +35,17 @@ CLI
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 try:
     from docx import Document
@@ -151,8 +157,7 @@ def apply(doc, args=None) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Audit bookmarks in a docx (read-only).")
     ap.add_argument("docx", type=Path)
-    ap.add_argument("--report", type=Path, default=None,
-                    help="Write full JSON report to this path")
+    _cc.add_report_flag(ap, help="Write full JSON report to this path")
     args = ap.parse_args(argv)
 
     if not args.docx.exists():
@@ -170,12 +175,9 @@ def main(argv: list[str] | None = None) -> int:
         "orphan_starts_count": len(report["orphan_starts"]),
         "orphan_ends_count": len(report["orphan_ends"]),
     }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    _cc.print_json(summary)
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        with args.report.open("w", encoding="utf-8") as fp:
-            json.dump(report, fp, ensure_ascii=False, indent=2)
+    _cc.write_report(report, args.report)
     return 0
 
 

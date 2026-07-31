@@ -48,12 +48,12 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 import argparse
-import datetime
-import json
-import shutil
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -68,27 +68,6 @@ NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{NS}}}"
 
 DEFAULT_PREFIXES = ["_Toc", "_Ref", "_Hlk"]
-
-
-def lsof_check(p: Path) -> None:
-    try:
-        r = subprocess.run(["lsof", str(p)], capture_output=True, text=True, timeout=5)
-        if r.stdout.strip():
-            print(f"[ERR] 文件被占用 (Word/WPS 没关?):\n{r.stdout}", file=sys.stderr)
-            sys.exit(2)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-
-def backup_path(p: Path) -> Path:
-    today = datetime.date.today().isoformat()
-    n = 1
-    while True:
-        b = p.with_name(f"{p.stem}.bak-{n}-{today}{p.suffix}")
-        if not b.exists():
-            shutil.copy2(p, b)
-            return b
-        n += 1
 
 
 def parse_prefixes(s: str) -> list[str] | None:
@@ -197,9 +176,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="Comma-separated bookmark name prefixes to strip (e.g. _Toc,_Ref,_Hlk). "
                          "'all' = strip every bookmark. _GoBack is always stripped. "
                          f"Default: {','.join(DEFAULT_PREFIXES)}")
-    ap.add_argument("--dry-run", action="store_true", help="Report only, do not modify file")
-    ap.add_argument("--no-backup", action="store_true", help="Skip writing .bak-N-<date>.docx")
-    ap.add_argument("--report", type=Path, default=None, help="Write JSON report to this path")
+    _cc.add_write_flags(
+        ap,
+        dry_run_help="Report only, do not modify file",
+        no_backup_help="Skip writing .bak-N-<date>.docx",
+        report_help="Write JSON report to this path",
+    )
     args = ap.parse_args(argv)
 
     if not args.docx.exists():
@@ -210,7 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     p = args.docx.resolve()
 
     if not args.dry_run:
-        lsof_check(p)
+        occ = _cc.lsof_check(p)
+        if occ:
+            print(f"[ERR] 文件被占用 (Word/WPS 没关?):\n{occ}", file=sys.stderr)
+            sys.exit(2)
 
     doc = Document(str(p))
     report = strip(doc, prefixes)
@@ -218,19 +203,16 @@ def main(argv: list[str] | None = None) -> int:
     report["dry_run"] = args.dry_run
     report["prefixes"] = "all" if prefixes is None else prefixes
 
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    _cc.print_json(report)
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        with args.report.open("w", encoding="utf-8") as fp:
-            json.dump(report, fp, ensure_ascii=False, indent=2)
+    _cc.write_report(report, args.report)
 
     if args.dry_run:
         print("[dry-run] no file written")
         return 0
 
     if not args.no_backup:
-        bp = backup_path(p)
+        bp = _cc.make_backup(p)
         print(f"[backup] {bp.name}")
 
     doc.save(str(p))

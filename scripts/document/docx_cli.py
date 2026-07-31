@@ -175,13 +175,13 @@ def cmd_text_fmt(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script_file("docx_text_formatter.py", rest)
 
 def cmd_fix_ref(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("fix_superscript_refs", rest)
+    return _exec_script("sub/fix_superscript_refs", rest)
 
 def cmd_md_to_docx(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("md_docx_template", rest)
 
 def cmd_scan_sensitive(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("scan_sensitive_words", rest)
+    return _exec_script("sub/scan_sensitive_words", rest)
 
 def cmd_md(args: argparse.Namespace, rest: list[str]) -> int:
     """md 子组：直接转发 md_tools.py 的 subcommand (format/merge/split/...)"""

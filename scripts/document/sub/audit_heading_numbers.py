@@ -14,11 +14,17 @@ CLI: python3 scripts/audit_heading_numbers.py <docx> [--report <json>]
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import zipfile
 from pathlib import Path
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -262,18 +268,16 @@ def audit(docx_path: Path) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("docx", type=Path)
-    ap.add_argument("--report", type=Path, default=None)
+    _cc.add_report_flag(ap)
     args = ap.parse_args()
     if not args.docx.exists():
         print(f"ERR: {args.docx} not found", file=sys.stderr)
         sys.exit(2)
     result = audit(args.docx)
-    j = json.dumps(result, ensure_ascii=False, indent=2)
-    if args.report:
-        args.report.write_text(j, encoding="utf-8")
+    _cc.write_report(result, args.report, mkdir=False)
     # summary to stdout
     summary = {k: v for k, v in result.items() if k != "h_details"}
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    _cc.print_json(summary)
 
 
 # ---------------- pipeline adapter ----------------

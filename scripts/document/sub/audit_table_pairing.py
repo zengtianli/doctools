@@ -19,12 +19,18 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
 from docx import Document
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W_P = f"{{{W_NS}}}p"
@@ -349,7 +355,7 @@ def print_summary(audit_data: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("docx", help="输入 docx 路径")
-    ap.add_argument("--report", help="完整 audit JSON 输出路径")
+    _cc.add_report_flag(ap, help="完整 audit JSON 输出路径")
     ap.add_argument("--quiet", action="store_true", help="不打印 summary stdout")
     args = ap.parse_args(argv)
 
@@ -361,12 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     audit_data = audit(src)
     if not args.quiet:
         print_summary(audit_data)
-    if args.report:
-        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.report).write_text(
-            json.dumps(audit_data, indent=2, ensure_ascii=False)
-        )
-        print(f"\n[report] {args.report}")
+    _cc.write_report(audit_data, args.report, announce="\n[report] {path}")
     return 0
 
 

@@ -24,6 +24,27 @@ version: 1
 
 actions:
 
+  # ══ 〇 · path-pre —— 在任何动作之前，按 golden 参照件对齐格式（zip 级）
+
+  # restyle —— 从同源 golden 整段克隆段落/字符格式（含媒体段兜底补 pStyle）
+  #   为什么在这个位置：整条链的第一步。它拿目标件的段落文本去 golden 里找对应段，
+  #     找到才移植格式；而后面 convert_chapter_format / renumber_headings / number_c
+  #     aptions / fix_superscript_refs 每一个都会改文本。排在它们后面 = 匹配率塌到接
+  #     近零，而且**不报错**，只是安静地说「无需修改」。不给 ref 时 noop 并如实报 sk
+  #     ipped。
+  restyle:
+    # 同源 golden docx 路径（格式源）；null = 本动作跳过
+    restyle_ref: null
+
+  # sync_toc —— 从同源 golden 移植目录块 + 对账目录样式（TOC 1/2/3 等）
+  #   为什么在这个位置：同 restyle，也是照 golden 对账，必须在改文本之前。排在 res
+  #     tyle 之后：先把段落格式对齐，目录样式对账才是在同一套样式表上做的。返回值里
+  #     带 anchors_resolved/anchors_total —— 目录锚点解析不到时 Word 里看着完全正常、
+  #     只是点不动，这个数不进报告就没人会发现。
+  sync_toc:
+    # 同源 golden docx 路径（目录源）；null = 本动作跳过
+    sync_toc_ref: null
+
   # ══ 一 · doc-pre —— parse 一次，下面这些按顺序施加在同一棵内存树上，然后存盘
 
   # strip_revisions —— 接受/清除正文里的审阅修订标记（w:ins/w:del/w:moveFrom/w:moveTo）
@@ -98,7 +119,6 @@ actions:
   #   为什么在这个位置：排在编号类动作之后、字体统一之前：它同样是**拆 run + 新增 
   #     run**，得让 doc-post 的字体统一盖到。放在 number_captions 之后是因为题注号里
   #     的方括号数字不该被误当成文献引用 —— 编完号再扫，看到的是最终文本。
-  #   脚本位置：scripts/document/fix_superscript_refs.py（不在 sub/ 下）
   fix_superscript_refs: true            # 无选项，只有跑/不跑
 
   # docx_apply_image_caption —— 给图片段与它下一行的图名段套图名样式，并在图名后补空行
@@ -206,6 +226,22 @@ actions:
     # 要从 styles.xml 摘 outlineLvl 的样式名集合，逗号串；null = 脚本内置的
     # 默认题注样式集
     strip_styles: null
+
+  # center_images —— 含图片的段显式居中 + 缩进清零
+  #   为什么在这个位置：排在 path 段末尾。它写的是**段级直接格式**（jc/ind），直接
+  #     格式在 Word 里压过样式，所以任何改样式的动作（docx_apply_image_caption 套图
+  #     名样式、restyle 克隆格式）都得先跑完，否则它写的居中会被后面的样式变更盖住语
+  #     义 —— 表现是「有的图居中有的没有」，且不报错。
+  center_images: true                   # 无选项，只有跑/不跑
+
+  # line_spacing —— 对照 golden 给正文段补固定行距（只补没有显式行距的段）
+  #   为什么在这个位置：排在 center_images 之后、doc-post 之前。它按段落文本去 gol
+  #     den 取行距值，所以理论上也怕文本被改 —— 但它只认**正文段**且逐段独立，题注/
+  #     标题编号的改动波及不到，实测放这里比放 path-pre 好：放前面的话，此后新增的段
+  #     （题注号补出来的那些）永远拿不到行距。不给 ref 时 noop 并如实报 skipped。
+  line_spacing:
+    # 同源 golden docx 路径（行距值取其众数）；null = 本动作跳过
+    line_spacing_ref: null
 
   # ══ 三 · doc-post —— 重开一次 doc，跑「必须看见冻结结果」的动作，再存一次
 

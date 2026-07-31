@@ -33,7 +33,7 @@ lib/                  # 公共模块
 
 | 脚本 | 干什么 | 怎么跑 |
 |---|---|---|
-| `scripts/document/bid_deref.py` | 标书正文交叉引用去耦合（合稿人会删/调章节，写死编号=断链） | `python3 scripts/document/bid_deref.py <docx>` |
+| `scripts/document/bid_gate.py` | 标书终稿门检族（2026-07-31 原 bid_final/bid_residue_scan/bid_finalize_sweep/bid_identity_gate/bid_print_ready/bid_deref 6 件合并；检测逻辑 SSOT 仍在 `bid_residue_lib.py`）。子命令：`run`=四门 driver（原 bid_final）· `scan`/`sweep`/`identity`/`print`=单门 · `deref`=交叉引用去耦合（原 bid_deref） | `python3 scripts/document/bid_gate.py run <docx> --mode main\|pei [--rules Y] [--apply]`；单门 `bid_gate.py scan\|sweep\|identity\|print <docx>`；去耦合 `bid_gate.py deref <docx> --check` |
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run scripts/document/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
 | `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（w:ins/w:del+批注；锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `python3 scripts/document/docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |
 
@@ -67,6 +67,16 @@ python3 tools/cli_forward_probe.py                # 每条子命令真正转发�
 自带业务逻辑的模块（`outline` / `styles` / `health` / `slim` / `fix_styleset` /
 `docx_para` / `combine` / `md_merge_track` / `audit_styleset` / `chapters_sync` /
 `health_split` / `pipeline`）**不在表里**，各自 `register()`。
+
+**`docx_tools.py` 已拆薄（2026-07-31 P2）**：extract / check / track-changes 三段实现在
+`sub/docx_{extract,check,track}.py`（各自带 main() 可独立敲，argparse 声明在各自
+`add_*_parser()` 只写一遍），`docx_tools.py` 收薄为组合入口（batch 并行层 + 组合 argparse
++ library re-export——外部有人 `from docx_tools import extract_paragraphs` 当库用，名字面
+只增不减）。这三段**也不进 `_groups` 表**：docx_cli 侧 extract/read/check/snapshot/compare/
+diff/track 走 CMD_TABLE fast-path（带 aliases 与前置 token 注入），表模型装不下；docx_cli
+转发仍指 docx_tools，surface/probe 指纹按构造不变。改 CLI 契约（子命令名/flag/默认值）前
+先看外部调用面：cc-home `commands/docx.md`、zdys SKILL.md、`~/Work/CLAUDE.md` L161（track
+review 的 include_ins+strict 默认全开是机器强制条款，禁改）。
 
 ## 全仓脚本关系图
 
@@ -176,6 +186,6 @@ gui-run  --op clean --opt rule.units=0 --opt scope.comments=0 --files a.docx
 | 脚本 | 功能 | 模型 |
 |------|------|------|
 | `document/md_tools.py frontmatter` | 批量生成 MD frontmatter | haiku |
-| `document/scan_sensitive_words.py` | 标书敏感词检测 | haiku |
+| `document/sub/scan_sensitive_words.py` | 标书敏感词检测 | haiku |
 
 `llm_client.py` 接口：`chat(system, message, model="haiku")` -> `claude -p --model <model>`

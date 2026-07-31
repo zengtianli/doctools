@@ -107,6 +107,8 @@ flowchart TB
 |---|---|
 | `docx_apply_image_caption` · `docx_text_formatter` · `docx_tools` · `fix_superscript_refs` · `md_docx_template` · `pdf_to_docx` | python-docx + 收口 |
 | `bid_finalize_sweep` · `bid_identity_gate` · `bid_print_ready` | 裸 lxml + zipfile |
+
+> **2026-07-31 注记**：bid_* 家族 6 个入口（`bid_final` / `bid_residue_scan` / `bid_finalize_sweep` / `bid_identity_gate` / `bid_print_ready` / `bid_deref`）已合并为 `bid_gate.py` 子命令族（`run`/`scan`/`sweep`/`identity`/`print`/`deref`），`bid_residue_lib.py` 仍是检测逻辑 SSOT 未动。本节表格保留合并前的历史盘点原貌。
 | `docx_apply_template` · `docx_format_clone` · `docx_renumber_figures` · `docx_write_gate` | python-docx 只读 |
 | `md_tools` | pandoc |
 | `doc_dispatch` | soffice |

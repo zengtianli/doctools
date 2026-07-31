@@ -46,45 +46,23 @@ CLI
 from __future__ import annotations
 
 import argparse
-import datetime
-import json
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
 from lxml import etree
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+
 NS_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 REL = f"{{{NS_REL}}}"
-
-
-# ---------------- 共用工具 ----------------
-
-def find_next_backup(docx_path: Path) -> Path:
-    today = datetime.date.today().isoformat()
-    n = 1
-    while True:
-        cand = docx_path.with_name(
-            f"{docx_path.stem}.bak-{n}-{today}{docx_path.suffix}"
-        )
-        if not cand.exists():
-            return cand
-        n += 1
-
-
-def lsof_check(p: Path) -> str | None:
-    try:
-        r = subprocess.run(
-            ["lsof", str(p)], capture_output=True, text=True, timeout=5
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
 
 
 # ---------------- 核心扫描 ----------------
@@ -298,10 +276,7 @@ def main() -> int:
                     help="写到新路径(不动原文件,不留 bak)")
     mx.add_argument("--inplace", action="store_true", default=True,
                     help="原地改写(默认),自动留 .bak-N-YYYY-MM-DD")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-backup", action="store_true",
-                        help="inplace 模式下不留 .bak")
-    parser.add_argument("--report", type=Path, default=None)
+    _cc.add_write_flags(parser, no_backup_help="inplace 模式下不留 .bak")
     parser.add_argument(
         "--deep", action="store_true",
         help="深扫: 只保留 document.xml/header*/footer*/footnotes/endnotes/"
@@ -316,7 +291,7 @@ def main() -> int:
 
     inplace = args.output is None
     if not args.dry_run and inplace:
-        occ = lsof_check(args.docx)
+        occ = _cc.lsof_check(args.docx)
         if occ:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?), 立即停止:\n{occ}", file=sys.stderr)
             return 3
@@ -343,13 +318,7 @@ def main() -> int:
 
     if scan["orphan_count"] == 0:
         print("[INFO] 无 orphan media, 不写")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     # dry-run: 列名
@@ -360,20 +329,13 @@ def main() -> int:
         if scan["orphan_count"] > 50:
             print(f"  ... 共 {scan['orphan_count']} 个 (仅显示前 50)")
         print(f"[DRY-RUN] 预计释放 (compressed) {scan['orphan_compressed_bytes']} bytes")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     # 真写
     out_path = args.output if args.output else args.docx
     if inplace and not args.no_backup:
-        bak = find_next_backup(args.docx)
-        shutil.copy2(args.docx, bak)
+        bak = _cc.make_backup(args.docx)
         report["backup"] = str(bak)
         print(f"[INFO] 备份 -> {bak.name}")
 
@@ -387,13 +349,7 @@ def main() -> int:
           f"体积 {report['size_before']} -> {report['size_after']} "
           f"(减 {delta} bytes / {delta/1024:.1f} KB)")
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"[INFO] report -> {args.report}")
+    _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
 
     return 0
 

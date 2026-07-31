@@ -52,12 +52,9 @@ Pipeline ready
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
-import subprocess
 import sys
 import zipfile
-from datetime import date
 from pathlib import Path
 
 # ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
@@ -66,39 +63,16 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+
 from docx import Document
 from lxml import etree
 
 NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{NS}}}"
-
-
-# ---------------- 共用工具 ----------------
-
-def find_next_backup(docx_path: Path) -> Path:
-    today = date.today().isoformat()
-    stem = docx_path.stem
-    parent = docx_path.parent
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}.docx"
-        if not cand.exists():
-            return cand
-        n += 1
-
-
-def lsof_check(docx_path: Path) -> str | None:
-    """返回非空字符串 = 被占用, 返回 None = 可写"""
-    try:
-        out = subprocess.run(
-            ["lsof", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
 
 
 # ---------------- 内存改 (body 内 ins/del/comment*) ----------------
@@ -264,9 +238,7 @@ def main() -> int:
     )
     parser.add_argument("--keep-comments", action="store_true",
                         help="保留 word/comments.xml (默认清空)")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--no-backup", action="store_true")
-    parser.add_argument("--report", type=Path, default=None)
+    _cc.add_write_flags(parser)
     args = parser.parse_args()
 
     # 兼容 pipeline adapter 名字
@@ -277,7 +249,7 @@ def main() -> int:
         return 2
 
     if not args.dry_run:
-        occ = lsof_check(args.docx)
+        occ = _cc.lsof_check(args.docx)
         if occ:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?), 立即停止:\n{occ}", file=sys.stderr)
             return 3
@@ -313,13 +285,7 @@ def main() -> int:
 
     if args.dry_run:
         print("[DRY-RUN] 不写文件")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     # 是否要写? 只要 body 有改 或 settings/comments 需要清就写
@@ -336,18 +302,11 @@ def main() -> int:
 
     if not need_write_body and not need_zip:
         print("[INFO] 无需变更, 不写文件")
-        if args.report:
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(
-                json.dumps(report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print(f"[INFO] report -> {args.report}")
+        _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
         return 0
 
     if not args.no_backup:
-        bak = find_next_backup(args.docx)
-        shutil.copy2(args.docx, bak)
+        bak = _cc.make_backup(args.docx)
         report["backup"] = str(bak)
         print(f"[INFO] 备份 -> {bak.name}")
 
@@ -372,13 +331,7 @@ def main() -> int:
           f"crs={after['comment_range_start']} cre={after['comment_range_end']} "
           f"cref={after['comment_reference']} trackChanges={after['trackChanges']}")
 
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"[INFO] report -> {args.report}")
+    _cc.write_report(report, args.report, announce="[INFO] report -> {path}")
 
     return 0
 

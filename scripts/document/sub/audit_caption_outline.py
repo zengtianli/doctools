@@ -18,7 +18,6 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
@@ -26,6 +25,13 @@ from collections import Counter
 
 from docx import Document
 from lxml import etree
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NSMAP = {"w": W_NS}
@@ -176,7 +182,7 @@ def apply(doc, args=None) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="audit-only · caption 段 outlineLvl + style 污染审计")
     ap.add_argument("docx", help="docx 路径")
-    ap.add_argument("--report", help="JSON 报告输出路径(可选)")
+    _cc.add_report_flag(ap, help="JSON 报告输出路径(可选)")
     args = ap.parse_args()
 
     docx_path = Path(args.docx)
@@ -197,9 +203,7 @@ def main():
     print(f"h_count                : {report['h_count']}")
     print(f"caption_styles_avail   : {report['caption_styles_available']}")
 
-    if args.report:
-        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2))
-        print(f"[report] {args.report}")
+    _cc.write_report(report, args.report, mkdir=False, announce="[report] {path}")
 
 
 if __name__ == "__main__":

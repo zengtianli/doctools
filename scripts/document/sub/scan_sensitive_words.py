@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 # === 路径设置 ===
-SCRIPTS_ROOT = Path(__file__).resolve().parent.parent.parent
+SCRIPTS_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(SCRIPTS_ROOT / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
 
