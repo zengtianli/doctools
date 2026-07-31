@@ -1,0 +1,58 @@
+# revise-ops 示例 —— 专家意见落实的「内容」侧（引擎 = scripts/document/docx_revise.py）
+#
+# 原则：意见原文/新增正文/批注全在这个文件里，项目目录不写注入脚本。
+# 跑法：python3 ~/Dev/tools/doctools/scripts/document/docx_revise.py ops.yaml [--dry-run]
+# 相对路径相对本文件所在目录解析。
+
+author: 曾田力
+initials: ZTL
+date: '2026-07-31T00:00:00Z'
+src: 03-成品/某报告.docx
+out: 03-成品/某报告_修改稿.docx
+
+ops:
+  # ① 只挂批注（报告里其实已有该设计 → 指明位置 + 深化建议，别重复添加）
+  - id: 3-1
+    find: 表4.3-2          # 锚点=段落文本包含；检索范围内必须唯一命中，0/≥2 都报错停
+    action: comment
+    comment: '【落实专家意见 3-1】…【溯源】…'
+
+  # ② 锚段后插新段（整段 w:ins，Word 审阅里可整段接受/拒绝；**xx** = 加粗）
+  - id: 2-1
+    find: 《节水评价技术导则》
+    action: insert_after
+    after_table: false      # true = 锚段是表题时越过紧邻表格再插
+    # format_like: 汇总以上分行业预测需水量   # 可选：新段格式照这段抄(锚点是表题时必给,
+    #                                        #  否则新段会套成题注样式)
+    paras:
+      - '（13）《节约用水条例》（国务院令第776号…）；'
+      - '（14）《浙江省水资源条例》（…）；'
+    comment: '【落实专家意见 2-1】…【溯源】文号与生效日期均经官方源核证…'
+    comment_at: last        # 批注挂最后一段（默认 first）
+    assert_between: ['1.5', '3.6']   # 落位自检：插完必须在这两个正文标题之间，否则报错停
+
+  # ③ 段内替换（w:del + w:ins 修订对；old 须段内唯一，或 last: true 取最后一次）
+  - id: 2-1t
+    find: 《节水评价技术导则》
+    action: replace
+    old: '。'
+    new: '；'
+    last: true
+
+  # ④ 锚文本多章重复时：within 收窄检索起点（写节标题文本；目录段自动跳过）
+  - id: 2-4
+    find: 在区域供用水现状的基础上   # 该文本在 §4.2.2 与 §5.1 逐字重复——不加 within 会报错停
+    within: '5.1'
+    action: insert_after
+    paras: ['结合各县（市、区）现状供水基础…〔待补：…需管网普查资料支撑〕']
+    comment: '【落实专家意见 2-4】…'
+    assert_between: ['5.1', '5.2']
+
+  # ⑤ 整段换掉（第二轮填〔待补〕用；tracked: false = 直接删占位段——删自己上一轮
+  #    插的 w:ins 等价于拒绝它；换别人写的段落用默认 tracked: true 留 w:del 痕）
+  - id: fill-1
+    find: 〔待补：向水司收资
+    action: replace_para
+    tracked: false
+    paras: ['据 2025 年度各水厂运行月报…']
+    comment: '【第二轮收资落实】…'

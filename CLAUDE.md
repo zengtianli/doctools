@@ -35,6 +35,7 @@ lib/                  # 公共模块
 |---|---|---|
 | `scripts/document/bid_deref.py` | 标书正文交叉引用去耦合（合稿人会删/调章节，写死编号=断链） | `python3 scripts/document/bid_deref.py <docx>` |
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run scripts/document/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
+| `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（w:ins/w:del+批注；锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `python3 scripts/document/docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |
 
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则它对全仓不可见：`script_graph` 会把它
 判成孤儿，下次清理就把它清了。
