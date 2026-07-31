@@ -1,7 +1,383 @@
 #!/usr/bin/env python3
-# distilled from qual-supply/scripts/freeze_heading_numbers.py (2026-05-25 W1)
 # -*- coding: utf-8 -*-
+"""freeze.py — freeze_* 家族二合一（2026-07-31 家族折叠）
+
+子命令 ↔ 原脚本（函数体逐字搬移；模块级 main/apply_path 改名
+main_<sub>/apply_path_<sub>；两份手搓 lsof/backup 换 _cli_common 机制，
+报错文案与退出码逐字保留）：
+
+    fields    ← freeze_all_fields.py
+    headings  ← freeze_heading_numbers.py
+
+各子命令 CLI 与原独立脚本逐字一致：python3 sub/freeze.py <sub> <docx> [flags…]。
+退役原件在 ~/.Trash/consolidation-20260731/freeze/（含 MANIFEST.md）。
 """
+from __future__ import annotations
+
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
+
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402
+import sys  # noqa: E402
+import zipfile  # noqa: E402
+from collections import Counter  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from docx import Document  # noqa: E402
+from docx.oxml.ns import qn  # noqa: E402
+from lxml import etree  # noqa: E402
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W = f"{{{W_NS}}}"
+NS = {"w": W_NS}
+
+
+# ══════════ fields ← freeze_all_fields.py ══════════
+
+def _rewrite_document(p: Path, new_doc_xml: bytes) -> None:
+    """surgical 重打包：仅替换 word/document.xml，其余部件逐字节 verbatim。
+
+    CLI main() 与 pipeline apply_path() 共用这一个实现。部件完整性断言放在
+    tmp.replace(p) **之前**——此刻 p 仍是未被改动的源件（天然基线），断言炸则
+    tmp 不落位、源件毫发无损，且不依赖调用方有没有留 .bak。
+    """
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "word/document.xml":
+                data = new_doc_xml
+            zout.writestr(item, data)
+    assert_parts_intact(p, tmp, verbose=False)
+    tmp.replace(p)
+
+
+def find_enclosing_run(elem):
+    """Walk up to the nearest <w:r> ancestor (or None)."""
+    cur = elem
+    while cur is not None and etree.QName(cur).localname != "r":
+        cur = cur.getparent()
+    return cur
+
+
+def freeze_simple_fields(root, type_filter):
+    """fldSimple → expand inner runs in place. type_filter is None or set of allowed types."""
+    removed = []
+    kept = []
+    for fs in list(root.iter(f"{W}fldSimple")):
+        instr = (fs.get(f"{W}instr") or "").strip()
+        first = instr.split()[0] if instr else "EMPTY"
+        if type_filter is not None and first not in type_filter:
+            kept.append(first)
+            continue
+        parent = fs.getparent()
+        if parent is None:
+            continue
+        idx = parent.index(fs)
+        children = list(fs)
+        for child in children:
+            fs.remove(child)
+            parent.insert(idx, child)
+            idx += 1
+        parent.remove(fs)
+        removed.append(first)
+    return removed, kept
+
+
+def freeze_complex_fields(root, type_filter):
+    """fldChar begin/separate/end matched via stack. instrText runs deleted.
+    Result runs (separate..end) preserved.
+
+    Returns (frozen_types: list[str], skipped_types: list[str],
+             instrtext_runs_removed: int, fldchar_runs_removed: int)
+    """
+    # Build document order list of all fldChars and instrTexts (interleaved by doc order)
+    # We need order info to know which instrTexts belong to which field.
+
+    # Collect every fldChar with its enclosing run.
+    # Iterate fldChars in document order.
+    body = root.find(f".//{W}body")
+    if body is None:
+        body = root
+
+    fldchars = []  # list of (elem, run, fldCharType)
+    for fc in body.iter(f"{W}fldChar"):
+        run = find_enclosing_run(fc)
+        if run is None:
+            continue
+        ft = fc.get(f"{W}fldCharType")
+        fldchars.append((fc, run, ft))
+
+    # Build a quick index: for each instrText, find its enclosing run.
+    instr_runs = []  # (run, text)
+    for it in body.iter(f"{W}instrText"):
+        run = find_enclosing_run(it)
+        if run is None:
+            continue
+        instr_runs.append((run, it.text or ""))
+
+    # Now walk body in document order, building field stack.
+    # We need a flat traversal yielding either fldChar runs or instrText runs in doc order.
+    # Easier: do a single iter and pick up both kinds.
+    events = []  # (run, kind, payload)  kind: 'begin'|'separate'|'end'|'instr'
+    seen_runs_for_event = set()
+    for elem in body.iter():
+        tag = etree.QName(elem).localname
+        if tag == "fldChar":
+            run = find_enclosing_run(elem)
+            if run is None:
+                continue
+            ft = elem.get(f"{W}fldCharType")
+            events.append((run, ft, None))
+        elif tag == "instrText":
+            run = find_enclosing_run(elem)
+            if run is None:
+                continue
+            # If multiple instrText in same run (rare), we still want to record once per run
+            events.append((run, "instr", elem.text or ""))
+
+    # Stack-based pairing.
+    # Each stack frame: {begin_run, separate_run, end_run, instr_text (concat), instr_runs (list of runs)}
+    stack = []
+    fields = []  # closed fields, in close order
+    for run, kind, payload in events:
+        if kind == "begin":
+            stack.append({
+                "begin_run": run,
+                "separate_run": None,
+                "end_run": None,
+                "instr_text": "",
+                "instr_runs": [],
+                "post_separate": False,
+            })
+        elif kind == "instr":
+            if stack and not stack[-1]["post_separate"]:
+                stack[-1]["instr_text"] += payload
+                if run not in stack[-1]["instr_runs"]:
+                    stack[-1]["instr_runs"].append(run)
+        elif kind == "separate":
+            if stack:
+                stack[-1]["separate_run"] = run
+                stack[-1]["post_separate"] = True
+        elif kind == "end":
+            if stack:
+                ctx = stack.pop()
+                ctx["end_run"] = run
+                fields.append(ctx)
+
+    # Now decide which fields to freeze.
+    runs_to_remove = []  # list of runs (preserve order, dedup later)
+    frozen_types = []
+    skipped_types = []
+    for f in fields:
+        instr = f["instr_text"].strip()
+        first = instr.split()[0] if instr else "EMPTY"
+        if type_filter is not None and first not in type_filter:
+            skipped_types.append(first)
+            continue
+        frozen_types.append(first)
+        # Mark runs for removal: begin, all instr runs, separate, end.
+        # Result runs (between separate and end) are NOT in this list → preserved.
+        if f["begin_run"] is not None:
+            runs_to_remove.append(f["begin_run"])
+        for r in f["instr_runs"]:
+            runs_to_remove.append(r)
+        if f["separate_run"] is not None:
+            runs_to_remove.append(f["separate_run"])
+        if f["end_run"] is not None:
+            runs_to_remove.append(f["end_run"])
+
+    # Dedup by id, preserve order
+    seen = set()
+    fldchar_run_count = 0
+    instr_run_count = 0
+    final_remove = []
+    for r in runs_to_remove:
+        rid = id(r)
+        if rid in seen:
+            continue
+        seen.add(rid)
+        # Classify for stats: if run contains fldChar → fldchar run; if contains instrText → instr run
+        has_fc = r.find(f"{W}fldChar") is not None
+        has_it = r.find(f"{W}instrText") is not None
+        if has_fc:
+            fldchar_run_count += 1
+        elif has_it:
+            instr_run_count += 1
+        final_remove.append(r)
+
+    # Execute removal
+    for r in final_remove:
+        parent = r.getparent()
+        if parent is not None:
+            parent.remove(r)
+
+    return frozen_types, skipped_types, instr_run_count, fldchar_run_count
+
+
+def parse_types(s: str):
+    s = s.strip()
+    if not s or s.lower() == "all":
+        return None
+    return set(t.strip() for t in s.split(",") if t.strip())
+
+
+def main_all_fields():
+    ap = argparse.ArgumentParser(description="Freeze all Word fields to static text.")
+    ap.add_argument("docx", help="Path to .docx")
+    ap.add_argument("--types", default="all",
+                    help="Comma-separated field types to freeze (e.g. TOC,PAGEREF,SEQ,=). "
+                         "'all' = freeze every field. Default: all")
+    ap.add_argument("--dry-run", action="store_true", help="Report only, do not modify file")
+    ap.add_argument("--no-backup", action="store_true", help="Skip writing .bak-N-<date>.docx")
+    ap.add_argument("--report", help="Write JSON report to this path")
+    args = ap.parse_args()
+
+    p = Path(args.docx).resolve()
+    if not p.exists():
+        print(f"[ERR] 文件不存在: {p}", file=sys.stderr)
+        sys.exit(1)
+
+    type_filter = parse_types(args.types)
+
+    if not args.dry_run:
+        occ = _cc.lsof_check(p)
+        if occ:
+            print(f"[ERR] 文件被占用 (Word/WPS 没关?):\n{occ}", file=sys.stderr)
+            sys.exit(2)
+
+    # Load
+    with zipfile.ZipFile(p, "r") as z:
+        names = z.namelist()
+        doc_xml = z.read("word/document.xml")
+
+    parser = etree.XMLParser(remove_blank_text=False)
+    root = etree.fromstring(doc_xml, parser)
+
+    # Pre-stats
+    before_fldchar = len(root.findall(f".//{W}fldChar"))
+    before_instr = len(root.findall(f".//{W}instrText"))
+    before_fldsimple = len(root.findall(f".//{W}fldSimple"))
+
+    # Type distribution (before)
+    type_dist = Counter()
+    for it in root.findall(f".//{W}instrText"):
+        txt = (it.text or "").strip()
+        first = txt.split()[0] if txt else "EMPTY"
+        type_dist[first] += 1
+    for fs in root.findall(f".//{W}fldSimple"):
+        instr = (fs.get(f"{W}instr") or "").strip()
+        first = instr.split()[0] if instr else "EMPTY"
+        type_dist[first] += 1
+
+    # 1. fldSimple
+    simple_removed, simple_kept = freeze_simple_fields(root, type_filter)
+    # 2. complex
+    complex_frozen, complex_skipped, instr_runs_removed, fldchar_runs_removed = \
+        freeze_complex_fields(root, type_filter)
+
+    # Post-stats
+    after_fldchar = len(root.findall(f".//{W}fldChar"))
+    after_instr = len(root.findall(f".//{W}instrText"))
+    after_fldsimple = len(root.findall(f".//{W}fldSimple"))
+
+    report = {
+        "docx": str(p),
+        "dry_run": args.dry_run,
+        "type_filter": sorted(type_filter) if type_filter else "all",
+        "before": {
+            "fldChar": before_fldchar,
+            "instrText": before_instr,
+            "fldSimple": before_fldsimple,
+        },
+        "types_distribution": dict(type_dist),
+        "fldSimple_frozen": len(simple_removed),
+        "fldSimple_frozen_types": dict(Counter(simple_removed)),
+        "fldSimple_skipped_types": dict(Counter(simple_kept)),
+        "fldChar_complex_frozen": len(complex_frozen),
+        "fldChar_complex_frozen_types": dict(Counter(complex_frozen)),
+        "fldChar_complex_skipped_types": dict(Counter(complex_skipped)),
+        "instrtext_runs_removed": instr_runs_removed,
+        "fldchar_runs_removed": fldchar_runs_removed,
+        "after": {
+            "fldChar": after_fldchar,
+            "instrText": after_instr,
+            "fldSimple": after_fldsimple,
+        },
+    }
+
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+    if args.report:
+        Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+
+    if args.dry_run:
+        print("[dry-run] no file written")
+        return
+
+    if not args.no_backup:
+        bp = _cc.make_backup(p)
+        print(f"[backup] {bp.name}")
+
+    # Re-serialize and write back（含部件完整性断言，见 _rewrite_document）
+    new_doc_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    _rewrite_document(p, new_doc_xml)
+    print(f"[done] wrote {p}")
+
+
+# ---------------- pipeline adapter ----------------
+def apply_path_all_fields(docx_path, args=None) -> dict:
+    """pipeline: 走全 freeze (all field types); dry_run from args"""
+    types = getattr(args, "freeze_types", "all") if args else "all"
+    dry = bool(getattr(args, "dry_run", False)) if args else False
+    p = Path(docx_path).resolve()
+    type_filter = parse_types(types)
+    with zipfile.ZipFile(p, "r") as z:
+        doc_xml = z.read("word/document.xml")
+    parser = etree.XMLParser(remove_blank_text=False)
+    root = etree.fromstring(doc_xml, parser)
+    before = {
+        "fldChar": len(root.findall(f".//{W}fldChar")),
+        "instrText": len(root.findall(f".//{W}instrText")),
+        "fldSimple": len(root.findall(f".//{W}fldSimple")),
+    }
+    simple_removed, _ = freeze_simple_fields(root, type_filter)
+    complex_frozen, _, instr_runs_removed, fldchar_runs_removed = \
+        freeze_complex_fields(root, type_filter)
+    after = {
+        "fldChar": len(root.findall(f".//{W}fldChar")),
+        "instrText": len(root.findall(f".//{W}instrText")),
+        "fldSimple": len(root.findall(f".//{W}fldSimple")),
+    }
+    n_changed = len(simple_removed) + len(complex_frozen)
+    if not dry and n_changed > 0:
+        new_doc_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        _rewrite_document(p, new_doc_xml)
+    return {
+        "changed": n_changed,
+        "before": before,
+        "after": after,
+        "fldSimple_frozen": len(simple_removed),
+        "fldChar_complex_frozen": len(complex_frozen),
+    }
+
+
+# ══════════ headings ← freeze_heading_numbers.py ══════════
+
+_DOC_FREEZE_HEADINGS = """
 freeze_heading_numbers.py
 ==========================
 
@@ -50,33 +426,6 @@ CLI
 - commit / push
 """
 
-from __future__ import annotations
-
-import argparse
-import json
-import re
-import shutil
-import subprocess
-import sys
-import zipfile
-from datetime import date
-from pathlib import Path
-
-# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
-import sys as _sys
-from pathlib import Path as _Path
-_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
-import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
-from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
-
-from docx import Document
-from docx.oxml.ns import qn
-from lxml import etree
-
-W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-W = f"{{{W_NS}}}"
-NS = {"w": W_NS}
-
 TARGET_STYLE_NAMES = {"heading 1", "heading 2", "heading 3", "heading 4"}
 PREFIX_PATTERN = re.compile(r"^\d+(\.\d+)*\s")
 STYLE_TO_LEVEL = {
@@ -85,33 +434,6 @@ STYLE_TO_LEVEL = {
     "Heading 3": 3,
     "Heading 4": 4,
 }
-
-
-# ----------------------------- helpers ----------------------------- #
-
-def find_next_backup(docx_path: Path) -> Path:
-    today = date.today().isoformat()
-    stem = docx_path.stem
-    parent = docx_path.parent
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}.docx"
-        if not cand.exists():
-            return cand
-        n += 1
-
-
-def lsof_check(docx_path: Path) -> str | None:
-    try:
-        out = subprocess.run(
-            ["lsof", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
 
 
 # ----------------------------- numbering.xml ----------------------------- #
@@ -350,9 +672,9 @@ def parse_levels(s: str) -> set[int]:
     return out
 
 
-def main() -> int:
+def main_heading_numbers() -> int:
     p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        description=_DOC_FREEZE_HEADINGS, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("docx", type=Path)
     p.add_argument("--levels", type=parse_levels, default=parse_levels("1,2,3,4"))
@@ -369,7 +691,7 @@ def main() -> int:
         return 2
 
     if not args.dry_run:
-        occ = lsof_check(args.docx)
+        occ = _cc.lsof_check(args.docx)
         if occ:
             print(f"[ERR] 文件被占用 (Word/WPS 在开?):\n{occ}", file=sys.stderr)
             return 3
@@ -414,8 +736,7 @@ def main() -> int:
         print("[INFO] 无需写文件 (无 prefix 改动且 --no-unlink-style)")
     else:
         if not args.no_backup:
-            backup_path = find_next_backup(args.docx)
-            shutil.copy2(args.docx, backup_path)
+            backup_path = _cc.make_backup(args.docx)
             print(f"[INFO] 备份 -> {backup_path.name}")
         if freeze_result["frozen_count"] > 0:
             doc.save(str(args.docx))
@@ -473,7 +794,7 @@ def main() -> int:
 
 
 # ---------------- pipeline adapter ----------------
-def apply_path(docx_path, args=None) -> dict:
+def apply_path_heading_numbers(docx_path, args=None) -> dict:
     """pipeline: freeze heading 1-4 编号 + unlink style numPr"""
     levels = getattr(args, "freeze_levels", None) if args else None
     if levels is None:
@@ -502,6 +823,35 @@ def apply_path(docx_path, args=None) -> dict:
         "style_numPr_removed": len(style_removed),
         "skip_already_prefixed": freeze_result["skip_already_prefixed"],
     }
+
+
+# ──────────────────────────── 家族入口（子命令分发）────────────────────────────
+
+SUBCOMMANDS = {
+    "fields": main_all_fields,
+    "headings": main_heading_numbers,
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args or args[0] in ("-h", "--help"):
+        print("usage: freeze.py {" + ",".join(SUBCOMMANDS) + "} <docx> [flags…]\n"
+              "每个子命令的参数与原独立脚本逐字一致：freeze.py <sub> --help 查看。")
+        return 0 if args else 2
+    sub, rest = args[0], args[1:]
+    fn = SUBCOMMANDS.get(sub)
+    if fn is None:
+        print(f"[freeze] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
+              file=sys.stderr)
+        return 2
+    saved = sys.argv[:]
+    sys.argv = [sys.argv[0]] + rest
+    try:
+        rc = fn()
+        return int(rc) if isinstance(rc, int) else 0
+    finally:
+        sys.argv = saved
 
 
 if __name__ == "__main__":

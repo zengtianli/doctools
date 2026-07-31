@@ -124,17 +124,30 @@ class LoadedStep:
         return self.fn(docx_path, args)
 
 
-def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
+def load_step(name: str, step_dir: Path | str | None = None, *,
+              entry: str | None = None, entry_kind: str | None = None) -> LoadedStep:
     """Load a step module by name.
 
     name = 脚本名(无.py).
     step_dir = 从哪个目录加载脚本。默认 None → cwd/scripts/（qual-supply 兼容）。
     Dynamic import; 优先 apply(doc, args), 否则 apply_path(path, args).
 
+    entry（2026-07-31 家族折叠加）：非空 = 不取模块的裸 apply/apply_path，改取
+    getattr(mod, entry)（合并文件里入口叫 apply_<sub>/apply_path_<sub>）。
+    entry 找不到 → AttributeError（fail-closed，不回落裸名）。entry_kind 指定
+    LoadedStep.kind；缺省按 entry 前缀推（apply_path_* → path，否则 doc）。
+
     Built-in steps (audit-styleset-all / split-by-h1) take precedence over
     on-disk scripts; they reuse the pipeline's already-parsed doc to avoid
     re-parsing the same 53MB docx 5-6 times.
     """
+    def _by_entry(mod, where) -> LoadedStep:
+        fn = getattr(mod, entry, None)
+        if fn is None:
+            raise AttributeError(f"script '{name}' ({where}) has no entry {entry!r}")
+        kind = entry_kind or ("path" if entry.startswith("apply_path") else "doc")
+        return LoadedStep(name=name, kind=kind, fn=fn, module=mod)
+
     if name in _BUILTIN_STEPS:
         kind, fn = _BUILTIN_STEPS[name]
         return LoadedStep(name=name, kind=kind, fn=fn, module=None)
@@ -168,6 +181,8 @@ def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
                             sys.path.remove(dir_str)
                         except ValueError:
                             pass
+                if entry:
+                    return _by_entry(mod, candidate)
                 if hasattr(mod, "apply"):
                     return LoadedStep(name=name, kind="doc", fn=mod.apply, module=mod)
                 if hasattr(mod, "apply_path"):
@@ -181,6 +196,8 @@ def load_step(name: str, step_dir: Path | str | None = None) -> LoadedStep:
         module = importlib.import_module(name)
     except ImportError:
         module = importlib.import_module(f"scripts.{name}")
+    if entry:
+        return _by_entry(module, name)
     if hasattr(module, "apply"):
         return LoadedStep(name=name, kind="doc", fn=module.apply, module=module)
     if hasattr(module, "apply_path"):

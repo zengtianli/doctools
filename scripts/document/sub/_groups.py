@@ -99,9 +99,15 @@ OUT_OPT = Opt("-o", alt="--output", dest="output",
 
 @dataclass(frozen=True)
 class Target:
-    """一个子命令。`impl` 是 sub/ 下的实现脚本名（无 .py）。"""
+    """一个子命令。`impl` 是 sub/ 下的实现脚本名（无 .py）。
+
+    `impl_argv`：转发时**前插**在用户 argv 之前的固定 token（家族折叠后的
+    子命令名，如 ("bookmarks",)）。2026-07-31 家族折叠起：strip_*/audit_*/
+    freeze_* 等旧脚本并成单文件子命令族，impl 指合并文件、impl_argv 选子命令。
+    """
 
     impl: str
+    impl_argv: tuple[str, ...] = ()
     help: str = ""
     opts: tuple[Opt, ...] = STD
     description: str = ""
@@ -150,12 +156,12 @@ GROUPS: list[Group] = [
         "audit-only docx checks (headings/fields/captions/images/table-pairing/bookmarks)",
         "audit_target",
         {
-            "headings":      "audit_heading_numbers",
-            "fields":        "audit_word_fields",
-            "captions":      "audit_caption_outline",
-            "images":        "audit_images",
-            "table-pairing": "audit_table_pairing",
-            "bookmarks":     "audit_bookmarks",
+            "headings":      Target("audit", impl_argv=("headings",)),
+            "fields":        Target("audit", impl_argv=("fields",)),
+            "captions":      Target("audit", impl_argv=("captions",)),
+            "images":        Target("audit", impl_argv=("images",)),
+            "table-pairing": Target("audit", impl_argv=("table-pairing",)),
+            "bookmarks":     Target("audit", impl_argv=("bookmarks",)),
         },
         target_help="audit {t} (read-only)",
     ),
@@ -163,7 +169,10 @@ GROUPS: list[Group] = [
         "freeze",
         "freeze auto-computed Word elements (headings numbering / fields)",
         "freeze_target",
-        {"headings": "freeze_heading_numbers", "fields": "freeze_all_fields"},
+        {"headings": Target("freeze", impl_argv=("headings",),
+                            rest_help="extra args (e.g. --types TOC,PAGEREF)"),
+         "fields": Target("freeze", impl_argv=("fields",),
+                          rest_help="extra args (e.g. --types TOC,PAGEREF)")},
         rest_help="extra args (e.g. --types TOC,PAGEREF)",
     ),
     Group(
@@ -172,14 +181,16 @@ GROUPS: list[Group] = [
         "doc-protection / orphan-media / empty-captions)",
         "strip_target",
         {
-            "outlinelvl":       "strip_outlinelvl_from_captions",
-            "style-outlinelvl": "strip_style_outlinelvl",
-            "bookmarks":        "strip_bookmarks",
-            "revisions":        "strip_revisions",
-            "doc-protection":   "strip_doc_protection",
+            "outlinelvl":       Target("strip", impl_argv=("outlinelvl",)),
+            "style-outlinelvl": Target("strip", impl_argv=("style-outlinelvl",)),
+            "bookmarks":        Target("strip", impl_argv=("bookmarks",)),
+            "revisions":        Target("strip", impl_argv=("revisions",)),
+            "doc-protection":   Target("strip", impl_argv=("doc-protection",)),
             # 这两个额外认 -o/--output：写到新路径，原件不动
-            "orphan-media":     Target("strip_orphan_media", opts=STD + (OUT_OPT,)),
-            "empty-captions":   Target("strip_empty_captions", opts=STD + (OUT_OPT,)),
+            "orphan-media":     Target("strip", impl_argv=("orphan-media",),
+                                       opts=STD + (OUT_OPT,)),
+            "empty-captions":   Target("strip", impl_argv=("empty-captions",),
+                                       opts=STD + (OUT_OPT,)),
         },
     ),
     Group(
@@ -698,13 +709,13 @@ def _run(args) -> int:
     argv = _argv_for(t, args)
     if argv is None:
         return 2
-    rc = exec_script(t.impl, argv)
+    rc = exec_script(t.impl, list(t.impl_argv) + argv)
     if rc == 0 and t.chain and getattr(args, t.chain[0], False):
         nxt = _targets(g)[t.chain[1]]
         nargv = _argv_for(nxt, args)
         if nargv is None:
             return 2
-        rc = exec_script(nxt.impl, nargv)
+        rc = exec_script(nxt.impl, list(nxt.impl_argv) + nargv)
     return rc
 
 

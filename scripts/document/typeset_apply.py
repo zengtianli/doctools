@@ -132,6 +132,14 @@ class Action:
                                   # 比不报还糟。声明在表里 = 猜不着的时候必然报「键对不上」。
     tail_path: str = ""           # 非空 = 本动作在 path 段还有「另一半」(同模块的 apply_path)，
                                   # 值 = 为什么那一半必须跟着跑。两半绑定，spec 里只有一个开关。
+    # ── 2026-07-31 家族折叠：strip_*/audit_*/freeze_* 并成单文件子命令族 ──
+    # name 不动（它是 spec 的用户面词汇 = docx_spec.schema.yaml 的 key，SSOT）；
+    # script 指合并后的实现文件（空 = 沿用 name），entry 指改名后的入口函数
+    # （空 = 裸 apply/apply_path），tail_entry 指 tail_path 那一半的入口函数
+    # （空 = 裸 apply_path）。
+    script: str = ""
+    entry: str = ""
+    tail_entry: str = ""
 
 
 # 顺序 = 列表顺序（同一 phase 内）。三段的分界见模块 docstring「三段」。
@@ -187,6 +195,7 @@ ACTIONS: list[Action] = [
         tail_path="它清的是 comments.xml + settings.xml 的 trackChanges，Document 对象够不着，"
                   "只能在 path 段改 zip。与正文锚点是同一件事的两半：只跑前一半 = 留下"
                   "Word 里看不见、闸门也抓不到的孤儿批注（真作者账号 + 真时间戳）。",
+        script="strip", entry="apply_revisions", tail_entry="apply_path_revisions",
     ),
     Action(
         "strip_bookmarks", "doc", "doc-pre",
@@ -197,6 +206,7 @@ ACTIONS: list[Action] = [
         count_keys=("bookmarks_removed",),
         opt_docs={"bookmark_prefixes": "要清的书签名前缀；逗号串或 list，"
                                        "\"all\"=清所有，_GoBack 恒清；null=脚本默认 _Toc,_Ref,_Hlk"},
+        script="strip", entry="apply_bookmarks",
     ),
     Action(
         "strip_empty_captions", "doc", "doc-pre",
@@ -205,6 +215,7 @@ ACTIONS: list[Action] = [
         "候选表名去抢配对，也会被编号动作编上一个指向空气的「表 X-Y」。先删干净，"
         "后面两步看到的才是真题注集合。",
         opts={},
+        script="strip", entry="apply_empty_captions",
     ),
     Action(
         "delete_empty_h1", "doc", "doc-pre",
@@ -249,6 +260,7 @@ ACTIONS: list[Action] = [
         "配对与编号两步都按「这是不是标题」分流，先清干净它们看到的才是真题注集合。",
         opts={},
         count_keys=("outlinelvl_removed",),
+        script="strip", entry="apply_outlinelvl_from_captions",
     ),
     Action(
         "pair_table_captions", "doc", "doc-pre",
@@ -350,18 +362,21 @@ ACTIONS: list[Action] = [
         "只读自检：题注段的 outlineLvl / 样式污染还剩多少",
         "放在所有 doc 改动之后 —— 自检要报的是终态，不是中间态。",
         opts={}, readonly=True,
+        script="audit", entry="apply_caption_outline",
     ),
     Action(
         "audit_table_pairing", "doc", "doc-pre",
         "只读自检：表与表名的配对情况（孤儿表名 / 孤儿表 / 重名）",
         "同上，终态自检。",
         opts={}, readonly=True,
+        script="audit", entry="apply_table_pairing",
     ),
     Action(
         "audit_bookmarks", "doc", "doc-pre",
         "只读自检：书签总数与孤儿 start/end",
         "同上，终态自检。",
         opts={}, readonly=True,
+        script="audit", entry="apply_bookmarks",
     ),
 
     # ── 二 · path：存盘之后逐个改 zip 里 document.xml 以外的部件 ──────────────
@@ -371,6 +386,7 @@ ACTIONS: list[Action] = [
         "path 段第一个：后面几步都要改 styles.xml / document.xml，先把保护摘掉"
         "语义上更顺（技术上 python-docx 不受保护位约束，摘不摘都能写）。",
         opts={},
+        script="strip", entry="apply_path_doc_protection",
     ),
     Action(
         "freeze_heading_numbers", "path", "path",
@@ -385,6 +401,7 @@ ACTIONS: list[Action] = [
             "unlink_style": "是否同时摘掉 styles.xml 里标题样式的 numPr",
             "num_id": "从 numbering.xml 的哪个 numId 取 lvlText 模板",
         },
+        script="freeze", entry="apply_path_heading_numbers",
     ),
     Action(
         "freeze_all_fields", "path", "path",
@@ -394,6 +411,7 @@ ACTIONS: list[Action] = [
         "反过来会让通扫把标题域也冻成普通文本、专项那步就找不到目标了。",
         opts={"freeze_types": "all"},
         opt_docs={"freeze_types": "冻结哪些域类型；\"all\" 或 \"TOC,PAGEREF,SEQ\" 这样的逗号串"},
+        script="freeze", entry="apply_path_all_fields",
     ),
     Action(
         "strip_style_outlinelvl", "path", "path",
@@ -404,6 +422,7 @@ ACTIONS: list[Action] = [
         opts={"strip_styles": None},
         opt_docs={"strip_styles": "要从 styles.xml 摘 outlineLvl 的样式名集合，逗号串；"
                                   "null = 脚本内置的默认题注样式集"},
+        script="strip", entry="apply_path_style_outlinelvl",
     ),
     Action(
         "center_images", "path", "path",
@@ -645,7 +664,9 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
     loaded = {}
     for a in plan:
         try:
-            st = load_step(a.name, step_dir=HOMES[a.home])
+            st = load_step(a.script or a.name, step_dir=HOMES[a.home],
+                           entry=(a.entry or None),
+                           entry_kind=(a.kind if a.entry else None))
         except Exception as exc:
             report["error"] = f"动作 '{a.name}' 加载失败: {type(exc).__name__}: {exc}"
             return report, 2
@@ -727,12 +748,12 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
         for a in actions:
             is_tail = a in tails
             key = f"{a.name}::path" if is_tail else a.name
-            fn = (getattr(loaded[a.name].module, "apply_path", None) if is_tail
-                  else loaded[a.name].call)
+            fn = (getattr(loaded[a.name].module, a.tail_entry or "apply_path", None)
+                  if is_tail else loaded[a.name].call)
             if is_tail and fn is None:
                 report["error"] = (
-                    f"动作 '{a.name}' 声明了 tail_path，但它的模块里没有 apply_path —— "
-                    f"脚本接口变了，请同步 ACTIONS 表"
+                    f"动作 '{a.name}' 声明了 tail_path，但它的模块里没有 "
+                    f"{a.tail_entry or 'apply_path'} —— 脚本接口变了，请同步 ACTIONS 表"
                 )
                 return report["error"]
             t = time.perf_counter()
@@ -791,7 +812,7 @@ def run(docx: Path, spec: dict[str, dict], *, dry_run: bool,
     #    不等于真跑一遍的结果。这一条是 dry-run 的固有近似，不是 bug。
     #    tail：某些 doc 动作还有「另一半」在同模块的 apply_path 里（见 Action.tail_path）。
     #    两半是同一件事，spec 里只有一个开关，所以这里跟着跑，不给用户漏掉的机会。
-    #    dry-run 不跑 tail：`strip_revisions.apply_path` **没有 dry_run 守卫**，无条件
+    #    dry-run 不跑 tail：`strip.apply_path_revisions` **没有 dry_run 守卫**，无条件
     #    `shutil.move(tmp, docx)`（2026-07-30 实测：加上 tail 之后 --dry-run 的 md5 变了）。
     #    在引擎里挡住，而不是去改那个脚本 —— 它的 main() 自己在调用前就判了 dry-run，
     #    改它等于改一个跑得好好的脚本的业务逻辑。tail 是本引擎新加的调用路径，

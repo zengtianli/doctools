@@ -52,10 +52,10 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 try:
-    from . import strip_orphan_media as _som  # type: ignore
+    from . import strip as _som  # type: ignore  # 2026-07-31 家族折叠: scan_orphans/rewrite_skip 公有名保留
 except ImportError:
     try:
-        import strip_orphan_media as _som  # type: ignore
+        import strip as _som  # type: ignore
     except ImportError:
         _som = None  # 缺 lxml 等极端情况: 退化为不去冗余, 不让 split 失败
 

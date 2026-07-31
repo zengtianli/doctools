@@ -328,7 +328,7 @@ def _run_script_json(script_name: str, argv: list[str], report_path: Path) -> di
 
 def check_caption_outline(doc_path: Path, tmp_dir: Path) -> dict:
     rpt = tmp_dir / "caption_outline.json"
-    data = _run_script_json("audit_caption_outline", [str(doc_path)], rpt)
+    data = _run_script_json("audit", ["captions", str(doc_path)], rpt)
     polluted = data.get("polluted_count", data.get("total_polluted", 0))
     if isinstance(polluted, int) and polluted > 0:
         return {"found": True, "polluted_count": polluted, "safe_fix": True,
@@ -394,7 +394,7 @@ def check_orphaned_comment_markup(doc_path: Path) -> dict:
 
 def check_field_not_frozen(doc_path: Path, tmp_dir: Path) -> dict:
     rpt = tmp_dir / "fields.json"
-    data = _run_script_json("audit_word_fields", [str(doc_path)], rpt)
+    data = _run_script_json("audit", ["fields", str(doc_path)], rpt)
     field_count = data.get("total_complex_fields", 0) + data.get("total_simple_fields", 0)
     unfrozen_types = data.get("field_type_counts", {})
     # Any TOC/PAGEREF/SEQ/REF = likely unfrozen
@@ -533,7 +533,7 @@ def check_body_style_mess(doc_path: Path) -> dict:
 def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:
     """扩展 audit_caption_outline 检测同章内图/表号重复。"""
     rpt = tmp_dir / "captions_dup.json"
-    data = _run_script_json("audit_caption_outline", [str(doc_path)], rpt)
+    data = _run_script_json("audit", ["captions", str(doc_path)], rpt)
     # look for duplicates in caption_list
     captions = data.get("captions", data.get("caption_list", []))
     if not captions:
@@ -554,7 +554,7 @@ def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:
 
 def check_heading_number_stale(doc_path: Path, tmp_dir: Path) -> dict:
     rpt = tmp_dir / "heading_audit.json"
-    data = _run_script_json("audit_heading_numbers", [str(doc_path)], rpt)
+    data = _run_script_json("audit", ["headings", str(doc_path)], rpt)
     no_prefix = data.get("h_without_prefix", 0)
     with_prefix = data.get("h_with_prefix", 0)
     total = no_prefix + with_prefix
@@ -599,11 +599,11 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
         return {"found": False, "skipped": True,
                 "reason": "非 captioned-report (零图注) → 跳过配对检查"}
     try:
-        from . import audit_table_pairing as atp  # type: ignore
+        from . import audit as atp  # type: ignore  # 2026-07-31 家族折叠: audit_table_pairing → audit.py
     except Exception as e:
         return {"found": False, "error": f"import audit_table_pairing: {type(e).__name__}: {e}"}
     try:
-        data = atp.audit(doc_path)
+        data = atp.audit_table_pairing(doc_path)
     except Exception as e:
         return {"found": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -669,7 +669,7 @@ def check_orphan_media(doc_path: Path) -> dict:
     rels 未裁的残留场景)。gate 用 deep 抓最全的 orphan 集。
     """
     try:
-        from . import strip_orphan_media as som  # type: ignore
+        from . import strip as som  # type: ignore  # 2026-07-31 家族折叠: scan_orphans 公有名保留
     except Exception as e:
         return {"found": False, "error": f"import strip_orphan_media: {type(e).__name__}: {e}"}
     try:
@@ -690,7 +690,7 @@ def check_orphan_media(doc_path: Path) -> dict:
             "found": True,
             "examples": [n.replace("word/media/", "") for n in scan.get("orphans", [])[:10]],
             "safe_fix": True,
-            "fix_hint": "strip orphan media (docx_cli.py strip ... / strip_orphan_media.py)",
+            "fix_hint": "strip orphan media (docx_cli.py strip ... / strip.py orphan-media)",
         })
         return base
     base["found"] = False
@@ -913,7 +913,7 @@ def check_numbering_depth_uniformity(doc_path: Path) -> dict:
     1.2 / 1.2.3.4 这种不统一编号深度的迹象)。
     """
     try:
-        from . import audit_heading_numbers as ahn  # type: ignore
+        from . import audit as ahn  # type: ignore  # 2026-07-31 家族折叠: PREFIX_RE/_normalize_style 公有名保留
     except Exception as e:
         return {"found": False, "error": f"import audit_heading_numbers: {type(e).__name__}: {e}"}
     try:
@@ -1039,11 +1039,13 @@ class HealthChecker:
 
 # ─── HealthFixer ─────────────────────────────────────────────────────────────
 
-SAFE_FIX_SCRIPTS: dict[str, list[str]] = {
-    "caption-outline-pollution": ["strip_outlinelvl_from_captions"],
-    "revision-tracking-residue": ["strip_revisions"],
-    "field-not-frozen":          ["freeze_all_fields"],
-    "heading-number-stale":      ["renumber_headings"],
+# 值 = (实现脚本 stem, 前插 token 列表)。2026-07-31 家族折叠后 strip_*/freeze_*
+# 并成单文件子命令族，token 选子命令；未折叠的脚本 token 为空列表。
+SAFE_FIX_SCRIPTS: dict[str, list[tuple[str, list[str]]]] = {
+    "caption-outline-pollution": [("strip", ["outlinelvl"])],
+    "revision-tracking-residue": [("strip", ["revisions"])],
+    "field-not-frozen":          [("freeze", ["fields"])],
+    "heading-number-stale":      [("renumber_headings", [])],
 }
 
 
@@ -1100,14 +1102,15 @@ class HealthFixer:
                 continue
 
             scripts = SAFE_FIX_SCRIPTS.get(check_id, [])
-            for script in scripts:
+            for script, pre in scripts:
                 argv = [str(self.doc_path)]
                 if self.dry_run:
                     argv.append("--dry-run")
                 if not self.backup:
                     argv.append("--no-backup")
-                rc = exec_script(script, argv)
-                applied.append(f"{check_id}({script}, rc={rc})")
+                rc = exec_script(script, list(pre) + argv)
+                label = " ".join([script, *pre])
+                applied.append(f"{check_id}({label}, rc={rc})")
 
         return {"applied": applied, "skipped": skipped, "plan_required": plan_required}
 

@@ -28,11 +28,11 @@ CLI
 
 依赖复用 (不要 reimplement)
 ---------------------------
-* ``sub.strip_revisions``    — body 内 ins/del/comment* 接受 + 清 trackChanges/comments.xml
-* ``sub.strip_bookmarks``    — _Toc / _Ref / _Hlk / _GoBack 自动 bookmark
-* ``sub.strip_empty_captions`` — caption 样式 strict-empty 段
+* ``sub.strip revisions``    — body 内 ins/del/comment* 接受 + 清 trackChanges/comments.xml
+* ``sub.strip bookmarks``    — _Toc / _Ref / _Hlk / _GoBack 自动 bookmark
+* ``sub.strip empty-captions`` — caption 样式 strict-empty 段
 * ``sub.image_dedup``        — ``media_hashes`` 复用做 intra-doc 同源图去重
-* ``sub.strip_orphan_media`` — 删 word/media/* 未被任何 rId 引用的孤儿
+* ``sub.strip orphan-media`` — 删 word/media/* 未被任何 rId 引用的孤儿
 """
 from __future__ import annotations
 
@@ -55,10 +55,10 @@ except ImportError as e:
 
 
 # 复用现有 sub/*.py 函数 (silent on import, no top-level side effect)
-from . import strip_revisions
-from . import strip_bookmarks
-from . import strip_empty_captions
-from . import strip_orphan_media
+# 2026-07-31 家族折叠: strip_revisions/strip_bookmarks/strip_empty_captions/
+# strip_orphan_media 四件并入 strip.py（子命令族），经 _call_strip_module 带
+# 子命令 token 调用；scan_orphans 等公有名保留。
+from . import strip
 from . import image_dedup  # media_hashes 函数复用
 
 # 仓根 lib 进 sys.path —— 部件完整性断言（B 类：删除是有意的,用 diff_parts 对账；
@@ -233,24 +233,28 @@ def _intra_doc_image_dedup(docx_path: Path) -> dict:
     }
 
 
-def _call_strip_module(mod, docx_path: Path) -> dict:
-    """Call mod.main() with argv = [docx, --no-backup] on working file.
+def _call_strip_module(mod, docx_path: Path, sub: str) -> dict:
+    """Call mod.main() with argv = [sub, docx, --no-backup] on working file.
+
+    sub = strip.py 家族子命令 token（2026-07-31 折叠后必带）。module 标签沿用
+    折叠前的旧脚本名（strip_revisions / strip_empty_captions …），报告口径不变。
 
     Returns {"ok": bool, "rc": int, "module": name}.
     """
+    label = f"{mod.__name__.split('.')[-1]}_{sub.replace('-', '_')}"
     saved = sys.argv[:]
-    sys.argv = [mod.__name__.split(".")[-1], str(docx_path), "--no-backup"]
+    sys.argv = [label, sub, str(docx_path), "--no-backup"]
     try:
         rc = mod.main() if hasattr(mod, "main") else 1
         rc = int(rc) if isinstance(rc, int) else 0
     except SystemExit as se:
         rc = int(se.code) if isinstance(se.code, int) else (0 if se.code is None else 1)
     except Exception as e:
-        return {"ok": False, "rc": -1, "module": mod.__name__,
+        return {"ok": False, "rc": -1, "module": f"{mod.__name__}:{sub}",
                 "error": f"{type(e).__name__}: {e}"}
     finally:
         sys.argv = saved
-    return {"ok": rc == 0, "rc": rc, "module": mod.__name__.split(".")[-1]}
+    return {"ok": rc == 0, "rc": rc, "module": label}
 
 
 def run_safe(src_docx: Path, out_path: Path | None) -> dict:
@@ -286,11 +290,11 @@ def run_safe(src_docx: Path, out_path: Path | None) -> dict:
     steps_report = []
 
     # 1. revisions
-    steps_report.append(("strip-revisions", _call_strip_module(strip_revisions, work)))
+    steps_report.append(("strip-revisions", _call_strip_module(strip, work, "revisions")))
     # 2. bookmarks
-    steps_report.append(("strip-bookmarks", _call_strip_module(strip_bookmarks, work)))
+    steps_report.append(("strip-bookmarks", _call_strip_module(strip, work, "bookmarks")))
     # 3. empty-captions
-    steps_report.append(("strip-empty-captions", _call_strip_module(strip_empty_captions, work)))
+    steps_report.append(("strip-empty-captions", _call_strip_module(strip, work, "empty-captions")))
     # 4. intra-doc image-dedup (reuse media_hashes)
     try:
         dedup_rep = _intra_doc_image_dedup(work)
@@ -298,7 +302,7 @@ def run_safe(src_docx: Path, out_path: Path | None) -> dict:
     except Exception as e:
         steps_report.append(("image-dedup", {"ok": False, "error": f"{type(e).__name__}: {e}"}))
     # 5. orphan-media (dedup 后留下的 rels-orphan + 原本就 orphan 一锅烩)
-    steps_report.append(("strip-orphan-media", _call_strip_module(strip_orphan_media, work)))
+    steps_report.append(("strip-orphan-media", _call_strip_module(strip, work, "orphan-media")))
 
     size_after = work.stat().st_size
     return {
