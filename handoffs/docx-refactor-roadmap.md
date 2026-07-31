@@ -23,7 +23,11 @@
 4. 两轮退役：117→98→96（原口径；`before-after.md` §十一记着尺子），docx_cli 子命令树 128→125。
 5. 修订注入引擎 docx_revise：四种 op、锚点唯一命中 fail-closed、within 标题式消歧跳目录、
    落位自检、部件断言。对真件（qual-supply）端到端验证 + 反向验证 4/4。
-6. 测试 **80 绿**（`scripts/document/tests` + `sub/tests`）；`script_graph` 0 孤儿。
+6. 测试 **80 绿**（`scripts/document/tests` + `sub/tests`）；`script_graph` 0 孤儿。（2026-07-31 P3 补测后 = **82 绿**）
+7. **collar 第二判据存量清零**（2026-07-31，81e02e0）：25 个 zipfile 写盘脚本按四类接线
+   （19 A-preserve / 3 B-diff_parts+声明删除集 / 1 C-对模板基线 / 2 D-engine 一处覆盖全调用方），
+   每处 stub 留痕 + 真跑无假红 + 反向注入全拦；`check_docx_collar` **默认已翻全仓扫描**
+   （`--all` 降为兼容 no-op），裸 ZipFile 探针反向验证即红。分类工单 = 会话 scratchpad collar-classify.json。
 
 ## 三 · 本项目铁则（每改必守）
 
