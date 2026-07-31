@@ -43,7 +43,9 @@ SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools"]
 # 顶层 CLI = 人直接敲的入口，入度 0 也不算孤儿
 ENTRIES = {"docx_cli", "pdf_cli", "doc_dispatch", "typeset_pipeline", "doc_gui_backend",
            "pptx_cli", "pptx_align", "md_tools", "script_graph", "blast_radius",
-           "check_docx_collar", "_inventory"}
+           "check_docx_collar", "_inventory",
+           # 2026-07-30 登记：spec 引擎入口 + 两个等价闸门
+           "typeset_apply", "cli_surface", "cli_forward_probe"}
 
 FAMILY = [
     ("strip",    r"^strip_|^_?strip$"),
@@ -138,10 +140,19 @@ def edges(nodes: dict[str, dict]) -> list[tuple[str, str, str]]:
                         t = stems.get(a.name.split(".")[-1])
                         if t:
                             add(nid, t, "import")
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    t = stems.get(node.module.split(".")[-1])
-                    if t:
-                        add(nid, t, "from-import")
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        t = stems.get(node.module.split(".")[-1])
+                        if t:
+                            add(nid, t, "from-import")
+                    # `from . import _groups` —— 相对导入时 node.module 是 None，
+                    # 名字全在 node.names 里。漏掉这一支的表现是「被 __init__ 导入的
+                    # 模块被判成孤儿」，而孤儿名单是拿来退役的：错杀一个还在用的模块，
+                    # 比放过一个死模块贵得多。
+                    for alias in node.names:
+                        t = stems.get(alias.name.split(".")[-1])
+                        if t:
+                            add(nid, t, "from-import")
         # 字面量调用。两种写法都要认（2026-07-30 实测）：
         #   subprocess / _load 用带后缀的  "delete_chapter.py"
         #   exec_script 用**不带后缀的模块名**  exec_script("delete_chapter", argv)

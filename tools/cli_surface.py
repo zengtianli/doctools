@@ -35,12 +35,19 @@ def _load_cli():
     return mod
 
 
+def _norm(v: str) -> str:
+    """把仓根绝对路径换成占位符。有几个默认值是 `HERE / "profiles" / …` 算出来的，
+    在 git worktree 里跑基线时前缀不同 —— 那是运行位置的差异，不是接口的差异，
+    留着它每次 diff 都要人眼分辨真假，迟早看漏一条真的。"""
+    return v.replace(str(HERE.parent), "<REPO>")
+
+
 def _action_sig(a: argparse.Action) -> dict:
     return {
         "opts": sorted(a.option_strings),
         "dest": a.dest,
         "nargs": a.nargs if not isinstance(a.nargs, int) else f"int:{a.nargs}",
-        "default": repr(a.default),
+        "default": _norm(repr(a.default)),
         "required": bool(a.required),
         "choices": sorted(map(str, a.choices)) if a.choices else None,
         "cls": type(a).__name__,
@@ -51,11 +58,23 @@ def walk(parser: argparse.ArgumentParser, path: str = "") -> dict:
     node = {"opts": [], "subs": {}}
     for a in parser._actions:
         if isinstance(a, argparse._SubParsersAction):
+            # 子命令组自身的 dest/required/metavar 也要进指纹。少了它，「把一个
+            # 本来可省的子命令改成必填」这种改动闸门看不见 —— 而那正是重写
+            # register() 时最容易顺手改掉的一项（required 的默认值是 False，
+            # 手写时漏掉一个 required=True 不会有任何报错）。
+            node["subparsers"] = {"dest": a.dest, "required": bool(a.required),
+                                  "metavar": a.metavar}
             for name, sub in a.choices.items():
                 node["subs"][name] = walk(sub, f"{path} {name}".strip())
         else:
             node["opts"].append(_action_sig(a))
     node["opts"].sort(key=lambda d: (d["dest"], ",".join(d["opts"])))
+    # 互斥组也进指纹：--keep-shell-h1 / --no-keep-shell-h1 那种成对选项，
+    # 拆出互斥关系之后两个都能同时传，argparse 不再拦。
+    mx = [sorted(x.dest for x in g._group_actions)
+          for g in getattr(parser, "_mutually_exclusive_groups", [])]
+    if mx:
+        node["mutually_exclusive"] = sorted(mx)
     return node
 
 
