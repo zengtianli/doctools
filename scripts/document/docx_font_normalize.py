@@ -31,6 +31,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
+
 DENGXIAN = re.compile(r"等线|DengXian|Deng Xian")
 THEME_EA_RE = re.compile(r'(<a:ea\s+typeface=")([^"]*)(")')
 DOCDEFAULT_RFONTS = re.compile(r"(<w:docDefaults>.*?<w:rPrDefault>.*?<w:rPr>.*?)(<w:rFonts[^/>]*/>)", re.S)
@@ -64,6 +67,7 @@ def scan(path: Path) -> list[str]:
 
 def fix(path: Path, font: str, ascii_font: str) -> list[str]:
     changed: list[str] = []
+    touched: set[str] = set()   # 本次真被改写的部件名（动态白名单，静态清单会误报/漏报）
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     shutil.copy(path, f"{path}.bak-{ts}")
     with zipfile.ZipFile(path) as zin:
@@ -101,11 +105,17 @@ def fix(path: Path, font: str, ascii_font: str) -> list[str]:
 
         if text != orig:
             data[name] = text.encode("utf8")
+            touched.add(name)
 
     if changed:
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zout:
             for i in items:
                 zout.writestr(i, data[i.filename])
+        # 部件完整性断言（fail-closed）：基线 = 写盘前落的 .bak-时间戳 副本；
+        # 白名单 = 本次真被规则命中改写的部件集（touched），其余必须逐字节原样。
+        assert_parts_intact(Path(f"{path}.bak-{ts}"), path,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | touched,
+                            verbose=False)
     else:
         Path(f"{path}.bak-{ts}").unlink(missing_ok=True)
     return changed

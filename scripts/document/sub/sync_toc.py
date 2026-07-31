@@ -42,6 +42,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 from soffice import find_soffice, require_soffice  # doctools SSOT: soffice 路径解析
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -309,6 +310,16 @@ def _sync(mine, golden, *, no_backup, dry=False) -> dict:
             else:
                 data = zin.read(item.filename)
             zout.writestr(item, data)
+    # 部件完整性断言(replace 前:mine 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
+    # styles.xml 不在 DEFAULT 白名单,显式报备。CLI cmd_apply 与 pipeline apply_path
+    # (恒 no_backup=True)都汇到本函数,一处覆盖双入口,不依赖 .bak 存在。
+    try:
+        assert_parts_intact(mine, tmp,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                            verbose=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(mine)
 
     # 复验：移植完的目录锚点是不是真能解析到正文书签。解析不到 = 目录点不动，

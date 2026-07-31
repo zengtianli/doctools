@@ -70,8 +70,29 @@ from pathlib import Path
 
 from lxml import etree
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = f"{{{NS['w']}}}"
+
+
+def _rewrite_document(p: Path, new_doc_xml: bytes) -> None:
+    """surgical 重打包：仅替换 word/document.xml，其余部件逐字节 verbatim。
+
+    CLI main() 与 pipeline apply_path() 共用这一个实现。部件完整性断言放在
+    tmp.replace(p) **之前**——此刻 p 仍是未被改动的源件（天然基线），断言炸则
+    tmp 不落位、源件毫发无损，且不依赖调用方有没有留 .bak。
+    """
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "word/document.xml":
+                data = new_doc_xml
+            zout.writestr(item, data)
+    assert_parts_intact(p, tmp, verbose=False)
+    tmp.replace(p)
 
 
 def lsof_check(p: Path) -> None:
@@ -360,18 +381,9 @@ def main():
         bp = backup(p)
         print(f"[backup] {bp.name}")
 
-    # Re-serialize and write back
+    # Re-serialize and write back（含部件完整性断言，见 _rewrite_document）
     new_doc_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-    # Rewrite zip
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "word/document.xml":
-                data = new_doc_xml
-            zout.writestr(item, data)
-    tmp.replace(p)
+    _rewrite_document(p, new_doc_xml)
     print(f"[done] wrote {p}")
 
 
@@ -402,14 +414,7 @@ def apply_path(docx_path, args=None) -> dict:
     n_changed = len(simple_removed) + len(complex_frozen)
     if not dry and n_changed > 0:
         new_doc_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = zin.read(item.filename)
-                if item.filename == "word/document.xml":
-                    data = new_doc_xml
-                zout.writestr(item, data)
-        tmp.replace(p)
+        _rewrite_document(p, new_doc_xml)
     return {
         "changed": n_changed,
         "before": before,

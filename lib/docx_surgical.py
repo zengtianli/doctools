@@ -20,6 +20,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同层 docx_xml
 from docx_xml import NSMAP, W, qn  # noqa: E402  复用既有 namespace 常量,不重造
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact, diff_parts  # noqa: E402
 
 __all__ = [
     "NSMAP",
@@ -173,6 +174,11 @@ def surgical_rewrite_parts(docx: Path, parts: dict[str, bytes], *,
                 if data is None:
                     data = zin.read(item.filename)
                 zout.writestr(item, data)  # 复用 zin.infolist() 的 ZipInfo 保留每项 compress_type/日期
+        # 部件完整性断言(replace 前:此刻 docx 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
+        # 白名单 = DEFAULT + 本次点名改写的 parts —— 强制把改动面显式报备。
+        assert_parts_intact(docx, tmp,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | set(parts),
+                            verbose=False)
         tmp.replace(docx)
     except Exception:
         tmp.unlink(missing_ok=True)
@@ -279,7 +285,12 @@ def graft_unchanged(original: Path, modified: Path, *, on_missing: str = "error"
         tmp.unlink(missing_ok=True)
         raise
     verify_repacked(modified, extra_parts=real)
-    return {"还原": sorted(kept), "真变了": sorted(real), "新增": added, "丢失": lost}
+    result = {"还原": sorted(kept), "真变了": sorted(real), "新增": added, "丢失": lost}
+    if on_missing in ("restore", "ignore"):
+        # 非 fail-closed 分支不设静态白名单断言(graft 本身就是完整性机制的实现层,
+        # 多部件真变是常态) —— 但要留一份部件 diff 记录给上层,丢失/新增不静默。
+        result["部件diff"] = diff_parts(original, modified).summary()
+    return result
 
 
 def verify_repacked(docx: Path, *, extra_parts: list[str] | None = None) -> None:

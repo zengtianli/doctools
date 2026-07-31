@@ -35,6 +35,10 @@ import zipfile
 from datetime import datetime
 
 from lxml import etree
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
 
 W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 W = f'{{{W_NS}}}'
@@ -179,11 +183,13 @@ def apply_track(src, out, md, anchor, *, style_anchor=None, body_same_style=Fals
                 renumber=None, author='Tianli Zeng', date='2026-04-23T00:00:00Z',
                 in_place=False, no_backup=False) -> str:
     """核心: MD → 锚点前插入(track changes) + 可选 renumber。返回输出路径。"""
+    baseline = None   # 部件完整性断言的基线 = 未被本次改动的源件（或其副本）
     if in_place:
         if not no_backup:
             bak = f"{src}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             shutil.copy2(src, bak)
             print(f'已备份: {bak}')
+            baseline = bak
         out = src
 
     title, paragraphs = parse_md(md)
@@ -193,7 +199,17 @@ def apply_track(src, out, md, anchor, *, style_anchor=None, body_same_style=Fals
 
     if out != src:
         shutil.copy2(src, out)
+        baseline = src   # 写新文件：src 全程不动，天然基线
+    snap = None
+    if baseline is None:
+        # --in-place --no-backup：无任何基线 → 解压/改写前自建临时快照。
+        # 快照放系统 tempdir，**绝不能**放进下面会被 os.walk 全目录打包的 tmp 里。
+        fd, snap = tempfile.mkstemp(prefix='md_merge_track_base_', suffix='.docx')
+        os.close(fd)
+        shutil.copy2(src, snap)
+        baseline = snap
     tmp = tempfile.mkdtemp(prefix='md_merge_track_')
+    ok = False
     try:
         with zipfile.ZipFile(out, 'r') as z:
             z.extractall(tmp)
@@ -249,8 +265,18 @@ def apply_track(src, out, md, anchor, *, style_anchor=None, body_same_style=Fals
                     full = os.path.join(rd, f)
                     arc = os.path.relpath(full, tmp)
                     z.write(full, arc)
+        # extractall→os.walk 重打包是丢部件/夹带杂文件的高危形态（137→35 截断事故
+        # 同型）：丢部件 / tmp 被污染多打进文件 / 白名单外部件被改 → 一律抛，不静默。
+        assert_parts_intact(baseline, out, verbose=False)
+        ok = True
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+        if snap:
+            if ok:
+                os.remove(snap)
+            else:
+                print(f'[md_merge_track] 完整性断言未过或中途退出，'
+                      f'源件快照保留: {snap}', file=sys.stderr)
 
     print(f'OK: {out}')
     return out

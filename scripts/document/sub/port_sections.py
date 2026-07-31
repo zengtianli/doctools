@@ -35,6 +35,9 @@ from pathlib import Path
 
 from lxml import etree
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 RELNS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -264,6 +267,13 @@ def main(argv=None):
             zout.writestr(item, repl.get(item.filename, _zget(zt, item.filename)))
         for pn, data in {**new_parts, **new_partrels}.items():
             zout.writestr(pn, data)
+    # 部件完整性断言放 replace 之前：基线 = a.docx（产物部件全部继承自它，此刻未动），
+    # 断言炸则 tmp 不落位。allow_added = 从 golden 有意搬来的 header/footer 及其 .rels，
+    # 白名单与收集代码同源（new_parts/new_partrels 就是 writestr 进去的那份）；
+    # repl 改写的 3 部件全在 DEFAULT_ALLOW_CHANGED。
+    assert_parts_intact(a.docx, tmp,
+                        allow_added=set(new_parts) | set(new_partrels),
+                        verbose=False)
     tmp.replace(out)
     print(f"[port_sections] {out.name}: 移植 golden {len(breaks)} 节"
           f"（注入段节断 {placed} + 末节{'1' if final_sect is not None else '0'}）"

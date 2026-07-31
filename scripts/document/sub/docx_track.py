@@ -37,6 +37,7 @@ _sys.path.append(str(_Path(__file__).resolve().parents[1]))
 
 from lxml import etree  # noqa: E402
 
+from docx_parts import assert_parts_intact  # noqa: E402  surgical 部件完整性断言
 from docx_xml import R_NS, REL_COMMENTS, W, qn  # noqa: E402
 from file_ops import clear_quarantine  # noqa: E402
 
@@ -475,14 +476,35 @@ class DocxReviewer:
         self._write_comments_xml()
 
         output_path = os.path.abspath(output_path)
+        baseline = os.path.abspath(self.docx_path)
+        snap = None
         if output_path == os.path.abspath(self.docx_path):
             self._write_gate.assert_unchanged()  # 原地写回:源被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
-        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, _dirs, files in os.walk(self.tmpdir):
-                for fn in files:
-                    abs_path = os.path.join(root, fn)
-                    zf.write(abs_path, os.path.relpath(abs_path, self.tmpdir))
-        clear_quarantine(output_path)
+            # 原地覆写会毁掉基线——先把改前源件快照到 tmpdir **之外**
+            # （绝不能放 self.tmpdir：下面 os.walk 会把它打进包里）
+            fd, snap = tempfile.mkstemp(prefix="docx_track_baseline_", suffix=".docx")
+            os.close(fd)
+            shutil.copy2(self.docx_path, snap)
+            baseline = snap
+        try:
+            with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for root, _dirs, files in os.walk(self.tmpdir):
+                    for fn in files:
+                        abs_path = os.path.join(root, fn)
+                        zf.write(abs_path, os.path.relpath(abs_path, self.tmpdir))
+            clear_quarantine(output_path)
+            # 部件完整性断言（fail-closed）：extractall→os.walk 全目录重打包与
+            # 137→35 截断事故同形状；tmpdir 里混入的多余文件也会被 unexpected-added 抓住。
+            # comments.xml 仅在首次加批注时新建（_ensure_content_type/_ensure_rels 已报备）。
+            assert_parts_intact(baseline, output_path,
+                                allow_added={"word/comments.xml"}, verbose=False)
+        except Exception:
+            if snap is not None and os.path.exists(snap):
+                shutil.copy2(snap, output_path)  # 原地写坏 → 从快照复原源件再抛
+            raise
+        finally:
+            if snap is not None and os.path.exists(snap):
+                os.unlink(snap)
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def cleanup(self):

@@ -33,6 +33,9 @@ from lxml import etree
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docx_write_gate import WriteGate  # 原地写回并发门（同目录 SSOT）
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -121,6 +124,10 @@ def _write(src_docx, root, out_path):
         for it in zin.infolist():
             data = new_xml if it.filename == "word/document.xml" else zin.read(it.filename)
             zout.writestr(it, data)
+    # 部件完整性断言（fail-closed，一处覆盖全部调用点）：基线 = src_docx
+    # （inplace 路是改前 .bak 副本，非 inplace 路是原件），只换 document.xml
+    # （默认白名单），其余部件必须逐字节 verbatim。verbose=False 不动 stdout 契约。
+    assert_parts_intact(src_docx, out_path, verbose=False)
 
 
 def _verify(out_path, prefix):

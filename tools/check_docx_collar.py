@@ -91,15 +91,14 @@ def zip_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
 
 def main() -> int:
     need, bad = offenders()
-    # 第二判据的扫描范围：doctools 自己 + 命令行额外指定的目录
-    # （项目侧的一次性 surgical 脚本通常不在本仓，如
+    # 第二判据的扫描范围：默认全仓（scripts/ + lib/）+ 命令行额外指定的目录
+    # （项目侧的一次性 surgical 脚本不在本仓，可显式传：
     #   python3 check_docx_collar.py ~/Work/projects/qual-supply/scripts）
-    # 第二判据默认**只查显式传入的目录**。理由：本仓 28 个既有 surgical 脚本里 27 个
-    # 还没接线（都是 2026-07-31 立此判据之前写的），默认全仓开检会让守卫第一天就是红的，
-    # 而「长期红着的守卫」等于没有守卫。故：新写的脚本靠 code review + 本判据显式扫，
-    # 存量另行分批补（--all 可一次看全量欠账）。
+    # 历史：判据 2026-07-31 立时存量 27 个未接线，默认只扫显式目录以免守卫第一天长红；
+    # 同日存量批量接线清零（25 脚本 + 2 engine，各带 stub/反向验证）后翻成默认全扫——
+    # fail-closed 从此不再靠 --all 自觉。--all 保留为兼容 no-op。
     extra = [Path(a).expanduser() for a in sys.argv[1:] if not a.startswith("-")]
-    scan_roots = ([SCAN, ROOT / "lib"] if "--all" in sys.argv else []) + extra
+    scan_roots = [SCAN, ROOT / "lib"] + extra
     z_need, z_bad = zip_offenders(scan_roots)
     if "--list" in sys.argv:
         for p in need:
@@ -140,11 +139,7 @@ def main() -> int:
               f"不介入，不会碍事。", file=sys.stderr)
         return 1
     print(f"✓ {len(need)} 个用 python-docx 存盘的脚本全部挂了 surgical 收口")
-    if scan_roots:
-        print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
-    else:
-        # 没扫 = 没查，不许把「没查」说成「全挂了」（空集报绿）
-        print("· [zipfile] 第二判据默认未扫描（--all 看全量欠账，或显式传目录）")
+    print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
     return 0
 
 

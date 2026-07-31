@@ -67,6 +67,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -209,7 +210,12 @@ def remove_heading_numpr_in_styles(
 
 
 def write_styles_xml(docx_path: Path, new_styles_bytes: bytes) -> None:
-    """把新 styles.xml 写回 docx (其他文件原样保留)"""
+    """把新 styles.xml 写回 docx (其他文件原样保留)。
+
+    CLI main() 与 pipeline apply_path() 都汇到这一个实现。部件完整性断言放在
+    shutil.move **之前**——此刻 docx_path 仍是本次 zip 重写的未动源件（前面的
+    doc.save 已完成，断的正是重打包这一步），断言炸则 tmp 不落位、源件无损。
+    """
     tmp = docx_path.with_suffix(docx_path.suffix + ".tmp")
     with zipfile.ZipFile(docx_path, "r") as zin, \
          zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
@@ -218,6 +224,9 @@ def write_styles_xml(docx_path: Path, new_styles_bytes: bytes) -> None:
                 zout.writestr(it, new_styles_bytes)
             else:
                 zout.writestr(it, zin.read(it.filename))
+    assert_parts_intact(docx_path, tmp,
+                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                        verbose=False)
     shutil.move(str(tmp), str(docx_path))
 
 

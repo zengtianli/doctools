@@ -32,6 +32,9 @@ from pathlib import Path
 
 from lxml import etree
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -210,6 +213,10 @@ def _fix(docx_path: Path, ref: Path | None, *, no_backup: bool, dry: bool = Fals
             if item.filename == "word/document.xml":
                 data = new_doc
             zout.writestr(item, data)
+    # 部件完整性断言放 replace 之前：docx_path 此刻仍是未动源件（天然基线，
+    # pipeline 恒 no_backup 也不漏），断言炸则 tmp 不落位、源件毫发无损。
+    # 这才是 docstring「其余 zip 项逐字节 verbatim, CRC 全等」的机器兜底。
+    assert_parts_intact(docx_path, tmp, verbose=False)
     tmp.replace(docx_path)
     return {"changed": fixed}
 

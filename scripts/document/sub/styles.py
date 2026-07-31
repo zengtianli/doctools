@@ -44,6 +44,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
 
 from docx import Document
 from docx.document import Document as DocType
@@ -745,6 +746,15 @@ def _inject_template_styles(docx_path: Path, template_name: str, dry_run: bool) 
                 zout.writestr(item, new_styles_bytes)
             else:
                 zout.writestr(item, zin.read(item.filename))
+    # 部件完整性断言(replace 前:docx_path 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
+    # styles.xml 不在 DEFAULT 白名单,显式报备。--no-backup 时也不需要 bak 当基线。
+    try:
+        assert_parts_intact(docx_path, tmp_path,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                            verbose=False)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
     os.replace(str(tmp_path), str(docx_path))
     return result
 

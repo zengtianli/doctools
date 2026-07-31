@@ -48,6 +48,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  surgical 部件完整性断言
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -1391,6 +1392,11 @@ def _add_first_line_indent_to_style(docx_path: Path, style_id: str,
                 if f.is_file():
                     arc = f.relative_to(td_path).as_posix()
                     zout.write(str(f), arcname=arc)
+        # 部件完整性断言（fail-closed）：move 前 src 仍是未动源件 = 天然基线；
+        # 断言炸则 tmp_out 不落位，源件无损。本函数只碰 styles.xml，显式加进白名单。
+        assert_parts_intact(src, tmp_out,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                            verbose=False)
         shutil.move(str(tmp_out), str(src))
     return stats
 

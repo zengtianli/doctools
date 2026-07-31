@@ -62,6 +62,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
 
 # sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
 # 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
@@ -183,6 +184,16 @@ def apply_path(docx_path, args=None) -> dict:
                     comments_emptied = True
                 zout.writestr(it, data)
 
+    # 部件完整性断言(move 前:docx_path 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
+    # settings.xml 不在 DEFAULT 白名单,显式报备;comments.xml/document.xml 已在。
+    # CLI main 与 pipeline 都汇到本函数,一处覆盖双入口。
+    try:
+        assert_parts_intact(docx_path, tmp,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/settings.xml"},
+                            verbose=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     shutil.move(str(tmp), str(docx_path))
     return {
         "trackchanges_removed": track_changes_removed,

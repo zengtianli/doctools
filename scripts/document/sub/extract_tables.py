@@ -46,6 +46,9 @@ except ImportError:
     print("ERROR: python-docx / lxml 未安装 (pip install python-docx lxml)", file=sys.stderr)
     sys.exit(2)
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import PartIntegrityError, diff_parts  # noqa: E402  部件完整性(B类:精确部件集)
+
 
 _ILLEGAL_FILENAME_RE = re.compile(r'[/\\:*?"<>|\r\n\t]')
 _MULTI_WS_RE = re.compile(r"\s+")
@@ -309,6 +312,7 @@ def _read_source_parts(src_docx: Path) -> dict:
                 break
 
     return {
+        "src_path": Path(src_docx),   # 部件完整性断言要用源件当基线
         "doc_root": root,
         "doc_body": body,
         "sect_pr": sect_pr,
@@ -409,6 +413,38 @@ def write_extract_minimal(
             z.writestr("word/numbering.xml", src_parts["numbering"])
         if has_theme:
             z.writestr("word/theme/theme1.xml", src_parts["theme"])
+
+    # ── 部件完整性断言（B 类：最小骨架**本意就要减部件**，assert_parts_intact 会把
+    #    「其余全丢」误判成事故 → 改用精确部件集断言，白名单与上面的写入代码同源）
+    expected = {
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "word/_rels/document.xml.rels",
+        "word/document.xml",
+        "word/styles.xml",
+    }
+    if has_numbering:
+        expected.add("word/numbering.xml")
+    if has_theme:
+        expected.add("word/theme/theme1.xml")
+    with zipfile.ZipFile(str(dst_docx)) as zchk:
+        got = set(zchk.namelist())
+    if got != expected:
+        raise PartIntegrityError(
+            f"{dst_docx.name} 部件集漂移: "
+            f"多出 {sorted(got - expected)} / 缺失 {sorted(expected - got)}")
+    # 搬运的部件（styles/numbering/theme）必须逐字节 verbatim；lost 是骨架策略的
+    # 本意（media/header 等有意不带，CLI 已 NOTE 声明），不算错。
+    d = diff_parts(src_parts["src_path"], dst_docx, allow_changed={
+        "word/document.xml", "[Content_Types].xml",
+        "word/_rels/document.xml.rels", "_rels/.rels",
+    })
+    fallback_added = {"word/styles.xml"} if src_parts["styles"] is None else set()
+    bad_added = [n for n in d.added if n not in fallback_added]
+    if d.changed or bad_added:
+        raise PartIntegrityError(
+            f"{dst_docx.name} 搬运部件被改写或未报备新增: "
+            f"changed={d.changed} added={bad_added}")
 
     # Verify with python-docx.
     try:

@@ -35,6 +35,7 @@ except ImportError:
     print("❌ 需要安装 lxml: pip install lxml")
     sys.exit(1)
 
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact
 from docx_xml import NSMAP
 from file_ops import clear_quarantine
 
@@ -106,6 +107,12 @@ def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
                     zf.write(file_path, arcname)
 
     clear_quarantine(output_path)
+    # 部件完整性断言（fail-closed）：基线 = 未动的源件。本函数只重写 styles.xml
+    # （其余部件从 tmpdir 原字节回填），丢部件/白名单外改动即抛，不静默。
+    # verbose=False 保持既有 stdout 契约。
+    assert_parts_intact(docx_path, output_path,
+                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                        verbose=False)
     print(f"✅ 输出: {output_path}")
     return output_path
 
@@ -381,6 +388,11 @@ def cmd_cleanup(args):
 
     if not args.preview and args.output:
         save_docx(files, styles_tree, doc_tree, args.output)
+        # 部件完整性断言：save_docx 只覆写 styles.xml + document.xml
+        # （document.xml 已在 DEFAULT_ALLOW_CHANGED），其余部件必须逐字节原样。
+        assert_parts_intact(args.input, args.output,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                            verbose=False)
         print(f"\n📄 已保存到 {args.output}")
     elif args.preview:
         print("\n（预览模式，未修改文件）")

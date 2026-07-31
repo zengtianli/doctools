@@ -66,6 +66,10 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parent))
 import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
+# 仓根 lib 进 sys.path —— 部件完整性断言
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
+
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = f"{{{NS['w']}}}"
 
@@ -80,6 +84,29 @@ PROTECTION_ELEMENTS = [
 ]
 
 SETTINGS_PATH = "word/settings.xml"
+
+
+def _rewrite_settings(p: Path, new_settings_bytes: bytes) -> None:
+    """重打包 zip，仅替换 settings.xml —— CLI main 与 pipeline apply_path 共汇的唯一写盘点。
+
+    replace 之前挂部件完整性断言（此刻 p 未动 = 天然基线，断言炸则源件无损）；
+    settings.xml 不在 DEFAULT_ALLOW_CHANGED，必须显式报备。
+    """
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == SETTINGS_PATH:
+                data = new_settings_bytes
+            zout.writestr(item, data)
+    try:
+        assert_parts_intact(p, tmp,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {SETTINGS_PATH},
+                            verbose=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(p)
 
 
 def _strip(root, dry_run: bool):
@@ -180,15 +207,7 @@ def main():
     new_settings_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
                                         standalone=True)
 
-    # Rewrite zip
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == SETTINGS_PATH:
-                data = new_settings_bytes
-            zout.writestr(item, data)
-    tmp.replace(p)
+    _rewrite_settings(p, new_settings_bytes)
     print(f"[done] wrote {p}")
 
 
@@ -214,14 +233,7 @@ def apply_path(docx_path, args=None) -> dict:
     if not dry and n_changed > 0:
         new_settings_bytes = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
                                             standalone=True)
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        with zipfile.ZipFile(p, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = zin.read(item.filename)
-                if item.filename == SETTINGS_PATH:
-                    data = new_settings_bytes
-                zout.writestr(item, data)
-        tmp.replace(p)
+        _rewrite_settings(p, new_settings_bytes)
 
     after = _audit(root) if not dry else {k: before[k] for k in before}
 

@@ -61,6 +61,11 @@ from . import strip_empty_captions
 from . import strip_orphan_media
 from . import image_dedup  # media_hashes 函数复用
 
+# 仓根 lib 进 sys.path —— 部件完整性断言（B 类：删除是有意的,用 diff_parts 对账；
+# append 不是 insert(0)，防顶掉 sub/ 里同名模块）
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import PartIntegrityError, diff_parts  # noqa: E402
+
 
 NS_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 REL = f"{{{NS_REL}}}"
@@ -170,6 +175,7 @@ def _intra_doc_image_dedup(docx_path: Path) -> dict:
     tmp = docx_path.with_suffix(docx_path.suffix + ".dedup.tmp")
     rels_re = re.compile(r"^word/_rels/.+\.xml\.rels$")
     parser = etree.XMLParser(remove_blank_text=False, recover=True)
+    rewritten_rels: set[str] = set()  # 真被改写的 rels，作为 diff_parts changed 白名单
 
     with zipfile.ZipFile(str(docx_path), "r") as zin:
         with zipfile.ZipFile(str(tmp), "w", zipfile.ZIP_DEFLATED) as zout:
@@ -202,8 +208,23 @@ def _intra_doc_image_dedup(docx_path: Path) -> dict:
                                 root, xml_declaration=True,
                                 encoding="UTF-8", standalone=True,
                             )
+                            rewritten_rels.add(it.filename)
                 zout.writestr(it, data)
 
+    # B 类完整性对账（move 之前，docx_path 未动 = 天然基线，断言炸则源件无损）：
+    # ① 丢的 == SHA256 判定的冗余媒体集 ② 无新增 ③ 字节变化 ⊆ 真被改写的 rels
+    d = diff_parts(docx_path, tmp, allow_changed=frozenset())
+    problems = []
+    if set(d.lost) != media_to_remove:
+        problems.append(f"lost != 判定冗余集: 差集 {sorted(set(d.lost) ^ media_to_remove)}")
+    if d.added:
+        problems.append(f"未报备新增部件: {d.added}")
+    unexpected = [n for n in d.changed if n not in rewritten_rels]
+    if unexpected:
+        problems.append(f"预期外改写: {unexpected}")
+    if problems:
+        tmp.unlink(missing_ok=True)
+        raise PartIntegrityError("slim image-dedup 完整性校验未通过: " + "; ".join(problems))
     shutil.move(str(tmp), str(docx_path))
     return {
         "duplicate_groups": len(dup_groups),
@@ -583,6 +604,26 @@ def run_aggressive(src_docx: Path, out_path: Path) -> dict:
             for mp in sorted(kept_media):
                 zout.writestr(mp, zin.read(mp))
 
+    # B 类完整性对账（move 之前，src 从未被动 = 基线）：
+    # ① 砍的 == 报告的 dropped_parts 一个不多不少 ② 新增仅允许 fallback 生成的
+    # styles/core（且 d.added 定义即「源缺才算新增」）③ 改写仅允许骨架重建必动的
+    # 四件（document.xml / document.xml.rels / [Content_Types].xml / _rels/.rels
+    # —— 后两件由 _build_aggressive_* 无条件重建，必然字节变）
+    d = diff_parts(src_docx, tmp, allow_changed={
+        "word/document.xml", "word/_rels/document.xml.rels",
+        "[Content_Types].xml", "_rels/.rels",
+    })
+    problems = []
+    if set(d.lost) != set(dropped_parts):
+        problems.append(f"lost != dropped_parts: 差集 {sorted(set(d.lost) ^ set(dropped_parts))}")
+    bad_added = set(d.added) - {"word/styles.xml", "docProps/core.xml"}
+    if bad_added:
+        problems.append(f"预期外新增: {sorted(bad_added)}")
+    if d.changed:
+        problems.append(f"预期外改写: {d.changed}")
+    if problems:
+        tmp.unlink(missing_ok=True)
+        raise PartIntegrityError("slim aggressive 完整性校验未通过: " + "; ".join(problems))
     shutil.move(str(tmp), str(out_path))
     size_after = out_path.stat().st_size
 

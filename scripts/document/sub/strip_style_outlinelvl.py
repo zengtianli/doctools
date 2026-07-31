@@ -37,6 +37,10 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parent))
 import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
+# 仓根 lib 进 sys.path(append 不是 insert(0) —— lib/ 与 sub/ 都有 styles.py,插 0 位会顶掉)
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
+
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 W = f"{{{NS['w']}}}"
 
@@ -130,6 +134,15 @@ def patch_styles_xml(docx_path: Path, target_names: set[str], dry_run: bool):
                 zout.writestr(it, new_bytes)
             else:
                 zout.writestr(it, zin.read(it.filename))
+    # 部件完整性断言(move 前:docx_path 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
+    # styles.xml 不在 DEFAULT 白名单,显式报备。main 与 pipeline apply_path 都汇到本函数。
+    try:
+        assert_parts_intact(docx_path, tmp,
+                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                            verbose=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     shutil.move(str(tmp), str(docx_path))
     return removed, skipped_protected, new_bytes
 

@@ -42,6 +42,7 @@ except ImportError:
     print("❌ 需要 lxml: pip install lxml", file=sys.stderr)
     sys.exit(1)
 
+from docx_parts import assert_parts_intact  # noqa: E402
 from docx_xml import NSMAP, qn  # noqa: E402
 
 try:
@@ -356,6 +357,10 @@ def cmd_apply(args) -> int:
                     data = new_doc_xml
                 zout.writestr(name, data)
     clear_quarantine(out)
+    # 部件完整性断言（fail-closed）：基线 = 范式件 ref —— 产物的部件全部继承自它
+    # （content 只是文字源），本函数只换 document.xml（在默认白名单），
+    # 其余部件必须逐字节 verbatim。verbose=False 保持既有 stdout 契约。
+    assert_parts_intact(ref, out, verbose=False)
     print(f"✅ 复刻 → {out}")
     print(f"   标题: {content['title'][:40]}")
     print(f"   正文: {len(content['body'])} 段 · 落款: {len(content['signature'])} 行")

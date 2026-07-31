@@ -61,6 +61,10 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parent))
 import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 
+# 仓根 lib 进 sys.path —— 部件完整性断言（B 类：删除是有意的,用 diff_parts 对账）
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import PartIntegrityError, diff_parts  # noqa: E402
+
 NS_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 REL = f"{{{NS_REL}}}"
 
@@ -259,6 +263,23 @@ def rewrite_skip(docx_path: Path, out_path: Path, orphans: set[str]) -> int:
                 if _RELS_RE.match(it.filename):
                     data = _rewrite_rels_drop_orphans(data, orphans)
                 zout.writestr(it, data)
+    # B 类完整性对账（move 之前，docx_path 未动 = 天然基线，断言炸则源件/产物均无损）：
+    # ① 丢的 == 判定的 orphan 集（一个不多不少）② 无未报备新增 ③ 字节变化只落在 rels 上
+    d = diff_parts(docx_path, tmp, allow_changed=frozenset())
+    problems = []
+    if set(d.lost) != set(orphans):
+        problems.append(
+            f"lost != 声明删除集: 多删 {sorted(set(d.lost) - set(orphans))} "
+            f"/ 漏删 {sorted(set(orphans) - set(d.lost))}")
+    if d.added:
+        problems.append(f"未报备新增部件: {d.added}")
+    bad_changed = [n for n in d.changed if not _RELS_RE.match(n)]
+    if bad_changed:
+        problems.append(f"rels 之外的部件被改写: {bad_changed}")
+    if problems:
+        tmp.unlink(missing_ok=True)
+        raise PartIntegrityError(
+            "strip_orphan_media 完整性校验未通过: " + "; ".join(problems))
     shutil.move(str(tmp), str(out_path))
     return skipped
 

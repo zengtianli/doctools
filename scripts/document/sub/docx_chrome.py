@@ -21,6 +21,9 @@ import argparse, zipfile, sys, re
 from pathlib import Path
 from lxml import etree
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / 'lib'))
+from docx_parts import assert_parts_intact  # noqa: E402  surgical 部件完整性断言
+
 W   = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 R   = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 CT  = 'http://schemas.openxmlformats.org/package/2006/content-types'
@@ -230,6 +233,10 @@ def build(raw, tpl, out, county):
             zout.writestr(zi,data)
         for name,(data,cttype) in new_parts.items():
             zout.writestr(name,data)
+    # 部件完整性断言（fail-closed）：docstring 承诺媒体/embeddings/OMML/OLE verbatim,
+    # 这里机器兜底。新增白名单与注册表同源: 只有 reg_hdr/reg_ftr 往 new_parts 塞的
+    # header/footer 部件是本次装帧的有意新增(已在 rels+CT 报备)。
+    assert_parts_intact(Path(raw), Path(out), allow_added=set(new_parts), verbose=False)
     from collections import Counter
     print(f'OK  -> {out}')
     print(f'    节数={len(sections)}  新部件={len(new_parts)}(header+footer)')

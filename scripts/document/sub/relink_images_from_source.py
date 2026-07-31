@@ -49,6 +49,12 @@ from pathlib import Path
 
 from lxml import etree
 
+# 仓根 lib 进 sys.path —— 部件完整性断言（append 不是 insert(0)，防顶掉同名模块）
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / 'lib'))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 # ----- XML namespaces -----
 W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -660,6 +666,17 @@ def apply_patch(target_path: Path, patch: dict, backup: bool = True) -> dict:
     with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as z:
         for name, data in contents.items():
             z.writestr(name, data)
+    # 部件完整性：replace 之前断言（此刻 target 未动 = 天然基线，断言炸则源件无损）。
+    # 整包读进 dict 再重建是 137→35 事故同型的高危形态；有意新增 = 从 source 拷来的
+    # media，改动的 document.xml / rels / [Content_Types].xml 在 DEFAULT_ALLOW_CHANGED。
+    try:
+        assert_parts_intact(
+            target_path, tmp_path,
+            allow_added={'word/' + c['target_name'] for c in patch['images_to_copy']},
+            verbose=False)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
     os.replace(tmp_path, target_path)
 
     return {

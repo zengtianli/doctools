@@ -39,6 +39,12 @@ from pathlib import Path
 
 from lxml import etree
 
+# 仓根 lib 进 sys.path —— 部件完整性断言（append 不是 insert(0)，防顶掉同名模块）
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -182,6 +188,14 @@ def _restyle(target: Path, ref: Path | None, *, no_backup: bool, dry: bool = Fal
             if item.filename == "word/document.xml":
                 data = new_doc
             zout.writestr(item, data)
+    # 部件完整性：replace 之前断言（此刻 target 未动 = 天然基线，断言炸则源件无损）。
+    # CLI cmd_apply 与 pipeline apply_path 都汇到本函数，一处覆盖双入口；
+    # 唯一改动部件 word/document.xml 在 DEFAULT_ALLOW_CHANGED，零白名单。
+    try:
+        assert_parts_intact(target, tmp, verbose=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(target)
     return {"changed": len(clone) + len(restyle), "cloned": len(clone),
             "pstyle_only": len(restyle), "kept": kept, "content_diff": diff}

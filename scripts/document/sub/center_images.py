@@ -28,6 +28,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 from soffice import find_soffice, require_soffice  # doctools SSOT: soffice 路径解析
+from docx_parts import assert_parts_intact  # noqa: E402  surgical 部件完整性断言
 
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -153,6 +154,9 @@ def _center(docx, *, no_backup: bool, dry: bool = False) -> dict:
         for item in zin.infolist():
             data = new_doc if item.filename == "word/document.xml" else zin.read(item.filename)
             zout.writestr(item, data)
+    # 部件完整性断言（fail-closed）：此刻 docx 仍是未动源件 = 天然基线；
+    # 断言炸则不 replace，源件毫发无损。只改 document.xml，默认白名单即可。
+    assert_parts_intact(docx, tmp, verbose=False)
     tmp.replace(docx)
     return {"changed": fixed, "images": len(imgs)}
 

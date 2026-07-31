@@ -57,6 +57,7 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
 from docx_xml import NSMAP
 from file_ops import clear_quarantine
 
@@ -272,6 +273,13 @@ def create_docx_with_styles(styles_xml_path, output_path):
                     zf.write(file_path, arcname)
 
     clear_quarantine(output_path)
+
+    # 部件完整性断言（fail-closed）：虽是造新文件，但基线 = python-docx 空白模板
+    # tmp_path（本函数不增删部件，只换 styles.xml）——对它 diff 恰能抓
+    # 「os.walk 重打包截断/漏拷/tmpdir 混入杂文件」。必须在 unlink(tmp_path) 之前比。
+    assert_parts_intact(tmp_path, output_path,
+                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                        verbose=False)
 
     # 清理临时文件
     os.unlink(tmp_path)
