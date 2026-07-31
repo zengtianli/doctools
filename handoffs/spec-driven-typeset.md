@@ -80,13 +80,13 @@ JSON，等于说「我猜不准，你先给判断结果」。
 - `apply()` 契约：**不开文件、不存盘、不备份、不 sys.exit**，那些都是调用方的事。
 - 本轮**只做结构搬移，不改业务逻辑**；不删任何脚本；agent 禁 git 操作。
 
-## 七 · 待回填
+## 七 · 待回填（2026-07-31 已全部回填）
 
-- [ ] schema：设值类几节、识别类几个开关
-- [ ] 12 个 `apply()` 的实际完成情况与未做项
-- [ ] `typeset_apply.py` 的对拍结果（等价性 / 开合次数 / 炸开面）
-- [ ] **bid_* 案例的答案**：「新增一类交付 = 新写一份 spec」在标书上成立到什么程度（百分比）
-- [ ] 对抗核验的总判断：能用吗、边界在哪
+- [x] schema：ACTIONS 表 29 个动作 = **26 设值/改写 + 3 识别**（`audit_caption_outline` / `audit_table_pairing` / `audit_bookmarks`，findings 只进 report 不影响退出码）；schema 是 `--dump-schema` 派生物（§八）
+- [x] `apply()` 完成情况：已落 §八 调查者六问（h1_base 漏搬参数已补、`docx_apply_image_caption` 已收编）；**未做项** = `center_images`（两个接口都没有，不收）、`fix_styleset`（相对 import 加载不到，挂 roadmap P6）、`strip_revisions` 双 kind（不做，账在 Q4）
+- [x] `typeset_apply.py` 对拍：§八 自验（58.9MB/301 部件真件夹具）+ 三段模型比 kind 强制路线少 3 次文件开合；炸开面由 `docx_safe_save` 收口兜底；2026-07-31 P3 改造后真件 `--dry-run` 报告与改前逐字一致（roadmap §五 P3 验收）
+- [x] **bid_* 案例答案：0/7**——`config/spec-examples/bid.yaml` 头部逐件论证：只读闸门×4、内容改写×2、driver×1 全都不是「版式」，spec 替代 bid 脚本数=0。「新增一类交付=新写一份 spec」在标书上只在**版式轴**成立（bid.yaml 本身），门检/清扫/去耦合走 `bid_gate.py` 子命令族（2026-07-31 六合一，roadmap §五 P1）
+- [x] 对抗核验总判断：**能用**；§九 记录核验抓到 2 个自述外问题（残留批注、目录守卫）均已修，边界 = 闸门语义与内容改写不进 spec（引擎 rc 不受 audit findings 影响是刻意设计）
 
 ---
 
