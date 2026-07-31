@@ -23,7 +23,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import zipfile
@@ -74,12 +73,12 @@ from finder import get_input_files  # noqa: E402
 from progress import ProgressTracker  # noqa: E402
 from text_fixes import fix_punctuation, fix_quotes, fix_units  # noqa: E402
 
-# 放在 document/ 同级，导入需要处理路径（md_docx_template / docx_write_gate 同目录 SSOT）
+# 放在 document/ 同级，导入需要处理路径（md_tools / docx_write_gate 同目录 SSOT）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docx_write_gate import WriteGate  # noqa: E402  原地写回并发门（同目录 SSOT）
 
-# 复用 md_docx_template 的样式提取
-from md_docx_template import DEFAULT_TEMPLATE, extract_styles_xml  # noqa: E402
+# 复用 md_tools 的样式提取 + Finder 选中（原 md_docx_template.py，2026-07-31 并入 md_tools md2docx）
+from md_tools import DEFAULT_TEMPLATE, extract_styles_xml, get_finder_selection  # noqa: E402
 
 W = NSMAP["w"]
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"  # xml:space（内建命名空间）
@@ -158,20 +157,6 @@ def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
     return output_path
 
 
-def get_finder_selection():
-    """获取 Finder 选中的文件"""
-    script = """
-    tell application "Finder"
-        set sel to selection
-        if (count of sel) > 0 then
-            return POSIX path of (item 1 of sel as alias)
-        end if
-    end tell
-    """
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    return result.stdout.strip()
-
-
 def tmpl_cmd_apply(args):
     """template apply 子命令入口"""
     # 无参数时从 Finder 获取选中的 .docx 文件
@@ -200,7 +185,7 @@ def tmpl_cmd_apply(args):
         base, ext = os.path.splitext(args.input)
         output_path = f"{base}_styled{ext}"
 
-    # 模板：优先用指定模板，缺失则降级到已提取样式（与 md_docx_template.py 行为一致）
+    # 模板：优先用指定模板，缺失则降级到已提取样式（与 md_tools.py md2docx 行为一致）
     template = args.template or DEFAULT_TEMPLATE
     if os.path.exists(template):
         with tempfile.TemporaryDirectory() as tmpdir:

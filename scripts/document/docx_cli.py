@@ -12,7 +12,7 @@
   renumber-fig                                    ← renum.py figures（原 docx_renumber_figures.py）
   text-fmt                                        ← docx_fmt.py text（原 docx_text_formatter.py）
   fix-ref                                         ← fix_superscript_refs.py
-  md-to-docx                                      ← md_docx_template.py
+  md-to-docx                                      ← md_tools.py md2docx（原 md_docx_template.py）
   scan-sensitive                                  ← scan_sensitive_words.py
   md ...                                          ← md_tools.py (sub-group: format/merge/split/strip/to-docx/to-html/frontmatter)
 
@@ -179,7 +179,7 @@ def cmd_fix_ref(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("sub/fix_superscript_refs", rest)
 
 def cmd_md_to_docx(args: argparse.Namespace, rest: list[str]) -> int:
-    return _exec_script("md_docx_template", rest)
+    return _exec_script("md_tools", ["md2docx"] + rest)
 
 def cmd_scan_sensitive(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("sub/scan_sensitive_words", rest)

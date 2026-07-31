@@ -12,6 +12,7 @@ md_tools.py - Markdown 工具集
     to-docx     Markdown 转 Docx（Pandoc 版）
     to-html     Markdown 渲染为 HTML 并在浏览器中打开
     frontmatter 批量生成 YAML frontmatter（LLM）
+    md2docx     Markdown 转 Docx（样式复刻版，原 md_docx_template.py）
 
 用法:
     python3 md_tools.py <subcommand> [args...]
@@ -22,9 +23,11 @@ md_tools.py - Markdown 工具集
     python3 md_tools.py to-docx input.md -o output.docx
     python3 md_tools.py to-html file.md
     python3 md_tools.py frontmatter docs/ --dry-run
+    python3 md_tools.py md2docx input.md -t 模板.docx -o output.docx
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -32,7 +35,9 @@ import sys
 import tempfile
 import time
 import webbrowser
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 
 # ── lib path setup ──────────────────────────────────────────────────
@@ -41,12 +46,42 @@ sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canoni
 from display import show_error, show_info, show_processing, show_success, show_warning
 from file_ops import (
     check_file_extension,
+    clear_quarantine,
     fatal_error,
     validate_input_file,
 )
 from finder import get_input_files
 from progress import ProgressTracker
 from text_fixes import fix_punctuation, fix_quotes, fix_units
+
+# ── md2docx（样式复刻版）依赖：原 md_docx_template.py 迁入 ──────────────
+try:
+    from lxml import etree
+except ImportError:
+    print("❌ 需要安装 lxml: pip install lxml")
+    sys.exit(1)
+
+try:
+    from docx import Document
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT  # noqa: F401
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import nsmap, qn  # noqa: F401
+    from docx.shared import Cm, Pt, Twips  # noqa: F401
+except ImportError:
+    print("❌ 需要安装 python-docx: pip install python-docx")
+    sys.exit(1)
+
+import contextlib
+
+# ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
+import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+
+from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
+from docx_xml import NSMAP  # noqa: E402
 
 # ── version info ────────────────────────────────────────────────────
 SCRIPT_VERSION = "3.0.0"
@@ -420,11 +455,11 @@ def cmd_strip(args):
 #  to-docx - Markdown 转 Docx（Pandoc 版）
 # ════════════════════════════════════════════════════════════════════
 
-# 默认模板路径（对齐 md_docx_template.py:696 — doctools SoT）
-DOCX_DEFAULT_TEMPLATE = str(Path(__file__).parent.parent.parent / "templates" / "template.docx")
+# 默认模板路径（doctools SoT；pandoc 版与样式复刻版 md2docx 共用同一常量）
+DEFAULT_TEMPLATE = str(Path(__file__).parent.parent.parent / "templates" / "template.docx")
 
 
-def docx_get_finder_selection():
+def get_finder_selection():
     """获取 Finder 选中的文件"""
     script = """
     tell application "Finder"
@@ -463,7 +498,7 @@ def docx_convert(md_path, output_path=None, template_path=None):
     ]
 
     # 使用模板（reference-doc）— 不存在则降级裸 pandoc
-    tpl = template_path or DOCX_DEFAULT_TEMPLATE
+    tpl = template_path or DEFAULT_TEMPLATE
     if tpl and Path(tpl).exists():
         cmd += ["--reference-doc", str(tpl)]
         show_info(f"模板: {Path(tpl).name}")
@@ -486,7 +521,7 @@ def cmd_to_docx(args):
     """to-docx 子命令入口"""
     md_path = args.input
     if not md_path:
-        finder_file = docx_get_finder_selection()
+        finder_file = get_finder_selection()
         if finder_file and finder_file.endswith(".md"):
             md_path = finder_file
             show_info(f"从 Finder 获取: {os.path.basename(finder_file)}")
@@ -495,6 +530,761 @@ def cmd_to_docx(args):
             sys.exit(1)
 
     docx_convert(md_path, args.output, args.template)
+
+
+# ════════════════════════════════════════════════════════════════════
+#  md2docx - Markdown 转 Docx（样式复刻版，原 md_docx_template.py 迁入）
+# ════════════════════════════════════════════════════════════════════
+
+# 需要提取的样式 ID
+TARGET_STYLES = {
+    "a": "Normal",  # 基础样式
+    "10": "Heading 1",  # 标题1
+    "2": "Heading 2",  # 标题2
+    "3": "Heading 3",  # 标题3
+    "4": "Heading 4",  # 标题4
+    "ZDWP": "ZDWP正文",  # 水利正文
+    "ZDWP1": "ZDWP表名",  # 表格标题
+    "ZDWP3": "ZDWP表格内容",  # 表格单元格文字
+    "ZDWP4": "ZDWP图名",  # 图片标题
+}
+
+# 样式依赖关系
+STYLE_DEPS = {
+    "10": ["2"],  # Heading 1 依赖 Heading 2
+    "2": ["a"],  # Heading 2 依赖 Normal
+    "3": ["4"],  # Heading 3 依赖 Heading 4
+    "4": ["a"],  # Heading 4 依赖 Normal
+    "ZDWP": ["a"],  # ZDWP正文 依赖 Normal
+    "ZDWP1": ["a"],  # ZDWP表名 依赖 Normal
+    "ZDWP3": ["a"],  # ZDWP表格内容 依赖 Normal
+    "ZDWP4": ["a"],  # ZDWP图名 依赖 Normal
+}
+
+# 默认配置文件路径
+DEFAULT_STYLES_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def extract_styles_xml(docx_path, output_dir=None):
+    """从 docx 提取样式 XML"""
+
+    if output_dir is None:
+        output_dir = os.path.dirname(docx_path) or "."
+
+    print(f"📄 提取样式: {docx_path}")
+
+    # 解压 docx
+    with zipfile.ZipFile(docx_path, "r") as zf:
+        styles_xml = zf.read("word/styles.xml")
+
+    # 解析 XML
+    root = etree.fromstring(styles_xml)
+
+    # 收集需要的样式
+    collected_styles = {}
+    found_body_style = None
+
+    for style in root.findall(".//w:style", NSMAP):
+        style_id = style.get(f"{{{NSMAP['w']}}}styleId")
+        style_type = style.get(f"{{{NSMAP['w']}}}type")
+
+        # 只要段落样式
+        if style_type != "paragraph":
+            continue
+
+        # 获取样式名
+        name_elem = style.find("w:name", NSMAP)
+        style_name = name_elem.get(f"{{{NSMAP['w']}}}val") if name_elem is not None else ""
+
+        # 检查是否是目标样式
+        if style_id in TARGET_STYLES:
+            collected_styles[style_id] = {"element": deepcopy(style), "name": style_name, "id": style_id}
+            print(f"  ✓ 找到: {style_id} ({style_name})")
+
+            # 记录正文样式
+            if style_id == "ZDWP":
+                found_body_style = "ZDWP"
+
+        # 如果没有 ZDWP，用 Normal 作为正文
+        if style_id == "a" and found_body_style is None:
+            found_body_style = "a"
+
+    # 检查必要样式
+    required = ["a", "10", "2", "3", "4"]
+    missing = [s for s in required if s not in collected_styles]
+    if missing:
+        print(f"⚠️  缺少样式: {missing}")
+
+    # 提取 docDefaults（默认字体设置）
+    doc_defaults = root.find(".//w:docDefaults", NSMAP)
+
+    # 生成精简的 styles.xml
+    new_root = etree.Element(f"{{{NSMAP['w']}}}styles", nsmap=NSMAP)
+
+    # 添加 docDefaults
+    if doc_defaults is not None:
+        new_root.append(deepcopy(doc_defaults))
+
+    # 按依赖顺序添加样式
+    added = set()
+
+    def add_style(style_id):
+        if style_id in added or style_id not in collected_styles:
+            return
+        # 先添加依赖
+        for dep in STYLE_DEPS.get(style_id, []):
+            add_style(dep)
+        new_root.append(collected_styles[style_id]["element"])
+        added.add(style_id)
+
+    for style_id in collected_styles:
+        add_style(style_id)
+
+    # 保存 XML
+    styles_xml_path = os.path.join(output_dir, "heading_styles.xml")
+    tree = etree.ElementTree(new_root)
+    tree.write(styles_xml_path, encoding="UTF-8", xml_declaration=True, pretty_print=True)
+    print(f"💾 样式 XML: {styles_xml_path}")
+
+    # 生成人类可读的说明
+    info_path = os.path.join(output_dir, "styles_info.txt")
+    with open(info_path, "w", encoding="utf-8") as f:
+        f.write("=" * 60 + "\n")
+        f.write(f"样式提取自: {os.path.basename(docx_path)}\n")
+        f.write("=" * 60 + "\n\n")
+
+        f.write("提取的样式:\n")
+        for _, info in collected_styles.items():
+            f.write(f"  - {info['id']}: {info['name']}\n")
+
+        f.write(f"\n正文样式: {found_body_style}\n")
+
+        f.write("\nMarkdown 映射:\n")
+        f.write("  # 标题    → Heading 1\n")
+        f.write("  ## 标题   → Heading 2\n")
+        f.write("  ### 标题  → Heading 3\n")
+        f.write("  #### 标题 → Heading 4\n")
+        f.write(f"  普通段落  → {collected_styles.get(found_body_style, {}).get('name', 'Normal')}\n")
+        f.write(f"  表x ...   → {collected_styles.get('ZDWP1', {}).get('name', 'Normal')}\n")
+        f.write(f"  表格内容  → {collected_styles.get('ZDWP3', {}).get('name', 'Normal')}\n")
+        f.write(f"  图x ...   → {collected_styles.get('ZDWP4', {}).get('name', 'Normal')}\n")
+
+    print(f"📝 样式说明: {info_path}")
+
+    # 保存配置
+    config = {
+        "source": os.path.basename(docx_path),
+        "body_style": found_body_style,
+        "body_style_name": collected_styles.get(found_body_style, {}).get("name", "Normal"),
+        "styles": {k: v["name"] for k, v in collected_styles.items()},
+    }
+    config_path = os.path.join(output_dir, "styles_config.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+    return styles_xml_path, config
+
+
+def create_docx_with_styles(styles_xml_path, output_path):
+    """创建带样式的空白 docx"""
+
+    # 先创建空白文档
+    doc = Document()
+
+    # 保存到临时文件
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp_path = tmp.name
+    doc.save(tmp_path)
+
+    # 读取提取的样式
+    with open(styles_xml_path, "rb") as f:
+        new_styles = etree.parse(f).getroot()
+
+    # 解压 docx，修改 styles.xml，重新打包
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 解压
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            zf.extractall(tmpdir)
+
+        # 读取原 styles.xml
+        orig_styles_path = os.path.join(tmpdir, "word", "styles.xml")
+        with open(orig_styles_path, "rb") as f:
+            orig_root = etree.parse(f).getroot()
+
+        # 合并样式：把新样式添加到原样式中
+        # 先删除同名样式
+        existing_ids = set()
+        for style in new_styles.findall(".//w:style", NSMAP):
+            style_id = style.get(f"{{{NSMAP['w']}}}styleId")
+            existing_ids.add(style_id)
+
+        for style in orig_root.findall(".//w:style", NSMAP):
+            style_id = style.get(f"{{{NSMAP['w']}}}styleId")
+            if style_id in existing_ids:
+                orig_root.remove(style)
+
+        # 添加新样式
+        for style in new_styles.findall(".//w:style", NSMAP):
+            orig_root.append(deepcopy(style))
+
+        # 更新 docDefaults
+        new_defaults = new_styles.find(".//w:docDefaults", NSMAP)
+        if new_defaults is not None:
+            old_defaults = orig_root.find(".//w:docDefaults", NSMAP)
+            if old_defaults is not None:
+                orig_root.remove(old_defaults)
+            orig_root.insert(0, deepcopy(new_defaults))
+
+        # 写回 styles.xml
+        tree = etree.ElementTree(orig_root)
+        tree.write(orig_styles_path, encoding="UTF-8", xml_declaration=True)
+
+        # 重新打包
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root_dir, _dirs, files in os.walk(tmpdir):
+                for file in files:
+                    file_path = os.path.join(root_dir, file)
+                    arcname = os.path.relpath(file_path, tmpdir)
+                    zf.write(file_path, arcname)
+
+    clear_quarantine(output_path)
+
+    # 部件完整性断言（fail-closed）：虽是造新文件，但基线 = python-docx 空白模板
+    # tmp_path（本函数不增删部件，只换 styles.xml）——对它 diff 恰能抓
+    # 「os.walk 重打包截断/漏拷/tmpdir 混入杂文件」。必须在 unlink(tmp_path) 之前比。
+    assert_parts_intact(tmp_path, output_path,
+                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                        verbose=False)
+
+    # 清理临时文件
+    os.unlink(tmp_path)
+
+    return output_path
+
+
+def set_table_border(table, border_color="000000", border_size=4):
+    """给表格设置边框
+
+    Args:
+        table: python-docx Table 对象
+        border_color: 边框颜色（十六进制，默认黑色）
+        border_size: 边框粗细（单位：1/8磅，4=0.5磅）
+    """
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+
+    # 创建边框元素
+    tblBorders = OxmlElement("w:tblBorders")
+
+    # 六种边框：top, left, bottom, right, insideH, insideV
+    for border_name in ["top", "left", "bottom", "right", "insideH", "insideV"]:
+        border = OxmlElement(f"w:{border_name}")
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), str(border_size))
+        border.set(qn("w:color"), border_color)
+        border.set(qn("w:space"), "0")
+        tblBorders.append(border)
+
+    # 移除旧边框设置
+    old_borders = tblPr.find(qn("w:tblBorders"))
+    if old_borders is not None:
+        tblPr.remove(old_borders)
+
+    tblPr.append(tblBorders)
+
+
+def parse_table_row(line):
+    """解析表格行，返回单元格列表"""
+    # 去掉首尾的 |
+    line = line.strip()
+    if line.startswith("|"):
+        line = line[1:]
+    if line.endswith("|"):
+        line = line[:-1]
+    # 分割单元格
+    cells = [cell.strip() for cell in line.split("|")]
+    return cells
+
+
+def is_separator_row(line):
+    """检查是否是表格分隔行 |---|---|"""
+    line = line.strip()
+    if not line.startswith("|"):
+        return False
+    # 去掉 | 后检查是否只有 - : 空格
+    content = line.replace("|", "").replace("-", "").replace(":", "").replace(" ", "")
+    return len(content) == 0
+
+
+def clean_markdown_text(text):
+    """清理行内噪音(code/math)。**bold**/*italic* 标记保留,由 add_md_runs 渲染成真 Word run。"""
+    text = re.sub(r"`(.+?)`", r"\1", text)  # `code`
+    text = re.sub(r"\$(.+?)\$", r"\1", text)  # $math$ (简单处理)
+    return text
+
+
+def strip_md_markers(text):
+    """整段剥掉 markdown 行内标记(标题/表名/图名本身有样式,不需要 run 级加粗)。"""
+    text = clean_markdown_text(text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # **bold**
+    text = re.sub(r"\*(.+?)\*", r"\1", text)  # *italic*
+    return text
+
+
+# **bold** 或 *italic*(首字符非空格/星号,避免 3*4 这类误伤)
+_MD_INLINE = re.compile(r"(\*\*[^*]+?\*\*|\*[^*\s][^*]*?\*)")
+
+
+def add_md_runs(para, text):
+    """把 **bold**/*italic* 渲染成真 Word run —— 星号字面量绝不落进 docx。"""
+    for part in _MD_INLINE.split(clean_markdown_text(text)):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            para.add_run(part[2:-2]).bold = True
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            para.add_run(part[1:-1]).italic = True
+        else:
+            para.add_run(part)
+
+
+def parse_list_item(line):
+    """解析列表项，返回 (缩进级别, 内容)"""
+    # 计算缩进（空格或 tab）
+    stripped = line.lstrip()
+    indent = len(line) - len(stripped)
+    indent_level = indent // 2  # 每 2 空格一级
+
+    # 去掉列表标记
+    if (
+        stripped.startswith("- ")
+        or stripped.startswith("* ")
+        and not stripped.startswith("**")
+        or stripped.startswith("> ")
+    ):
+        content = stripped[2:]
+    elif re.match(r"^\d+\.\s", stripped):
+        content = re.sub(r"^\d+\.\s", "", stripped)
+    else:
+        content = stripped
+
+    return indent_level, content.strip()
+
+
+def merge_list_items(items):
+    """合并列表项为段落文本
+
+    智能处理：如果前一项以冒号结尾，则不加分号分隔
+    """
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+
+    result = items[0]
+    for item in items[1:]:
+        # 如果前面以冒号结尾，直接连接
+        if result.endswith("：") or result.endswith(":"):
+            result += item
+        else:
+            result += "；" + item
+
+    return result
+
+
+def parse_markdown(md_content):
+    """解析 Markdown，返回元素列表"""
+    elements = []
+    lines = md_content.split("\n")
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # 空行跳过
+        if not stripped:
+            i += 1
+            continue
+
+        # 分隔线 ---
+        if stripped == "---":
+            i += 1
+            continue
+
+        # 标题
+        heading_match = re.match(r"^(#{1,4})\s+(.+)$", line)
+        if heading_match:
+            level = len(heading_match.group(1))
+            text = heading_match.group(2).strip()
+            elements.append({"type": "heading", "level": level, "text": text})
+            i += 1
+            continue
+
+        # 表名：以 "表" + 数字 开头（允许"表 6.5-1"式空格间隔——中文题注主流写法）
+        if re.match(r"^表\s?\d", stripped):
+            elements.append({"type": "table_title", "text": stripped})
+            i += 1
+            continue
+
+        # 图名：以 "图" + 数字 开头（允许"图 6.5-1"式空格间隔）
+        if re.match(r"^图\s?\d", stripped):
+            elements.append({"type": "figure_title", "text": stripped})
+            i += 1
+            continue
+
+        # 表格：以 | 开头
+        if stripped.startswith("|"):
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table_lines.append(lines[i])
+                i += 1
+
+            # 解析表格
+            if len(table_lines) >= 2:
+                headers = []
+                rows = []
+
+                # 第一行是表头
+                headers = parse_table_row(table_lines[0])
+
+                # 第二行是分隔符，跳过
+                # 后面是数据行
+                for tl in table_lines[2:]:
+                    if not is_separator_row(tl):
+                        rows.append(parse_table_row(tl))
+
+                elements.append({"type": "table", "headers": headers, "rows": rows})
+            continue
+
+        # 列表项：以 - 、* 、> 或数字. 开头
+        # 注意：区分 "* 列表项"（单星号+空格）和 "**加粗**"（双星号，不是列表）
+        is_list_start = (
+            stripped.startswith("- ")
+            or (stripped.startswith("* ") and not stripped.startswith("**"))
+            or stripped.startswith("> ")
+            or re.match(r"^\d+\.\s", stripped)
+        )
+
+        if is_list_start:
+            # 收集连续的列表项
+            list_items = []
+            while i < len(lines):
+                current = lines[i]
+                current_stripped = current.strip()
+
+                # 空行结束列表
+                if not current_stripped:
+                    break
+
+                # 检查是否是列表项（包括缩进的子项）
+                is_list_item = (
+                    current_stripped.startswith("- ")
+                    or (current_stripped.startswith("* ") and not current_stripped.startswith("**"))
+                    or current_stripped.startswith("> ")
+                    or re.match(r"^\d+\.\s", current_stripped)
+                    or (current.startswith("  ") and list_items)  # 缩进的续行
+                )
+
+                if not is_list_item:
+                    break
+
+                indent_level, content = parse_list_item(current)
+                if content:  # 只添加非空内容
+                    list_items.append((indent_level, content))
+                i += 1
+
+            # 把列表项转换为段落
+            # 策略：每个列表项作为一个段落，缩进项合并到上一项
+            if list_items:
+                current_para = []
+                for indent_level, content in list_items:
+                    clean_content = clean_markdown_text(content)
+                    if indent_level == 0:
+                        # 新的一级列表项
+                        if current_para:
+                            # 保存之前的段落
+                            elements.append({"type": "paragraph", "text": merge_list_items(current_para)})
+                        current_para = [clean_content]
+                    else:
+                        # 缩进的子项，合并到当前段落
+                        current_para.append(clean_content)
+
+                # 保存最后一个段落
+                if current_para:
+                    elements.append({"type": "paragraph", "text": merge_list_items(current_para)})
+            continue
+
+        # 普通段落
+        para_lines = [line]
+        i += 1
+        # 继续收集段落内容，直到遇到特殊行
+        while i < len(lines):
+            next_line = lines[i]
+            next_stripped = next_line.strip()
+
+            # 空行结束段落
+            if not next_stripped:
+                break
+
+            # 特殊行结束段落
+            if (
+                re.match(r"^#{1,4}\s", next_line)  # 标题
+                or next_stripped.startswith("|")  # 表格
+                or next_stripped.startswith("- ")  # 列表
+                or (next_stripped.startswith("* ") and not next_stripped.startswith("**"))
+                or next_stripped.startswith("> ")
+                or re.match(r"^\d+\.\s", next_stripped)
+                or next_stripped == "---"
+            ):
+                break
+
+            para_lines.append(next_line)
+            i += 1
+
+        text = " ".join(para_lines)
+        text = clean_markdown_text(text)
+
+        if text.strip():  # 只添加非空段落
+            elements.append({"type": "paragraph", "text": text})
+
+    return elements
+
+
+def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
+    """转换 Markdown 到 Docx"""
+
+    print(f"📖 读取: {md_path}")
+
+    # 读取 markdown
+    with open(md_path, encoding="utf-8") as f:
+        md_content = f.read()
+
+    # 解析
+    elements = parse_markdown(md_content)
+    print(f"📊 解析: {len(elements)} 个元素")
+
+    # 创建带样式的 docx
+    create_docx_with_styles(styles_xml_path, output_path)
+
+    # 打开并写入内容
+    doc = Document(output_path)
+
+    # 确定正文样式名
+    body_style = "ZDWP正文"
+    if config and config.get("body_style_name"):
+        body_style = config["body_style_name"]
+
+    # 表名/表格内容/图名:优先用模板提取到的真实样式名(模板里可能带空格,如「ZDWP 表名」),
+    # 硬编码名只作 fallback —— 否则名字对不上就整体退化成正文样式。
+    styles_map = (config or {}).get("styles", {})
+    table_cell_style = styles_map.get("ZDWP3", "ZDWP表格内容")
+    table_title_style = styles_map.get("ZDWP1", "ZDWP表名")
+    figure_title_style = styles_map.get("ZDWP4", "ZDWP图名")
+
+    # 检查样式是否存在
+    available_styles = {s.name for s in doc.styles}
+    if body_style not in available_styles:
+        body_style = "Normal"
+        print("⚠️  使用 Normal 作为正文样式")
+
+    if table_cell_style not in available_styles:
+        table_cell_style = body_style
+        print(f"⚠️  使用 {body_style} 作为表格内容样式")
+
+    if table_title_style not in available_styles:
+        table_title_style = body_style
+        print(f"⚠️  使用 {body_style} 作为表名样式")
+
+    if figure_title_style not in available_styles:
+        figure_title_style = body_style
+        print(f"⚠️  使用 {body_style} 作为图名样式")
+
+    # 样式映射
+    heading_styles = {
+        1: "Heading 1",
+        2: "Heading 2",
+        3: "Heading 3",
+        4: "Heading 4",
+    }
+
+    def _styled_paragraph(text, style_name, inline=True):
+        """加一段:样式尽力套,行内 markdown 一律消化(inline=真 run 加粗;否则整段剥标记)。"""
+        try:
+            para = doc.add_paragraph(style=style_name)
+        except KeyError:
+            para = doc.add_paragraph()
+        if inline:
+            add_md_runs(para, text)
+        else:
+            para.add_run(strip_md_markers(text))
+        return para
+
+    # 写入内容
+    for elem in elements:
+        if elem["type"] == "heading":
+            level = elem["level"]
+            style_name = heading_styles.get(level, "Heading 4")
+            # 标题样式自带加粗,行内标记整段剥掉
+            text = strip_md_markers(elem["text"])
+            try:
+                doc.add_paragraph(text, style=style_name)
+            except KeyError:
+                doc.add_heading(text, level=level)
+
+        elif elem["type"] == "paragraph":
+            _styled_paragraph(elem["text"], body_style)
+
+        elif elem["type"] == "table_title":
+            _styled_paragraph(elem["text"], table_title_style, inline=False)
+
+        elif elem["type"] == "figure_title":
+            _styled_paragraph(elem["text"], figure_title_style, inline=False)
+
+        elif elem["type"] == "table":
+            headers = elem["headers"]
+            rows = elem["rows"]
+
+            # 计算行列数
+            num_cols = len(headers)
+            num_rows = 1 + len(rows)  # 表头 + 数据行
+
+            # 创建表格
+            table = doc.add_table(rows=num_rows, cols=num_cols)
+
+            # 设置表格边框
+            set_table_border(table)
+
+            # 填充表头
+            header_row = table.rows[0]
+            for j, header in enumerate(headers):
+                cell = header_row.cells[j]
+                # 垂直居中
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                # 清空默认段落，设置样式
+                cell.text = ""
+                para = cell.paragraphs[0]
+                add_md_runs(para, header)
+                # 水平居中
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                with contextlib.suppress(KeyError):
+                    para.style = table_cell_style
+
+            # 填充数据行
+            for i, row_data in enumerate(rows):
+                row = table.rows[i + 1]
+                for j, cell_text in enumerate(row_data):
+                    if j < num_cols:
+                        cell = row.cells[j]
+                        # 垂直居中
+                        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                        cell.text = ""
+                        para = cell.paragraphs[0]
+                        add_md_runs(para, cell_text)
+                        # 水平居中
+                        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        with contextlib.suppress(KeyError):
+                            para.style = table_cell_style
+
+    # 保存
+    doc.save(output_path)
+    clear_quarantine(output_path)
+    print(f"✅ 输出: {output_path}")
+
+    return output_path
+
+
+# md2docx 子命令 parser（build_parser 里赋值；fall-through 时打印它的 help）
+_MD2DOCX_PARSER = None
+
+
+def cmd_md2docx(args):
+    """md2docx 子命令入口（原 md_docx_template.py main() 三分支 + Finder fallback）"""
+    # 无参数时从 Finder 获取选中的 .md 文件
+    if not args.input:
+        finder_file = get_finder_selection()
+        if not finder_file:
+            print("❌ Finder 中未选中任何文件")
+            print("   💡 在 Finder 选中一个 .md 文件后重新运行")
+            sys.exit(1)
+        if not finder_file.endswith(".md"):
+            ext = os.path.splitext(finder_file)[1] or "(无扩展名)"
+            print(f"❌ 需要 .md 文件，但选中的是: {ext}")
+            print(f"   选中: {os.path.basename(finder_file)}")
+            sys.exit(1)
+        args.input = finder_file
+        print(f"📄 从 Finder 获取: {os.path.basename(finder_file)}")
+
+    # 命令: extract
+    if args.input == "extract":
+        if not args.template_or_md:
+            print("❌ 用法: python md_docx_heading_template.py extract 模板.docx")
+            sys.exit(1)
+        extract_styles_xml(args.template_or_md)
+        return
+
+    # 命令: convert
+    if args.input == "convert":
+        if not args.template_or_md:
+            print("❌ 用法: python md_docx_heading_template.py convert input.md -o output.docx")
+            sys.exit(1)
+
+        md_path = args.template_or_md
+        styles_path = args.styles or os.path.join(DEFAULT_STYLES_DIR, "heading_styles.xml")
+        output_path = args.output or os.path.splitext(md_path)[0] + ".docx"
+
+        if not os.path.exists(styles_path):
+            print(f"❌ 样式文件不存在: {styles_path}")
+            print("   请先运行: python md_docx_heading_template.py extract 模板.docx")
+            sys.exit(1)
+
+        # 读取配置
+        config_path = os.path.join(os.path.dirname(styles_path), "styles_config.json")
+        config = None
+        if os.path.exists(config_path):
+            with open(config_path, encoding="utf-8") as f:
+                config = json.load(f)
+
+        convert_md_to_docx(md_path, styles_path, output_path, config)
+        return
+
+    # 一步完成: input.md -t 模板.docx -o output.docx
+    if args.input.endswith(".md"):
+        md_path = args.input
+
+        # 使用指定模板或默认模板
+        template = args.template or DEFAULT_TEMPLATE
+
+        if os.path.exists(template):
+            # 先提取样式
+            with tempfile.TemporaryDirectory() as tmpdir:
+                print(f"📋 使用模板: {os.path.basename(template)}")
+                styles_path, config = extract_styles_xml(template, tmpdir)
+                output_path = args.output or os.path.splitext(md_path)[0] + ".docx"
+                convert_md_to_docx(md_path, styles_path, output_path, config)
+        else:
+            # 使用已提取的样式
+            styles_path = args.styles or os.path.join(DEFAULT_STYLES_DIR, "heading_styles.xml")
+            if not os.path.exists(styles_path):
+                print(f"❌ 样式文件不存在: {styles_path}")
+                print(f"❌ 默认模板不存在: {DEFAULT_TEMPLATE}")
+                print("   请指定模板: -t 模板.docx")
+                sys.exit(1)
+
+            config_path = os.path.join(os.path.dirname(styles_path), "styles_config.json")
+            config = None
+            if os.path.exists(config_path):
+                with open(config_path, encoding="utf-8") as f:
+                    config = json.load(f)
+
+            output_path = args.output or os.path.splitext(md_path)[0] + ".docx"
+            convert_md_to_docx(md_path, styles_path, output_path, config)
+        return
+
+    (_MD2DOCX_PARSER or build_parser()).print_help()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -975,6 +1765,7 @@ def build_parser():
   %(prog)s frontmatter docs/                     批量生成 frontmatter
   %(prog)s frontmatter docs/ --dry-run           只列出待处理文件
   %(prog)s frontmatter docs/ --file README.md    只处理单个文件
+  %(prog)s md2docx input.md -t template.docx     样式复刻转 docx（原 md_docx_template.py）
 """,
     )
     parser.add_argument(
@@ -1059,6 +1850,32 @@ def build_parser():
     p_fm.add_argument("--dry-run", action="store_true", help="只列出会处理的文件，不调用 API")
     p_fm.add_argument("--file", dest="file", help="只处理单个文件（相对于 src_dir 的路径）")
 
+    # ── md2docx ──（原 md_docx_template.py，argv 契约逐字保留）
+    global _MD2DOCX_PARSER
+    p_m2d = subparsers.add_parser(
+        "md2docx",
+        help="Markdown 转 Docx（样式复刻版，原 md_docx_template.py）",
+        description="Markdown 转 Docx（样式复刻版）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 提取样式
+  python md_tools.py md2docx extract 模板.docx
+
+  # 转换（Raycast 调用：选中 .md 文件即可）
+  python md_tools.py md2docx input.md
+
+  # 指定模板
+  python md_tools.py md2docx input.md -t 模板.docx -o output.docx
+        """,
+    )
+    p_m2d.add_argument("input", nargs="?", help="Markdown 文件或命令 (extract/convert)")
+    p_m2d.add_argument("template_or_md", nargs="?", help="模板 docx (extract) 或 md 文件 (convert)")
+    p_m2d.add_argument("-t", "--template", help="模板 docx 文件")
+    p_m2d.add_argument("-s", "--styles", help="样式 XML 文件")
+    p_m2d.add_argument("-o", "--output", help="输出文件")
+    _MD2DOCX_PARSER = p_m2d
+
     return parser
 
 
@@ -1079,6 +1896,7 @@ def main():
         "to-docx": cmd_to_docx,
         "to-html": cmd_to_html,
         "frontmatter": cmd_frontmatter,
+        "md2docx": cmd_md2docx,
     }
 
     handler = commands.get(args.command)

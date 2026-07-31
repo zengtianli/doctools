@@ -1,7 +1,7 @@
 """
 Word XML namespace 常量与工具函数
 
-供 docx_track_changes / docx_extract / md_docx_template 共用
+供 docx_track_changes / docx_extract / md_tools(md2docx) 共用
 
 ⚠ 「全文改写」类工具必读（2026-07-26）：python-docx 的 `Document.paragraphs` 只认
    `w:body/./w:p`、`Paragraph.runs` 只认 `./w:r`（`CT_P.r = ZeroOrMore("w:r")`），

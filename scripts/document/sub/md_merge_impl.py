@@ -45,9 +45,10 @@ from docx.shared import Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-# 复用 md_docx_template 的 md-table 解析/边框 helper, 不重写 (铁律 #5)
+# 复用 md_tools 的 md-table 解析/边框 helper, 不重写 (铁律 #5)
+# (原 md_docx_template.py, 2026-07-31 并入 md_tools md2docx)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from md_docx_template import (  # noqa: E402
+from md_tools import (  # noqa: E402
     parse_table_row,
     is_separator_row,
     set_table_border,
@@ -161,7 +162,7 @@ def parse_md(filepath: str) -> list:
       ("table", headers:list, rows:list[list]) —— markdown 表格(管道符 + 分隔行)
 
     2026-05-29 (GOAL report-automation Phase 0-A): 修复原 parse_md 只认标题+段、
-    markdown 表格静默写成字面管道符 Normal 段的 🔴 缺口。表格解析复用 md_docx_template
+    markdown 表格静默写成字面管道符 Normal 段的 🔴 缺口。表格解析复用 md_tools
     的 parse_table_row/is_separator_row(铁律 #5 不重写)。
     """
     blocks: list = []

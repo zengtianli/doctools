@@ -3,7 +3,7 @@
 文档/数据 统一调度器 —— 按文件后缀自动 route 到现有引擎(零重写,纯路由层)。
 
 设计:命令只表达"动词",格式让本脚本运行时认。和 content-router 同一模式。
-所有底层引擎(md_tools/pptx_tools/docx_*/data/convert 等)一个不改,subprocess 调用。
+所有底层引擎(md_tools/pptx_cli/docx_*/data/convert 等)一个不改,subprocess 调用。
 
 用法:
   doc_dispatch.py clean      <files...>               规范化(纯文本:引号/标点/单位 · docx·md·pptx)
@@ -41,7 +41,7 @@ DOC = Path(__file__).resolve().parent            # scripts/document
 DATA = DOC.parent / "data"                       # scripts/data
 PY = sys.executable                              # uv 环境的 python
 
-# pdf 系引擎（pdf_to_docx.py）依赖 pdfplumber/pypdf，**只装在 homebrew python3**，
+# pdf 系引擎（pdf_cli.py convert to-docx）依赖 pdfplumber/pypdf，**只装在 homebrew python3**，
 # 不在 ~/Dev/.venv —— 而 GUI 经 `uv run --project ~/Dev` 调本文件时 sys.executable
 # 正是 .venv/bin/python。用 PY 跑会 ModuleNotFoundError，必须写死绝对路径
 # （同 pdf_cli.py 的既定运行解释器）。
@@ -52,7 +52,7 @@ PY_PDF = "/opt/homebrew/bin/python3"
 _MARKITDOWN = shutil.which("markitdown") or str(Path.home() / ".local/bin/markitdown")
 _PDFTOTEXT = shutil.which("pdftotext") or "/opt/homebrew/bin/pdftotext"
 
-# 兜底 PYTHONPATH:有些引擎(如 md_docx_template.py)只加了 doctools/lib、漏了 dev/lib，
+# 兜底 PYTHONPATH:有些引擎只加了 doctools/lib、漏了 dev/lib，
 # 直接子进程调用会 ModuleNotFoundError(file_ops 等)。这里统一补齐,覆盖所有引擎。
 _LIBS = [
     str(DOC.parent.parent / "lib"),                              # doctools/lib
@@ -149,7 +149,7 @@ def route_clean(f: str, opts: dict | None = None) -> tuple[list[str], str] | Non
     if e in ("pptx",):
         # 只跑 format+table(文本与表格规范)。font 阶段=全篇强制换字体,
         # 2026-07-26 拆成独立动词 fontunify —— 换字体不属于「文本规范化」。
-        return _py("pptx_tools.py", "all", "--phases", "format,table", f), "pptx → 文本+表格规范"
+        return _py("pptx_cli.py", "all", "--phases", "format,table", f), "pptx → 文本+表格规范"
     return None   # xlsx 的「英文小写」已拆成独立动词 lowercase(那是语义级数据改写)
 
 
@@ -177,7 +177,7 @@ def route_quotes(f: str, opts: dict | None = None) -> tuple[list[str], str] | No
 def route_fontunify(f: str) -> tuple[list[str], str] | None:
     """pptx 全篇(含母版/版式)字体统一。⚠ 原地覆写原文件,留 .backup。"""
     if _ext(f) == "pptx":
-        return _py("pptx_tools.py", "font", f), "pptx → 全篇字体统一(原地覆写,留 .backup)"
+        return _py("pptx_cli.py", "font", f), "pptx → 全篇字体统一(原地覆写,留 .backup)"
     return None
 
 
@@ -242,9 +242,9 @@ def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
     e = _ext(f)
     M = {
         ("docx", "md"): (_py("docx_to_md_sh", f), None),  # 占位,下面特判 .sh
-        ("pptx", "md"): (_py("pptx_to_md.py", f), "pptx → Markdown"),
-        ("ppt", "md"): (_py("pptx_to_md.py", f), "ppt → Markdown"),
-        ("md", "word"): (_py("md_docx_template.py", f), "md → Word(套模板)"),
+        ("pptx", "md"): (_py("pptx_cli.py", "to-md", f), "pptx → Markdown"),
+        ("ppt", "md"): (_py("pptx_cli.py", "to-md", f), "ppt → Markdown"),
+        ("md", "word"): (_py("md_tools.py", "md2docx", f), "md → Word(套模板)"),
         ("docx", "word"): (_py("docx_fmt.py", "template", f), "docx → 套模板重排"),
         ("csv", "xlsx"): (_data("convert.py", "xlsx-from-csv", f), "csv → Excel"),
         ("txt", "xlsx"): (_data("convert.py", "xlsx-from-txt", f), "txt → Excel"),
@@ -260,7 +260,7 @@ def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
     # pdf 系:结构提取路线(pdfplumber+python-docx),必须用 homebrew python3
     if e == "pdf":
         if target == "word":
-            return [PY_PDF, str(DOC / "pdf_to_docx.py"), f], "PDF → Word(段落重组 + 真表格)"
+            return [PY_PDF, str(DOC / "pdf_cli.py"), "convert", "to-docx", f], "PDF → Word(段落重组 + 真表格)"
         if target == "md":
             return [_MARKITDOWN, f, "-o", str(Path(f).with_suffix(".md"))], "PDF → Markdown"
         if target == "txt":
@@ -354,7 +354,7 @@ def _word_output(f: str) -> Path:
     p = Path(f)
     if _ext(f) == "docx":
         return p.with_name(f"{p.stem}_styled.docx")   # docx_fmt.py template
-    return p.with_suffix(".docx")                     # md_docx_template.py / soffice
+    return p.with_suffix(".docx")                     # md_tools.py md2docx / soffice
 
 
 def do_convert(files, target):
@@ -506,7 +506,7 @@ def do_typeset(files) -> int:
         d, stem = p.parent, p.stem
         # Step 1: 转换/套模板
         if e == "md":
-            if _run(_py("md_docx_template.py", str(p)), "1/3 md → Word(套模板)"): rc |= 1; continue
+            if _run(_py("md_tools.py", "md2docx", str(p)), "1/3 md → Word(套模板)"): rc |= 1; continue
             step1 = d / f"{stem}.docx"; final = d / f"{stem}.docx"
         else:
             if _run(_py("docx_fmt.py", "template", str(p)), "1/3 docx 套模板重排"): rc |= 1; continue
