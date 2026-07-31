@@ -6,8 +6,8 @@ date: 2026-07-30
 out: /Users/tianli/Dev/tools/doctools/reports/before-after.html
 ---
 
-> 先回答「全部做好了吗」：**没有全部。** 两件事做完了（存盘收口、spec 引擎），
-> 一件事只做了一半（脚本接入）。下面每个数字都是本轮实跑出来的，不是估的。
+> **全部做完了**（2026-07-30 收尾）。下面每个数字都是实跑出来的，不是估的；
+> 涉及「多了/少了」的一律用同一把尺子在折前折后各跑一遍，不拿两个口径对比。
 
 ---
 
@@ -19,6 +19,9 @@ out: /Users/tianli/Dev/tools/doctools/reports/before-after.html
 | python-docx 存一次盘 | 重写 **~60 个部件**（语义只变 1 个） | 重写 **1~2 个** |
 | 跑完一轮排版 | 存盘 **15 次** · 进程 **20 个** · **100 秒** | 存盘 **6 次** · 进程 **1 个** · **33 秒** |
 | 加一条横切改动（如收口） | 改 **35 处** | 改 **1 处** |
+| **涉 docx 的脚本** | **117 个** / 42,572 行 | **98 个** / 42,059 行 |
+| 加一个子命令 | 新建一个 group 模块文件 | **加一行数据** |
+| 没挂收口就改 docx | 打一行提醒，照跑 | **hook 硬拦 exit 2** |
 
 ---
 
@@ -138,19 +141,41 @@ actions:
 
 ---
 
-## 四 · 完成度：如实说
+## 四 · 完成度
 
 | | 状态 |
 |---|---|
-| 存盘收口 | ✅ **做完**。59 个脚本 / 11 个 repo 全部接入，守卫 36/36 绿，commit 期硬拦 |
-| spec 引擎 | ✅ **做完**。25 条动作（23 可用 / 2 标 unavailable），一份真报告端到端跑通 |
-| 脚本接入 pipeline 接口 | ⚠️ **一半**。仓里 **67 个会写盘的脚本，37 个有 `apply`/`apply_path`，30 个没有** |
+| 存盘收口 | ✅ 59 个脚本 / 11 个 repo 全部接入，守卫 36/36 绿，commit 期硬拦 |
+| spec 引擎 | ✅ **29 条动作**（27 可用 / 2 标 unavailable），真报告端到端跑通 |
+| 脚本接入 pipeline 接口 | ✅ 会写盘的脚本里，有接口的 **28 → 41**，没接口的 **46 → 34** |
+| 脚本数缩减 | ✅ **117 → 98**，20 个转发壳折成一张声明表 |
+| surgical 守卫 | ✅ 提醒改**硬拦**（exit 2），反向验证 11/11 |
 
-**仍然只能串命令的**（各有原因，不是漏了）：
+> 口径说明（上一版这里的「67 / 37 / 30」是错的，它用的尺子和现在对不上，已作废）：
+> 「会写盘」= 源码里出现 `.save(` 或 `ZipFile`；同一段代码在折前 commit（`2fc6879`）
+> 和现在各跑一遍得到 74 → 75 个（分母基本没动），有接口的 28 → 41。
 
-| 脚本 | 为什么进不来 |
+**剩下 34 个没接口的，都有各自的理由**（不是漏了）：
+
+| 类别 | 例子 | 为什么不接 |
+|---|---|---|
+| 不是 docx | `convert` `xlsx_*` `pptx_*` `pdf_to_docx` `md_to_audiobook` | 根本不在这条轴上 |
+| driver | `doc_dispatch` `docx_tools` `typeset_pipeline` `typeset_apply` | 它们是调别人的那一层 |
+| 库 | `pipeline_lib` `bid_residue_lib` `shape_contract` `styles` `health` | 没有「对一份 docx 做一件事」的语义 |
+| 不是单文档进出 | `split_by_h1` `combine` `body_replace` `extract_tables` `image_extract` `port_sections` | 一进多出 / 多进一出 |
+| 要外部参照件 | `docx_apply_template` `docx_format_clone` `md_docx_template` `docx_chrome` `docx_qa` | 是「照模板造新件」不是「调这份的版面」 |
+
+**曾经只能串命令、本轮接进来的四个**：
+
+| 脚本 | 怎么接的 |
 |---|---|
-| `center_images` · `line_spacing` · `restyle` · `sync_toc` | 走 lxml 直读 zip，两个接口一个都没有 |
+| `center_images` · `line_spacing` | 抽出共用实现 + `apply_path`，排在 path 段末尾 |
+| `restyle` · `sync_toc` | 同上，但放进**新开的 `path-pre` 段** —— 见下面 §五 C |
+
+**还进不来的（各有原因，不是漏了）**：
+
+| 脚本 | 为什么 |
+|---|---|
 | `fix_styleset` | 包内相对 import，`load_step` 加载不到（改动前后都这样） |
 | `outline` | 三个互斥子动作，与 `renumber_headings` 抢同一件事 |
 | `docx_text_formatter` | 唯一一个选项不是标量的（scope 白名单），spec 表达不出来 |
@@ -160,7 +185,7 @@ actions:
 
 ---
 
-## 五 · 顺带修好的两件事（对抗核验抓的，不是自己发现的）
+## 五 · 顺带挖出来的五个坑（都不是自己发现的，是闸门和核验逼出来的）
 
 ### A 成品里留着真实评审批注，Word 看不见，闸门也抓不到
 
@@ -182,16 +207,106 @@ actions:
 修法：`Action.readonly` + 跳过 lsof / 备份 / 存盘三处。
 修后 **rc=0 · md5 同 · mtime 同 · bak 0**。
 
+### C `restyle` / `sync_toc` 放进排版链里会**必然失效**，而且不报错
+
+这两个是**按段落文本**去 golden 里找对应段的。而链上 `convert_chapter_format` /
+`renumber_headings` / `number_captions` / `fix_superscript_refs` 每一个都会改文本 ——
+排在它们后面，匹配率塌到接近零，然后安静地说一句「无需修改」。
+
+修法：新开 **`path-pre` 段**（整条链之前，zip 级）。别为了省一个 phase 把它们塞进
+`path` —— 那等于让它们必然失效。
+
+### D `strip_bookmarks` 删了 77 个书签，摘要写「只读/无 changed 计数」
+
+因为报告只认 `changed` 这一个键，而 `strip_*` 一族用的是领域名（`bookmarks_removed`）。
+报告说不出自己改了多少，就等于没有报告。
+
+修法：`Action.count_keys` 显式声明；**会写盘却报不出计数一律 rc=1**（反向验过：
+故意把键写错 → rc=1 并列出脚本实际返回的键）。不靠启发式去猜哪个是主计数 ——
+猜错的表现是**报一个错的数**，比不报还糟。
+
+### E `table delete-rows` 从写下那天起就是坏的
+
+它只 `set_defaults(_sub_target=...)` 没设 `func=`，敲下去只得到
+`[docx_cli.py] no handler for table (incomplete subcommand?)`；旁边那个本该接住它的
+`handle()` 从来没有任何人调用过。**18 份手写的转发代码里藏着一个死子命令，没有任何
+闸门看得见。** 收进声明表之后每个 target 必然拿到 `func`，现在能跑了。
+
 ---
 
-## 六 · 现在怎么用
+## 六 · 20 个转发壳 → 一张表
+
+`sub/` 下曾有 20 个文件只干一件事：声明 argparse 子命令，然后 `exec_script` 转发。
+它们不碰 docx、没有业务逻辑，2265 行的信息量 = 一张「组名 / 子命令 / 实现脚本 /
+选项 / 怎么转发」的表。
+
+代价不是「文件多」这么轻，是**同一件事写了 20 遍**：加一个标准选项要改 20 处；
+转发规则变一次要核对 20 处；新加组只能复制粘贴上一个组。而且错了没人发现（见 §五 E）。
+
+现在 `sub/_groups.py` 一张 `GROUPS` 表。`Opt` 里**同时**写「怎么声明给 argparse」和
+「怎么转发给实现脚本」—— 这两件事原来分居 `register()` 与 `_run()` 两处，于是
+「加了选项忘了转发」是这类壳最常见的 bug：用户传了参数、脚本收不到、静默按默认值跑。
+
+四处不规则的也建模成了数据，没有留回调（一留回调，表就会重新长回代码）：
+
+| | 怎么表达的 |
+|---|---|
+| `table borders --center` 会接着跑第二个脚本 | `chain=("center", "center")` |
+| `chrome --validate` 是验证模式，其余选项一概不发 | `fwd="short_circuit"` |
+| `section read --list` 顶掉位置参数 `query` | `suppressed_by="list_headings"` |
+| `split body-replace` 的互斥对（默认真值那支不转发） | `mx="h1"` + `fwd="when_false"` |
+
+### 怎么证明接口没坏：两道闸门，缺一不可
+
+| 闸门 | 证明什么 | 结果 |
+|---|---|---|
+| `tools/cli_surface.py` | 子命令树指纹（选项名 / dest / nargs / 默认值 / required / choices / 子命令组的 dest+required+metavar / 互斥组） | 折前折后 **128 个逐字节相同** |
+| `tools/cli_forward_probe.py` | 拦掉 `exec_script`，录下每条子命令**真正转发出去的 argv** | 50 个样本，折前能跑的 **48 条完全一致** |
+
+**只跑第一个不够**：接口对了 argv 错了 = 命令能敲、跑出来的东西不对，且不报错。
+
+加强闸门本身也立刻见效：给 `cli_surface` 补上「子命令组的 metavar」当场就抓到我把
+`header-footer` 的 `<action>` 写成了 `<target>` —— 这种差异不报错、只在 `--help` 里
+显示不同，肉眼永远看不出来。
+
+被折的 20 个文件在 `~/.Trash/doctools-shim-fold-20260730/`（带 MANIFEST），没有 `rm`。
+
+---
+
+## 七 · surgical 守卫：提醒 → 硬拦
+
+`docx-surgical-advisory.sh` → `docx-surgical-guard.sh`（改名不是洁癖：一个名字叫
+advisory、行为是 block 的守卫，下次有人读名字做判断时必然判错）。
+
+**两档，不是一档**：
+
+| | 什么情况 | 行为 |
+|---|---|---|
+| `exit 2` | 读到那个 `.py`，它 import python-docx + 调 `.save()` + 没 `import docx_safe_save`；或命令串里内联了 python-docx 而没带收口 | **拦** |
+| `exit 0` + 警告 | 命令里有 `.py` 但打不开（相对路径 / cwd 不同） | 出声，放行 |
+
+「判不了」不一起拦，是这次唯一值得写清楚的取舍：**拦一条其实无辜的命令，代价不是
+多打一行字，是用户会把 `SURGICAL_OK=1` 写进环境永久关掉这个守卫** —— 那时它对所有
+真风险一起瞎。底线是任何一档都不静默。
+
+**去掉了 advisory 时代的去重**：硬拦下去重 = 第二条同样危险的命令被静默放行，
+而那正是最该拦的时候。（2026-07-28 还实测过一次去重把守卫彻底弄哑：sid 取不到 →
+键恒为 `unknown` → `/tmp` 里一个 `.seen` 文件让全机所有会话永久静默。）
+
+反向验证 **11/11**：该拦的 4 条（含同一条连跑两次，证明无去重漏洞）、不该拦的 6 条、
+判不了的 1 条。另拿 doctools **4 个真脚本走生产路径**实测放行，再把其中一个的收口那行
+摘掉 → 立刻 rc=2。夹具通过不等于生产路径通过。
+
+---
+
+## 八 · 现在怎么用
 
 ```bash
 # 排版：一份 spec 跑完
 python3 ~/Dev/tools/doctools/scripts/document/typeset_apply.py 报告.docx \
     --spec ~/Dev/tools/doctools/config/spec-examples/report-generic.yaml
 
-python3 …/typeset_apply.py --list          # 25 条动作 + 每条为什么排在这个位置
+python3 …/typeset_apply.py --list          # 29 条动作 + 每条为什么排在这个位置
 python3 …/typeset_apply.py --dump-schema   # spec 全量字段说明（从 ACTIONS 派生）
 
 # 量任一条命令的炸开面（surgical 的标准就是这个数字）
@@ -200,7 +315,7 @@ python3 ~/Dev/tools/doctools/tools/blast_radius.py run 报告.docx -- <命令，
 # 守卫：谁用 python-docx 存盘却没挂收口
 python3 ~/Dev/tools/doctools/tools/check_docx_collar.py
 
-# 全仓 151 个脚本谁调谁（可点双链页面）
+# 全仓 134 个脚本谁调谁（可点双链页面）
 python3 ~/Dev/tools/doctools/tools/script_graph.py --open
 ```
 
@@ -208,11 +323,29 @@ python3 ~/Dev/tools/doctools/tools/script_graph.py --open
 
 ---
 
-## 七 · 还没做的（按性价比排）
+## 九 · 还没做的
 
-1. **30 个没接口的脚本** —— 其中 `center_images` / `line_spacing` / `restyle` / `sync_toc`
-   是真排版动作，值得接；其余多数是 driver、库、或本来就不该接的。
-2. **报告计数键名不统一** —— `strip_bookmarks` 删了 77 个书签，摘要却打「只读/无 changed 计数」。
-3. **两处历史 `apply` 签名违规**（`docx_qa` / `md_merge_impl`）—— 非本轮引入，但本轮把
-   「顶层 apply = 统一契约」变成全仓约定后，它们成了显式反例，`load_step` 会 TypeError。
-4. **`docx-surgical-advisory` 从提醒改成硬拦** —— 破坏性变更，等你点头。
+**§七 那四条已全部清完。** 剩下的都是「知道为什么不做」而不是「还没轮到」：
+
+| | 为什么不做 |
+|---|---|
+| `fix_styleset` 接进 spec | 包内相对 import，`load_step` 加载不到。要接得先动它的 import 结构，那是改一个跑得好好的 2007 行脚本的业务逻辑，不值 |
+| `outline` 接进 spec | 三个互斥子动作，与 `renumber_headings` 抢同一件事。硬接进去 = 让用户配得出两个互相打架的动作 |
+| `delete_chapter` / `delete_table_rows` 接进 spec | **刻意不收**：破坏性动作混进「调版面」的配置里是反模式 |
+| 合并实现脚本 | 查过四对「疑似重复血统」，**没有一对是真重复**（两个操作 md 不操 docx，两个分工写在文件里）。合并它们只会把 42,059 行搬个地方 |
+
+真要再缩，只剩「退役某些功能」这一条路 —— 那是产品决定，不是重构。
+
+---
+
+## 十 · 每一条数字怎么来的
+
+| 断言 | 怎么验的 |
+|---|---|
+| 128 个子命令折前折后相同 | `tools/cli_surface.py` 在 `git worktree`（折前 commit）与 HEAD 各跑一次，`diff` 为空 |
+| 48 条转发 argv 相同 | `tools/cli_forward_probe.py` 同上，另 2 条是折前根本跑不起来的死子命令 |
+| 117 → 98 个脚本 | 同一段 AST 扫描在两个 commit 各跑一次 |
+| 28 → 41 个有接口 | 同上（口径写在 §四） |
+| 计数键闸门有效 | 故意把 `count_keys` 写成不存在的键 → rc=1 且列出脚本实际返回的键 |
+| 守卫真能拦 | 11 条夹具 + 4 个真脚本走生产路径 + 摘掉收口那行立刻 rc=2 |
+| 没坏东西 | 74 个单测全绿 · 收口守卫 36/36 · 134 脚本 0 孤儿 · 真报告端到端 rc=0 |
