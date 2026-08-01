@@ -1,6 +1,6 @@
 """health_split.py — one-shot docx 健康化 + 按 H1 切分 thin wrapper.
 
-Distilled 2026-05-28 from `~/Work/projects/eco-flow/taizhou-天台/业务模板/SOP.md`
+Distilled 2026-05-28 from `~/Work/projects/eco-flow/地区/taizhou-天台/业务模板/SOP.md`
 Step 1 + Step 2 (pipeline run --steps health-diagnose,audit-styleset-all,split-by-h1
    → 若不达锚: styleset restore --no-llm → 用新文件重跑 split).
 
