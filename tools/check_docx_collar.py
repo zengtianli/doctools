@@ -17,6 +17,7 @@ fail-closed：枚举为空 / 扫描根不存在，一律非 0 退出。空集上
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -40,7 +41,35 @@ COLLAR = re.compile(r"^\s*import docx_safe_save\b", re.M)
 # 判据：自己开 ZipFile 写 docx 的脚本，必须能找到部件完整性断言。
 WRITES_ZIP = re.compile(r"ZipFile\s*\([^)]*?['\"]w['\"]|ZIP_DEFLATED", re.S)
 TOUCHES_DOCX = re.compile(r"\.docx\b|word/document\.xml")
-PART_ASSERT = re.compile(r"\b(assert_parts_intact|diff_parts)\b")
+
+# 保留给 ast 解析不了的文件（语法错/非 UTF-8）当兜底；正常路径走 has_part_assert()。
+PART_ASSERT = re.compile(r"\b(assert_parts_intact|diff_parts)\s*\(")
+
+# ── 判据必须落在**真调用**上，不能落在字面量出现上（2026-08-01 修）──────────
+# 原来 PART_ASSERT 是裸 `\b(assert_parts_intact|diff_parts)\b`，于是这两样都能喂饱它：
+#   ① 一条已经没人用的 `from docx_parts import assert_parts_intact` 死 import
+#   ② 一句提到它的**注释**（fix_styleset.py:1350 就有一句）
+# 实测：把死 import 删掉之后，往 fix_styleset.py 追加一段裸 ZipFile 写 docx，
+# 守卫**照样报「17 个全挂 ✓」** —— 只因为那句注释还在。哑掉的守卫和它要防的 bug
+# 是同一类东西，所以判据改成 ast：只认「函数调用」这一种形态，注释和 import 不算。
+ASSERT_NAMES = {"assert_parts_intact", "diff_parts"}
+
+
+def has_part_assert(src: str) -> bool:
+    """源码里有没有**真的调用**部件完整性断言。"""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return bool(PART_ASSERT.search(src))      # 解析不了就退回正则，不静默放行
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = (fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute) else None)
+        if name in ASSERT_NAMES:
+            return True
+    return False
 
 # 测试件豁免：它们在 tmp_path 里造玩具 docx，不碰交付件；而且好几个测试的断言就是
 # 「裸 python-docx 会怎样」，挂上收口反而测不到要测的东西。
@@ -87,7 +116,7 @@ def zip_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
             if not (WRITES_ZIP.search(src) and TOUCHES_DOCX.search(src)):
                 continue
             need.append(p)
-            if not PART_ASSERT.search(src):
+            if not has_part_assert(src):
                 bad.append(p)
     return need, bad
 

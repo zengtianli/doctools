@@ -7,13 +7,13 @@
 - 改造路线图与销项账：[`handoffs/docx-refactor-roadmap.md`](handoffs/docx-refactor-roadmap.md)
 - 开发约定（收口 / 元素级遍历 / 子命令表）：[`CLAUDE.md`](CLAUDE.md)
 
-**92 个脚本**：入口 17 · `sub/` 43 · `data/` 5 · `lib/` 14 · `tools/` 5 · 测试 8。
+**99 个脚本**：入口 17 · `sub/` 44 · `data/` 5 · `lib/` 16 · `tools/` 7 · 测试 10。
 
 ## 入口层 (scripts/document/)
 
 | 脚本 | 功能 |
 |------|------|
-| `docx_cli.py` | **docx 总入口**：45 个子命令族 / 125 条子命令，dispatch 到 `sub/` |
+| `docx_cli.py` | **docx 总入口**：46 个唯一族 / 126 条子命令，dispatch 到 `sub/` |
 | `docx_tools.py` | extract / check / track 组合入口（batch 并行 + library re-export） |
 | `typeset_apply.py` | spec(yaml) 驱动的排版引擎（29 actions，固定顺序） |
 | `typeset_pipeline.py` | 排版一条龙 driver（每步 snapshot → 自检 → 保留/回滚） |
@@ -53,11 +53,13 @@
 ## 闸门（改完全跑）
 
 ```bash
-python3 tools/check_docx_collar.py    # 收口 23/23 · 部件断言 17/17，缺一判红
-python3 tools/cli_surface.py          # CLI 接口指纹（125 子命令）
+python3 tools/check_docx_collar.py    # 收口 23/23 · 部件断言 16/16，缺一判红（判据走 ast，只认真调用）
+python3 tools/cli_surface.py          # CLI 接口指纹（126 子命令）
 python3 tools/cli_forward_probe.py    # 67 条内嵌预期 argv 比对（真正转发出去的是什么）
 python3 -m pytest scripts/document/tests scripts/document/sub/tests -q
-python3 tools/script_graph.py --open  # 92 脚本 · 316 引用 · 0 孤儿
+python3 tools/check_function_axis.py  # 职能轴表 ↔ CLI 对账，缺一条或多一条都判红
+python3 tools/check_external_refs.py   # 全生态引用存在性（已挂 pre-commit --changed-only）
+python3 tools/script_graph.py --open  # 99 脚本 · 362 引用 · 0 孤儿
 ```
 
 ## 安装
@@ -76,8 +78,8 @@ cd ~/Dev && uv sync --all-packages
 
 声明全在 `scripts/document/sub/_groups.py` 的 `GROUPS` 表 —— **加子命令 = 加一行数据，不是加一个文件**。
 
-**125 条 = 48 个顶层名（含 3 个 alias：`read`=extract · `diff`=compare · `styleset`=audit-styleset，
-故唯一族 45）+ 25 个族里的 77 个动作。**
+**126 条 = 49 个顶层名（含 3 个 alias：`read`=extract · `diff`=compare · `styleset`=audit-styleset，
+故唯一族 46）+ 25 个族里的 77 个动作。**
 
 | 族 | 动作 |
 |---|---|
@@ -100,9 +102,9 @@ cd ~/Dev && uv sync --all-packages
 | `split` (2) | by-h1 / body-replace |
 | `compare-ref` · `fonts` · `header-footer` · `legacy` · `pipeline` · `revise-rules` · `section` (各 1) | ref / normalize / add / fix-heading-disorder(DEPRECATED) / run / gen / read |
 
-23 个叶命令（无子动作）：`chapters-sync` `check` `chrome` `combine` `compare(diff)` `extract(read)`
+24 个叶命令（无子动作）：`chapters-sync` `check` `chrome` `combine` `compare(diff)` `extract(read)`
 `fix-ref` `format` `health-split` `image-caption` `md` `md-merge` `md-merge-track` `md-to-docx`
-`renumber-fig` `scan-sensitive` `slim` `snapshot` `template` `text-fmt` `track`
+`renumber-fig` `scan-sensitive` `slim` `snapshot` `template` `text-fmt` `track` `verbs`
 
 本表由 `python3 tools/cli_surface.py` 的输出派生（2026-08-01 核对）；**SSOT 是那条命令，不是本表**。
 

@@ -48,7 +48,6 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
-from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  surgical 部件完整性断言
 # verbatim repack SSOT（_add_first_line_indent_to_style 走它，2026-08-01 从手抄
 # extractall+rglob 重打包迁入 —— 那条路把 72/72 条 ZipInfo 全丢了）
 from docx_surgical import list_parts, parse_part, serialize, surgical_rewrite_parts  # noqa: E402

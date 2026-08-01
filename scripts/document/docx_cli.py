@@ -356,12 +356,20 @@ def _build_parser() -> argparse.ArgumentParser:
     # Distilled 11 新族 — sub/*.py 各自 register()
     _register_distilled_subcommands(sub)
     # verbs — 只读：列出子命令及其职能（数据源 sub/_function_axis.py）
-    axis = _function_axis()
+    # **载入失败不许拖垮整个 CLI**：这张表只服务 verbs 一条子命令，让它的异常上抛
+    # 等于「表里一个拼写错误 → 全部 125 条子命令一起挂，还是个裸 traceback」。
+    # 降级策略：--fn 的取值域退回不限，真正的报错留到 cmd_verbs 被调用时抛。
+    try:
+        fn_choices = list(_function_axis().FN_TAGS)
+    except Exception as e:                      # noqa: BLE001 —— 什么错都不该拖垮 CLI
+        print(f"\u26a0 \u804c\u80fd\u8f74\u8868\u8f7d\u5165\u5931\u8d25"
+              f"\uff08\u53ea\u5f71\u54cd `docx_cli verbs`\uff09\uff1a{e}", file=sys.stderr)
+        fn_choices = None
     vp = sub.add_parser(
         "verbs",
         help="列出子命令及其职能 (format/content/review/inspect/convert/dispatch)",
     )
-    vp.add_argument("--fn", choices=list(axis.FN_TAGS), help="只列该职能的子命令")
+    vp.add_argument("--fn", choices=fn_choices, help="只列该职能的子命令")
     vp.add_argument("--json", action="store_true", help="JSON 输出")
     vp.set_defaults(func=cmd_verbs)
     return p

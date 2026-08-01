@@ -21,12 +21,10 @@ from __future__ import annotations
 
 import argparse  # noqa: E402
 import re  # noqa: E402
-import shutil  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
 import zipfile  # noqa: E402
 from copy import deepcopy  # noqa: E402
-from datetime import datetime  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
 from pathlib import Path  # noqa: E402
 

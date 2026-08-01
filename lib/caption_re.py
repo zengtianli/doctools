@@ -80,7 +80,7 @@ __all__ = [
     "CaptionSpec", "CaptionNum", "pattern", "parse", "finditer",
     "md_token_pattern", "en_caption_pattern", "en_citation_pattern",
     "NUM_TOKEN_ANY", "NUM_SPLIT_LOOSE", "CAPTION_ANY_CN",
-    "TABLE_CAPTION_LINE", "TABLE_CAPTION_APPENDIX",
+    "TABLE_CAPTION_LINE", "TABLE_CAPTION_APPENDIX", "TABLE_CAPTION_FLAT_SEC",
     "HAS_NUM_FIG", "HAS_NUM_TABLE", "FIG_APPENDIX_PREFIX",
     "SECTIONED_CAPTION", "TYPESET_FIG_SECTIONED", "TYPESET_FIG_APPENDIX",
     "TABLE_NAME_HEURISTIC", "PREFIX_STRIP_FIG", "PREFIX_STRIP_TBL",
@@ -148,6 +148,11 @@ class CaptionSpec:
         right_boundary: 是否加右界断言（见 ``_RIGHT_BOUNDARY``）。
         trailing: 尾随消费，``""`` / ``r"\\s*"``（剥前缀）/ ``r"\\s"``（表名启发式）。
         flat_min_seg / flat_max_seg: flat 模式下「分隔符+数字」重复几次。
+        appendix_sectioned: 附图分支也走「章号-序号」结构（默认 False = 扁平单号）。
+            只有 ``BID_REF_LOOSE`` 打开 —— 标书正文写的是「见附图3-1」，扁平分支
+            只能吃到 `附图3`，分组标签会串成「图 None-」且丢掉 -1/-3 的断号。
+            默认关是因为其余附图消费点（shape_contract 快照 / renum 排除闸 /
+            typeset 附图）本来就把附图当扁平单号，改它们要单独一轮。
     """
 
     kinds: tuple = ("图", "表")
@@ -163,6 +168,7 @@ class CaptionSpec:
     trailing: str = ""
     flat_min_seg: int = 0
     flat_max_seg: int = 0
+    appendix_sectioned: bool = False
     flags: int = 0
 
     def for_kind(self, kind: str) -> "CaptionSpec":
@@ -230,8 +236,13 @@ def _build(spec: CaptionSpec) -> str:
     if spec.appendix in ("include", "only"):
         akind = _kind_atom(spec, "akind")
         # prefix 模式只认「附+种类字」本身，不要求跟编号（renum 的附图排除闸就是这档）
-        branches.append(f"附{akind}" if spec.mode == "prefix"
-                        else f"附{akind}\\s*(?P<aseq>{num})")
+        if spec.mode == "prefix":
+            branches.append(f"附{akind}")
+        elif spec.appendix_sectioned and spec.mode == "split":
+            asec = f"(?P<asec>{num}(?:{DOT}{num})*)"
+            branches.append(f"附{akind}\\s*{asec}\\s*{DASH}\\s*(?P<aseq>{num})")
+        else:
+            branches.append(f"附{akind}\\s*(?P<aseq>{num})")
 
     # ── 正常分支 ────────────────────────────────────────────────────────
     if spec.appendix != "only":
@@ -274,9 +285,11 @@ def _to_num(m: re.Match, spec: CaptionSpec) -> CaptionNum:
     if gd.get("akind") is not None:
         raw_kind = gd["akind"]
         seq = gd.get("aseq")
+        asec = gd.get("asec")
         return CaptionNum(
             kind=_norm_kind(raw_kind), lang=_lang(raw_kind), appendix=True,
-            section=None, seq=_int_or_none(seq), raw=m.group(0),
+            section=asec.replace("\uff0e", ".") if asec else None,
+            seq=_int_or_none(seq), raw=m.group(0),
             start=m.start(), end=m.end())
     raw_kind = gd.get("kind") or ""
     sec = gd.get("sec")
@@ -342,6 +355,14 @@ CAPTION_ANY_CN = CaptionSpec(
 TABLE_CAPTION_LINE = CaptionSpec(kinds=("表",))
 TABLE_CAPTION_APPENDIX = CaptionSpec(kinds=("表",), appendix="only")
 
+#: caption `pair` 的 **renumber-all-tables 专用**：章号只认单段（`表3-1` 认、
+#: `表3.1-1` 不认）。为什么不跟着 TABLE_CAPTION_LINE 一起放宽：那是个**写盘**动词，
+#: 放宽 = 给既有动词偷偷扩大改写范围。实测（2026-08-01，fixture 两条 `表3.1-N`）：
+#: 用放宽的 spec 时 dry-run 从 `count=0` 变成 `count=2`，把 `表3.1-1 → 表1-1`
+#: 整体压平 —— 对 `--cn-section` 产出的章节式文档就是把编号体系冲掉，且默认 --apply 落盘。
+#: 读侧（rename-caption / audit table-pairing 回读）该放宽，写侧不该，两者就此解耦。
+TABLE_CAPTION_FLAT_SEC = replace(TABLE_CAPTION_LINE, sec_max_depth=1)
+
 #: caption `number` / styles `number-by-style`：段首已有编号则跳过。
 HAS_NUM_FIG = CaptionSpec(kinds=("图",), mode="flat", flat_min_seg=1, flat_max_seg=1)
 HAS_NUM_TABLE = CaptionSpec(kinds=("表",), mode="flat", flat_min_seg=1, flat_max_seg=1)
@@ -382,7 +403,11 @@ KIND_PREFIX_TABLE = CaptionSpec(kinds=("表",), mode="prefix", allow_en=True, fl
 BID_STRICT_CAPTION = CaptionSpec(right_boundary=True)
 
 #: bid_residue cat6 断裂引用：**有意非锚定** —— 扫的是正文交叉引用不是题注段。
-BID_REF_LOOSE = CaptionSpec(anchored=False)
+#: `appendix="include"` 是必须的：默认 `"exclude"` 会带上 `(?<!附)`，于是正文里的
+#: 「见附图3-1…见附图3-3」整条看不见 —— 实测这道交付门因此从 FAIL 3 findings 掉成
+#: FAIL 2，**类别6 检出直接消失**（2026-08-01 前后对拍）。include 让附图自成一组做
+#: 连续性核：既不再把 `附图3-1` 截成 `图3-1` 混进正图组，也不丢掉附图自己的断号。
+BID_REF_LOOSE = CaptionSpec(anchored=False, appendix="include", appendix_sectioned=True)
 
 #: shape_contract 快照：题注文本 → 编号集合（fix_styleset 前后对账的基准）。
 SHAPE_FIG_NUM = CaptionSpec(kinds=("图",), anchored=False, appendix="include")

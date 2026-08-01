@@ -633,7 +633,11 @@ def op_renumber_all_tables(body, dry_run: bool) -> dict:
                 current_chapter += 1
                 continue
             text = get_text(child)
-            m = caption_re.parse(text, CAP_SPEC)
+            # 有意**不**用 CAP_SPEC：那是读侧（rename-caption / table-pairing 回读）
+            # 放宽后的 spec，章号允许 `3.1`。本函数是**写盘**动词，跟着放宽等于给它
+            # 偷偷扩大改写范围 —— 实测会把 `表3.1-1` 压平成 `表1-1`，把 --cn-section
+            # 产出的章节式编号体系冲掉（2026-08-01 前后对拍：count 0 → 2）。
+            m = caption_re.parse(text, caption_re.TABLE_CAPTION_FLAT_SEC)
             if m:
                 seq = chapter_counters.get(current_chapter, 0) + 1
                 chapter_counters[current_chapter] = seq
