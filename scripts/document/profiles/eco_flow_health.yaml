@@ -4,7 +4,7 @@
 # 历史样板 = 景宁 0313 成品 (legacy_anchor_docx,保留参与回归测试)。
 name: eco_flow_health
 description: 浙江省 eco-flow 项目 (各县市生态流量核定与保障实施方案) 标准样式集
-anchor_docx: ~/Work/projects/eco-flow/地区/taizhou-天台/模板/磐安实施方案-health-v3-final-2026-05-26.docx
+anchor_docx: ~/Work/projects/eco-flow/地区/taizhou-天台/01-源/业务模板/【报告260521】磐安县小型水库生态流量核定与保障实施方案.docx
 # 历史交付样板,2026-05-26 切到磐安 v3 前的锚;仍参与 5 audit 回归测试,允许 warn 不允许 fail。
 legacy_anchor_docx: ~/Work/projects/eco-flow/地区/lishui-景宁/deliverables/景宁县小型水库工程生态流量核定与保障实施方案0313成品.docx
 
