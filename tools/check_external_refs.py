@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -69,8 +70,28 @@ REF = re.compile(
 )
 
 
+PATTERN = r"(~|/Users/tianli|\$\{?HOME\}?)/Dev/tools/doctools/"
+
+
+def _search_cmd(roots: list[Path]) -> list[str]:
+    """优先 ripgrep：同一次全扫 rg 2.6s vs grep 47s（2026-08-01 实测，18×）。
+    47s 挂不了 pre-commit，2.6s 可以 —— 这条闸门能不能落到机器层，全看这个数。
+    `--no-ignore` 是必须的：~/Apps 的 .gitignore 用结构规则 `<类别>/*/` 排掉全部 app，
+    裸 rg 会假阴性（Swift 那处硬编码就是这么漏掉过一次的）。"""
+    rg = shutil.which("rg")
+    if rg:
+        cmd = [rg, "-n", "--no-ignore", "--hidden", "--no-messages"]
+        for e in EXTS:
+            cmd += ["-g", f"*.{e}"]
+        return cmd + [PATTERN] + [str(r) for r in roots]
+    cmd = ["grep", "-rn", "--binary-files=without-match"]
+    for e in EXTS:
+        cmd += [f"--include=*.{e}"]
+    return cmd + ["-E", PATTERN] + [str(r) for r in roots]
+
+
 def scan() -> list[dict]:
-    """grep 全部扫描根，回 [{file, line, ref, exists}]。"""
+    """扫全部根，回 [{file, line, ref, exists}]。"""
     missing_roots = [r for r in SCAN_ROOTS if not r.is_dir()]
     roots = [r for r in SCAN_ROOTS if r.is_dir()]
     if not roots:
@@ -79,15 +100,11 @@ def scan() -> list[dict]:
     if missing_roots:
         print(f"⚠ 扫描根缺失（跳过）：{[str(r) for r in missing_roots]}", file=sys.stderr)
 
-    cmd = ["grep", "-rn", "--binary-files=without-match"]
-    for e in EXTS:
-        cmd += [f"--include=*.{e}"]
-    cmd += ["-E", r"(~|/Users/tianli|\$\{?HOME\}?)/Dev/tools/doctools/"]
-    cmd += [str(r) for r in roots]
-    # grep rc: 0=有命中 1=无命中 2=出错。无命中在这里是判据坏了。
+    cmd = _search_cmd(roots)
+    # rc: 0=有命中 1=无命中 2=出错。无命中在这里是判据坏了（下面统一拦）。
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode == 2 and not proc.stdout:
-        print(f"⛔ grep 失败：{proc.stderr[:400]}", file=sys.stderr)
+        print(f"⛔ 搜索失败：{proc.stderr[:400]}", file=sys.stderr)
         raise SystemExit(2)
 
     hits = []
@@ -113,7 +130,29 @@ def scan() -> list[dict]:
     return hits
 
 
+def _staged_removes_scripts() -> bool:
+    """本次暂存的改动里有没有**删掉或改名**脚本文件。
+
+    只有这一类改动能把仓外引用打断（新增/改内容都打不断），所以 pre-commit 用它短路：
+    绝大多数 commit 直接放行，真动到文件名时才付那 2.6 秒。
+    """
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--name-status", "--diff-filter=DR"],
+        cwd=ROOT, capture_output=True, text=True)
+    if proc.returncode != 0:            # 不在 git 仓 / git 出错 → 不敢短路，全扫
+        return True
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if any(p.endswith((".py", ".sh")) for p in parts[1:]):
+            return True
+    return False
+
+
 def main() -> int:
+    # pre-commit 模式：没有删/改名脚本就直接过（全扫 2.6s，不该每次 commit 都付）
+    if "--changed-only" in sys.argv and not _staged_removes_scripts():
+        return 0
+
     hits = scan()
     dead = [h for h in hits if not h["exists"]]
     refs = {h["ref"] for h in hits}
