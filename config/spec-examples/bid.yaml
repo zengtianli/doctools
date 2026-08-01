@@ -34,13 +34,17 @@
 # （字体/页眉页脚/章号/框线一个都没碰），今天这一半靠项目里手写脚本或人肉调。收成 spec 之后
 # 它变成一份 yaml，而且它的每个旋钮都**结构性地消掉某道门会红的原因**（下面逐条标了）。
 #
+# ⚠ 2026-07-31：上表那 6 个入口脚本已合并为 bid_gate.py 的子命令（scan / identity / print /
+#   sweep / deref / run），bid_residue_lib.py 未动仍是检测 SSOT。**结论一个字没变**——
+#   合并的是入口文件，不是它们的类别，闸门语义在 typeset_apply 引擎里照样表达不出来。
+#
 # ── 跑的顺序（跨轴，不是本 spec 内部顺序；spec 内部顺序由引擎写死）─────────────
 #   ① 本 spec（版式定型，章号在这一步定死）
-#   ② bid_deref.py         去交叉引用耦合
-#   ③ bid_finalize_sweep.py --apply   清残留类 1-7
-#   ④ bid_final.py         跑三道门（residue / identity / print_ready）
+#   ② bid_gate.py deref <docx>              去交叉引用耦合
+#   ③ bid_gate.py sweep <docx> --apply      清残留类 1-7
+#   ④ bid_gate.py run <docx> --mode main    跑三道门（residue / identity / print_ready）
 #
-#   ①在②之前的理由是硬的：bid_deref 用正文当前章号建「章节号→标题名」映射，章号在它跑完
+#   ①在②之前的理由是硬的：deref 用正文当前章号建「章节号→标题名」映射，章号在它跑完
 #   之后再被 renumber_headings 改一次，它吐给人判的 MANUAL 清单里的号就全是废号。
 #
 # 全量字段看 config/docx_spec.schema.yaml；通用报告版看 report-generic.yaml。
@@ -118,7 +122,7 @@ actions:
   set_table_align:
     cell_center: false
 
-  # ── 八 · 终态自检（只读；注意它们不改退出码，真闸门在 bid_final.py）────────
+  # ── 八 · 终态自检（只读；注意它们不改退出码，真闸门在 bid_gate.py run）────────
   audit_caption_outline: true
   audit_table_pairing: true
   audit_bookmarks: true

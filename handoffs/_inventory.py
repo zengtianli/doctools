@@ -12,9 +12,17 @@ SKIP = re.compile(r"/(_archive|_scratch|\.venv|node_modules|site-packages|jobs)/
                   r"|\.app/|/bak/|_bak/|_backup-pre-shim|_pre-shim-|_scratch-|/09-归档/"
                   r"|/\.git/")
 
+# python-docx / 收口 两条判据**从守卫本体 import**，不在这里抄一份。
+# 抄一份的代价 2026-08-01 实测到了：本文件曾写成 `from docx[\w.]*\s+import`，
+# 于是 `from docx_parts import assert_parts_intact` 被判成「裸用 python-docx 写盘」
+# —— pptx_cli.py（用的是 python-pptx，一行 python-docx 都没有）被误列进裸用名册。
+# check_docx_collar.py 2026-07-31 修过同一条正则，这份没跟上：判据分居两处 = 必漂。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from check_docx_collar import COLLAR as _COLLAR, IMPORTS_DOCX as _IMPORTS_DOCX  # noqa: E402
+
 SIG = {
-    "python-docx":  re.compile(r"^\s*(from docx[\w.]*\s+import|import docx\b)", re.M),
-    "收口":         re.compile(r"^\s*import docx_safe_save\b", re.M),
+    "python-docx":  _IMPORTS_DOCX,
+    "收口":         _COLLAR,
     "docx_surgical": re.compile(r"\bdocx_surgical\b|\bsurgical_rewrite"),
     "docx_xml":     re.compile(r"\bfrom docx_xml import|\bimport docx_xml\b"),
     "裸 zipfile":   re.compile(r"^\s*import zipfile\b", re.M),
