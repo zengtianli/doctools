@@ -30,6 +30,11 @@ from .docx_health_render_html import render_rich_html, render_simple_html
 
 # ─── 常量 ────────────────────────────────────────────────────────────────────
 
+# 题注编号：中文「图3-1 / 表 3.1-2 / 图3」与英文「Figure 3-1 / Table 3.1」。
+# duplicate-figure-numbers 按它判重 —— 按整句文本判会被空 text 记录撞成假重复。
+CAPTION_NUM_RE = re.compile(
+    r"(?:[图表]|(?:Figure|Fig\.?|Table)\s*)\s*\d+(?:[.．-]\d+)*", re.I)
+
 SEVERITY = {
     "heading-level-skew":       "High",
     "heading-gap":              "Med",
@@ -534,16 +539,26 @@ def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:
     """扩展 audit_caption_outline 检测同章内图/表号重复。"""
     rpt = tmp_dir / "captions_dup.json"
     data = _run_script_json("audit", ["captions", str(doc_path)], rpt)
-    # look for duplicates in caption_list
-    captions = data.get("captions", data.get("caption_list", []))
+    # 报告里题注记录的真实键是 `all_caption_records`（每条 {idx,style,outlineLvl,text}）。
+    # 这里原来读的是 `captions` / `caption_list` —— 两个键 audit 从来没产出过，于是
+    # captions 恒为 []，本检查每次都走下面那条 early-return 报「no captions found」，
+    # duplicate-figure-numbers 这个病种**从上线起就是瞎的**（2026-08-01 实测：报告顶层键
+    # 只有 docx_path/total_paragraphs/captions_*/h_*/all_caption_records/issues）。
+    # 旧键保留在 fallback 里，万一别的 audit 版本产出它们也能吃。
+    captions = (data.get("all_caption_records")
+                or data.get("captions") or data.get("caption_list") or [])
     if not captions:
         return {"found": False, "reason": "no captions found by audit_caption_outline"}
 
+    # 按**题注编号**判重，不按整句文本：整句里空文本的记录会全部撞成同一个 key，
+    # 制造一堆假重复（本文档 33 条记录里就有空 text 的）。
     seen: dict[str, list] = {}
     for cap in captions:
         label = cap.get("label", cap.get("text", "")) if isinstance(cap, dict) else str(cap)
-        key = re.sub(r"\s+", "", label)[:30]
-        seen.setdefault(key, []).append(cap)
+        m = CAPTION_NUM_RE.search(re.sub(r"\s+", "", label))
+        if not m:
+            continue                      # 没有编号的题注不参与判重
+        seen.setdefault(m.group(0), []).append(cap)
     dups = {k: v for k, v in seen.items() if len(v) > 1}
     if dups:
         return {"found": True, "duplicate_count": len(dups),

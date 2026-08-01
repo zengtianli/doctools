@@ -54,6 +54,7 @@ def _dispatch(module_name: str, argv: list[str]) -> int:
     (thin alias 留旧路径),本 CLI 仅做顶层 sub-router。
     """
     import importlib
+    import runpy
     saved = sys.argv[:]
     try:
         sys.argv = [module_name] + argv
@@ -61,6 +62,16 @@ def _dispatch(module_name: str, argv: list[str]) -> int:
         if hasattr(mod, "main"):
             rc = mod.main()
             return int(rc) if isinstance(rc, int) else 0
+        # 没有 main() —— 走它的 `if __name__ == "__main__"` 块。
+        # 这里原来是 `return 0`，是 fail-open：xlsx_lowercase.py 只有 __main__ 块、
+        # 没有 def main()，于是 `data.py xlsx-lower <file>` 零输出、rc=0、不产文件，
+        # 报成功却一个字节都没干（2026-08-01 实测复现）。静默空转比报错更难发现。
+        src = getattr(mod, "__file__", None)
+        if not src:
+            print(f"⛔ {module_name} 既没有 main() 也找不到源文件，拒绝静默返回成功",
+                  file=sys.stderr)
+            return 2
+        runpy.run_path(src, run_name="__main__")
         return 0
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 0
