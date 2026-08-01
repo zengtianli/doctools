@@ -189,6 +189,61 @@ def cmd_md(args: argparse.Namespace, rest: list[str]) -> int:
     return _exec_script("md_tools", rest)
 
 
+# ─── 职能轴（只读） ─────────────────────────────────────────────────────
+_FN_AXIS: Any = None
+
+
+def _function_axis() -> Any:
+    """载入职能轴 SSOT（`sub/_function_axis.py`）。
+
+    按文件路径直载、不走 `import sub` —— 只要一张纯数据表，不必把 12 个实现模块
+    全拉起来。载不进来就让异常往上抛：`verbs` 的 `--fn` 取值域是从这张表派生的，
+    静默兜底会让它变成一个「选项还在、取值域空了」的假绿。
+    """
+    global _FN_AXIS
+    if _FN_AXIS is None:
+        path = _HERE / "sub" / "_function_axis.py"
+        spec = importlib.util.spec_from_file_location("_docx_cli_function_axis", str(path))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot spec {path}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_docx_cli_function_axis"] = mod
+        spec.loader.exec_module(mod)
+        _FN_AXIS = mod
+    return _FN_AXIS
+
+
+def cmd_verbs(args: argparse.Namespace) -> int:
+    """列出子命令及其职能（只读，不碰任何文件）。
+
+    数据源是 `sub/_function_axis.py` 那张表，跟 CLI 的一致性由
+    `tools/check_function_axis.py` 机检（表里缺一条或多一条都判红）。
+    """
+    axis = _function_axis()
+    fn = getattr(args, "fn", None)
+    rows = axis.rows(fn)
+    if getattr(args, "json", False):
+        print(json.dumps(
+            {"total": len(rows),
+             "fn_definitions": axis.FN_DEFINITIONS,
+             "verbs": [{"path": axis.path_of(top, action), "top": top,
+                        "action": action, "fn": f, "note": note}
+                       for top, action, f, note in rows]},
+            ensure_ascii=False, indent=1))
+        return 0
+    tags = [fn] if fn else list(axis.FN_TAGS)
+    for tag in tags:
+        group = [r for r in rows if r[2] == tag]
+        print(f"\n## {tag} ({len(group)})  —— {axis.FN_DEFINITIONS[tag]}")
+        for top, action, _f, note in group:
+            tail = f"    # {note}" if note else ""
+            print(f"  {axis.path_of(top, action)}{tail}")
+    print(f"\n共 {len(rows)} 条"
+          f"（别名 read=extract · diff=compare · styleset=audit-styleset 与被别名者"
+          f"共用同一条职能，不单独列）")
+    return 0
+
+
 CMD_TABLE: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "extract": cmd_extract,
     "read": cmd_extract,      # alias: skill 叫 read → cli extract
@@ -300,6 +355,15 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("rest", nargs=argparse.REMAINDER, help="透传到旧脚本")
     # Distilled 11 新族 — sub/*.py 各自 register()
     _register_distilled_subcommands(sub)
+    # verbs — 只读：列出子命令及其职能（数据源 sub/_function_axis.py）
+    axis = _function_axis()
+    vp = sub.add_parser(
+        "verbs",
+        help="列出子命令及其职能 (format/content/review/inspect/convert/dispatch)",
+    )
+    vp.add_argument("--fn", choices=list(axis.FN_TAGS), help="只列该职能的子命令")
+    vp.add_argument("--json", action="store_true", help="JSON 输出")
+    vp.set_defaults(func=cmd_verbs)
     return p
 
 
@@ -360,6 +424,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
         "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
         "para",       # 段落级 查-改-验 工作台: locate/inspect/edit/fix-ppr/scan-ppr/render (context11 distill, 2026-07-03)
+        "verbs",      # 只读: 列子命令职能轴 (sub/_function_axis.py, 2026-08-01)
     }
     while i < len(raw):
         tok = raw[i]

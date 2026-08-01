@@ -9,7 +9,8 @@
 ```
 scripts/
 ├── document/ (17)    # 文档处理入口（docx_cli/typeset/revise/bid_gate/renum/docx_fmt/md_tools/pptx_cli/pdf_cli/chart…）
-│   └── sub/ (43)     # docx_cli 子命令实现（_groups 声明表 + 业务模块 + _cli_common 样板；
+│   └── sub/ (44)     # docx_cli 子命令实现（_groups 声明表 + _function_axis 职能表 +
+│                     #   业务模块 + _cli_common 样板；
 │                     #   2026-07-31 家族折叠：strip/audit/freeze/image/table/caption/chapter/
 │                     #   renumber/blocks/split/typeset_ops/biddiff 12 族 42 旧件并成 12 个子命令族文件；
 │                     #   同日入口层折叠：chapter_renumber/tabfig_align/docx_renumber_figures →
@@ -48,19 +49,23 @@ lib/                  # 公共模块
 
 ## 子命令：加子命令 = 加一行数据，不是加一个文件（2026-07-30 立）
 
-`docx_cli.py` 的 125 个子命令（2026-07-30 退役 bullet/quality-check/review 后），声明全在 **`scripts/document/sub/_groups.py` 的 `GROUPS` 表**。
+`docx_cli.py` 的 126 个 parser 节点（2026-07-30 退役 bullet/quality-check/review、2026-08-01 加只读的 `verbs` 后）。
+**三个数都对，报的时候必须说明口径**：`cli_surface` 数的是节点总数 126（含 audit / strip 这类组父节点）；
+叶子路径 101；按 `id(parser)` 去重后 93 条可跑动词（其余 8 条是别名，见下节职能轴）。
+声明全在 **`scripts/document/sub/_groups.py` 的 `GROUPS` 表**。
 原来是 20 个只做「argparse 声明 + `exec_script` 转发」的 group 模块（2265 行），已折成一张表。
 
 `Opt` 里同时写「怎么声明给 argparse」和「怎么转发给实现脚本」，**这两件事必须挨着** ——
 原来它们分居 `register()` 与 `_run()` 两处，于是「加了选项忘了转发」是这类壳最常见的 bug：
 用户传了参数、脚本收不到、静默按默认值跑。
 
-改这张表**必须两道闸门都跑**：
+改这张表**必须三道闸门都跑**：
 
 ```bash
 python3 tools/cli_surface.py > /tmp/a.json        # 改之前
 python3 tools/cli_surface.py > /tmp/b.json        # 改之后 → diff 必须空
 python3 tools/cli_forward_probe.py                # 每条子命令真正转发出去的 argv
+python3 tools/check_function_axis.py              # 每条子命令的职能标签（缺一条即红）
 ```
 
 **只跑第一个不够**：它证明接口没变，证明不了参数传过去还是原样 —— 「命令能敲、
@@ -83,6 +88,29 @@ diff/track 走 CMD_TABLE fast-path（带 aliases 与前置 token 注入），表
 转发仍指 docx_tools，surface/probe 指纹按构造不变。改 CLI 契约（子命令名/flag/默认值）前
 先看外部调用面：cc-home `commands/docx.md`、zdys SKILL.md、`~/Work/CLAUDE.md` L161（track
 review 的 include_ins+strict 默认全开是机器强制条款，禁改）。
+
+## 职能轴：每条子命令碰的是「什么」（2026-08-01 立 · 有闸门）
+
+目录轴（`sub/` 里文件怎么摆）回答「实现在哪」；**职能轴**回答「这条命令碰的是什么」。
+两条轴正交，所以职能不落成目录，落成一张表 + 一道机检：
+
+| 干什么 | 敲什么 |
+|---|---|
+| 表本体（一条子命令一行） | `scripts/document/sub/_function_axis.py` 的 `_ROWS` |
+| 对账闸门（fail-closed） | `python3 tools/check_function_axis.py` |
+| 只看某一职能 | `python3 tools/check_function_axis.py --fn format`（`--md` 出可贴文档的表） |
+| 用户侧只读入口 | `python3 scripts/document/docx_cli.py verbs [--fn format] [--json]` |
+
+职能只有 6 个值，**别自创第七个**：`format`（只碰版式：样式/字体/段落属性/页眉页脚/
+分节/编号题注号/大纲层级/表格边框/装帧/样式集）· `content`（碰正文写了什么）·
+`review`（w:ins/w:del/批注/版本对照）· `inspect`（只读不写盘）· `convert`（跨格式）·
+`dispatch`（调度编排）。当前分布 format 41 · content 15 · review 6 · inspect 28 ·
+convert 2 · dispatch 1 = 93 条（另 8 条别名共用同一 parser，不单独占表项：
+`read`=extract · `diff`=compare · `styleset *`=audit-styleset *）。
+
+**加子命令 = `_ROWS` 里也加一行**，否则闸门转红并点名。反过来，表里留了 CLI 已经
+没有的条目同样判红 —— 两个方向都堵死，这张表才不会变成「还在、只是不准了」。
+别名不占表项：闸门按 `id(parser)` 归组自动认领，别名清单是从真 parser 派生的，不手抄。
 
 ## 全仓脚本关系图
 
