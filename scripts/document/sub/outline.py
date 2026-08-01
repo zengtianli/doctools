@@ -37,6 +37,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from cn_number import chinese_to_arabic  # noqa: E402,F401  中文数字 SSOT
 
 from docx import Document
 
@@ -57,35 +58,8 @@ except ImportError:
 # 公共辅助
 # =============================================================================
 
-_CN_DIGIT = {
-    "零": 0, "一": 1, "二": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
-}
-_CN_UNIT = {"十": 10, "百": 100, "千": 1000}
-
-
-def chinese_to_arabic(s: str) -> int:
-    """中文数字串转 int. 已是阿拉伯则直接 int(s). 无法解析抛 ValueError."""
-    s = s.strip()
-    if not s:
-        raise ValueError("empty numeral")
-    if s.isdigit():
-        return int(s)
-    total = 0
-    current = 0
-    for ch in s:
-        if ch in _CN_DIGIT:
-            current = _CN_DIGIT[ch]
-        elif ch in _CN_UNIT:
-            unit = _CN_UNIT[ch]
-            if current == 0:
-                current = 1
-            total += current * unit
-            current = 0
-        else:
-            raise ValueError(f"unrecognized char in numeral: {ch!r}")
-    total += current
-    return total
+# 中文数字转换：本文件原有一份局部实现（与 chapter.py 那份逐行等价），
+# 2026-08-01 下沉到 lib/cn_number.py，见文件顶部 import。
 
 
 def lsof_check(path: Path) -> Optional[str]:

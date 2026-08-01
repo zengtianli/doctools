@@ -19,6 +19,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
 
 # sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
 # 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
@@ -43,9 +44,9 @@ from docx.oxml.ns import qn  # noqa: E402
 
 # ══════════ number ← number_captions.py ══════════
 
-CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-          "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-          "十一": 11, "十二": 12, "十三": 13, "十四": 14, "十五": 15}
+# 中文数字：本文件原有一张「只到十五」的查表（CN_NUM），2026-08-01 换成
+# lib/cn_number.cn_to_int（见文件顶部 import）。行为变化：第 16 章往后的中文章号
+# 过去解析失败 → 章计数器不切换 → 表图继续按上一章编（表15-7、表15-8…）；现在正确切章。
 
 CAPTION_STYLES = {"zdwp表名", "Caption", "caption", "表题", "图题"}
 
@@ -89,7 +90,7 @@ def parse_chapter(text: str) -> int | None:
     t = text.strip()
     m = RE_CN_CHAPTER.match(t)
     if m:
-        return CN_NUM.get(m.group(1))
+        return cn_to_int(m.group(1))
     m = RE_AR_CHAPTER.match(t)
     if m and len(t) < 30:
         return int(m.group(1))

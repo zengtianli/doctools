@@ -26,6 +26,7 @@ lib/                  # 公共模块
 ├── docx_surgical.py  # zipfile+lxml 手术引擎
 ├── docx_revise.py    # 修订注入引擎（w:ins/w:del+批注）
 ├── llm_client.py     # AI 调用（claude -p 封装）
+├── cn_number.py      # 中文数字→int 唯一实现（纯 stdlib，见下节）
 ├── styles.py · chapter_numbering.py · text_fixes.py · schemas.py · soffice.py
 ├── clipboard.py · progress.py
 └── common.sh         # Shell 公共函数
@@ -175,6 +176,29 @@ for label, root, flush in iter_text_roots(doc):      # 正文/批注/脚注/尾�
 删除态（`w:del`/`w:moveFrom`）的文本载体是 `w:delText`，写成 `w:t` = 把删掉的字变回正文；
 `set_run_text` / `text_tag_for` 已挡住这条。回归门：
 `scripts/document/tests/test_docx_text_formatter_scopes.py`（老实现在此测试下 9 红）。
+
+### 中文数字转 int 只有 `lib/cn_number.py` 一份（2026-08-01 立 · 有测试门）
+
+合并前全仓 **5 处** 各写各的（chapter / outline / blocks / caption / styles），分三档能力，
+同一个输入给三种答案：`十六` 在 caption/styles 侧返 None、`一百零五` 在 blocks 侧返 None。
+后果不是学术问题 —— `caption number` 的章计数器解析失败就**不换章**，第 16 章往后的表图
+继续按上一章编（表15-7、表15-8…）；`styles` 那侧上层写的是 `_parse_chapter_from_text(t) or (chapter + 1)`，
+**静默拿「上一章+1」顶上**。三个入口都挂在 `typeset_apply.py` 步骤表里，/typeset 一条龙每次都在跑。
+
+```python
+from cn_number import chinese_to_arabic   # 严格版：解析不了抛 ValueError
+from cn_number import cn_to_int           # 宽松版：解析不了返 None
+```
+
+**两个 API 必须并存，别合成一个** —— chapter/outline 三处靠 `except ValueError` 控流
+（收 None 会拿着 None 往下算、写出「None、标题」且不报错），blocks/caption/styles 三处靠
+None 分支（抛异常会直接崩）。`cn_to_int` 就是 `chinese_to_arabic` 外包一层 try，语义不会再分叉。
+
+能力上界 = 十/百/千 + 「十X」省略一 + 〇/两 + 阿拉伯直通；**「万」不支持是有意的**（旧的三档
+没一档支持，加它要改累加器结构）。**本模块不管正则** —— 各调用点的章标题字符类没统一
+（caption/styles 侧不含 `百`/`零`，所以「一百零五、」压根匹配不到），那是另一根轴。
+
+回归门：`scripts/document/tests/test_cn_number.py`（含「sub/ 下不许再有本地副本」那条）。
 
 ### per-op 选项走后端声明,别写进 Swift（2026-07-26 立）
 

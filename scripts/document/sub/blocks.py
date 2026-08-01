@@ -23,6 +23,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -56,31 +57,9 @@ def _require_apply_body_styles():
 # ══════════ fix-heading-disorder ← fix_heading_disorder.py ══════════
 
 # ---------- 中文数字 -> 阿拉伯 ----------
-
-_CN_DIGIT = {
-    "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-}
-
-
-def cn_to_int(s: str) -> int | None:
-    s = s.strip()
-    if not s:
-        return None
-    if s.isdigit():
-        return int(s)
-    if s == "十":
-        return 10
-    if s.startswith("十") and len(s) == 2 and s[1] in _CN_DIGIT:
-        return 10 + _CN_DIGIT[s[1]]
-    if len(s) == 2 and s[1] == "十" and s[0] in _CN_DIGIT:
-        return _CN_DIGIT[s[0]] * 10
-    if len(s) == 3 and s[1] == "十" and s[0] in _CN_DIGIT and s[2] in _CN_DIGIT:
-        return _CN_DIGIT[s[0]] * 10 + _CN_DIGIT[s[2]]
-    if len(s) == 1 and s in _CN_DIGIT:
-        return _CN_DIGIT[s]
-    return None
-
+# 本文件原有一份「4 条硬编码形态分支、不支持百千」的局部实现，2026-08-01 下沉到
+# lib/cn_number.py（见文件顶部 import）。行为变化：「第一百零五章」这类过去返 None、
+# 被 numbering 连贯性检查整段跳过，现在返 105 参与序列比对。
 
 # ---------- heading 形态正则 ----------
 
