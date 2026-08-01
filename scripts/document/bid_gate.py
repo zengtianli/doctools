@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bid_residue_lib as lib  # noqa: E402
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
 from docx_parts import assert_parts_intact  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -546,7 +547,12 @@ PLACEHOLDER_PREFIX_RE = [
 ]
 
 # ── fatal ③ 题注（真题注 = 紧邻图/表）────────────────────────────
-CAP_RE = re.compile(r"^(图|表)\s*([0-9]+(?:[.．][0-9]+)*)\s*[-‑–—]\s*([0-9]+)(?=[　\s）】]|$)")
+# 2026-08-01 判据下沉 lib/caption_re.BID_STRICT_CAPTION。**右界断言保留** —— 全仓唯一
+# 一份，防把正文内联「见图3-12的说明」误吃成题注，是合并时最容易丢的能力。
+# 行为变化：短横补齐五种（旧的是全仓唯一含 U+2011 却**不含全角－**的一份，与 renum
+# 恰好互补 → renum 写出的 `图1－2` 它判不出，报假 fatal「题注编号断裂」）。
+CAP_SPEC = caption_re.BID_STRICT_CAPTION
+CAP_RE = caption_re.pattern(CAP_SPEC)
 
 # ── fatal ⑤ 孤立标点残渣 ───────────────────────────────────────
 ISOLATED_PUNCT = set("，。、）；")
@@ -706,7 +712,8 @@ def check(docx: Path, mode: str, rules: dict):
         m = CAP_RE.match(st)
         if not m:
             continue
-        kind, chap, num = m.group(1), m.group(2), int(m.group(3))
+        kind, chap, num = m.group("kind"), m.group("sec"), m.group("seq")
+        num = int(num)
         prev = kids[i - 1] if i > 0 else None
         nxt = kids[i + 1] if i + 1 < len(kids) else None
         if kind == "图":

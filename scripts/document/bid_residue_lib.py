@@ -18,9 +18,15 @@
 风格对齐 doctools 家族（docx_qa.py）与 shaoxing finalize2.py / gen_bid_docx.py 交付门。
 """
 import re
+import sys as _sys
 import zipfile
 from bisect import bisect_right
-from lxml import etree
+from pathlib import Path as _Path
+
+_sys.path.append(str(_Path(__file__).resolve().parents[2] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
+
+from lxml import etree  # noqa: E402
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 def w(t): return f"{{{W}}}{t}"
@@ -60,7 +66,11 @@ def paren_unbalanced(text):
                 return True
     return d != 0
 META_TOKENS = ["原件待核", "二手转述", "待核定占位", "可假定占位", "待台账", "待核实", "TODO", "TBD"]
-CAPTION_RE = re.compile(r"([表图])\s?(\d+(?:\.\d+)?)-(\d+)")
+# 2026-08-01 判据下沉 lib/caption_re.BID_REF_LOOSE。**有意保持非锚定** —— 它扫的是
+# 正文交叉引用，不是题注段。行为变化：短横补齐五种、章号放开到任意深度
+# （旧的最多两段，`表3.1.2-4` 判不出）、短横两侧允许空白（旧的完全不允许）。
+CAP_REF_SPEC = caption_re.BID_REF_LOOSE
+CAPTION_RE = caption_re.pattern(CAP_REF_SPEC)
 NUM_RE = re.compile(r"[0-9０-９]+(?:[.．][0-9０-９]+)?%?")
 
 CAT_NAMES = {
@@ -85,9 +95,11 @@ XREF_PATS = [
     re.compile(r"（\s*(?:详见|参见|见)?\s*\d+\.\d[\d.]*(?:\s*[、，/／]\s*\d+\.\d[\d.]*)*\s*(?:节|章)?\s*）"),
     re.compile(r"(?:详见|参见|承接|支撑|衔接|对应|落地到)\s*\d+\.\d"),
     re.compile(r"第\s*[3-9]\s*章"),
-    re.compile(r"(?:见|如|详见)\s*(?:表|图)\s*\d+[\.\-－]\d"),
+    # 分隔符类走 caption_re.SEP（原本只有 `[.\-－]`，em/en/U+2011 写的交叉引用漏检）
+    re.compile(rf"(?:见|如|详见)\s*(?:表|图)\s*\d+{caption_re.SEP}\d"),
 ]
-XREF_SKIP = re.compile(r"^(?:\d+(?:\.\d+){0,3}|(?:图|表)\s*[\d\.\-－]+)[ 　]")
+XREF_SKIP = re.compile(
+    rf"^(?:\d+(?:\.\d+){{0,3}}|(?:图|表)\s*[\d{re.escape(caption_re.DOT_CHARS + caption_re.DASH_CHARS)}]+)[ 　]")
 
 
 # ── docx 读取 / 段落工具 ─────────────────────────────────────────
@@ -330,9 +342,9 @@ def _scan_captions(ptexts, rules):
         return bisect_right(offs, charpos)
 
     groups = {}
-    for m in CAPTION_RE.finditer(text):
-        key = (m.group(1), m.group(2))
-        groups.setdefault(key, []).append((int(m.group(3)), m.start()))
+    for n in caption_re.finditer(text, CAP_REF_SPEC):
+        key = (n.kind, n.section)
+        groups.setdefault(key, []).append((n.seq, n.start))
     # rules caption_renumber 前缀也拆成组核（通用正则已覆盖标准「表 X-n」形态，此处兜非标前缀）
     for prefix in rules["caption_renumber"]:
         pat = re.compile(re.escape(prefix) + r"(\d+)")

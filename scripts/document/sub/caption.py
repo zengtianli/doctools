@@ -20,6 +20,7 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
+import caption_re  # noqa: E402  题注判据 SSOT
 
 # sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
 # 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
@@ -48,14 +49,18 @@ from docx.oxml.ns import qn  # noqa: E402
 # lib/cn_number.cn_to_int（见文件顶部 import）。行为变化：第 16 章往后的中文章号
 # 过去解析失败 → 章计数器不切换 → 表图继续按上一章编（表15-7、表15-8…）；现在正确切章。
 
-CAPTION_STYLES = {"zdwp表名", "Caption", "caption", "表题", "图题"}
+# 样式名/关键词判据 2026-08-01 搬进 lib/caption_re.py。**没有取并集** —— 这里是
+# 精确集合、audit 是关键词包含、shape_contract 是正则，三套各有对方缺的样式名，
+# 合并 = 给本命令（写盘）扩范围，得单独一轮做。见 caption_re 模块 docstring。
+CAPTION_STYLES = caption_re.CAPTION_STYLES_EXACT
 
-FIG_KEYWORDS = ("示意图", "分布图", "结构图", "流程图", "对比图",
-                "平面图", "布局图", "线路图", "断面图")
+# 本文件这 9 词是 styles.py 那份 13 词的**真子集**，故合成「核心 + 扩展」零行为变化。
+FIG_KEYWORDS = caption_re.FIG_KEYWORDS_CORE
 
-# 段开头已有编号则跳过
-RE_HAS_TABLE_NUM = re.compile(r"^\s*表\s*\d+\s*[-.–—]\s*\d+")
-RE_HAS_FIG_NUM = re.compile(r"^\s*图\s*\d+\s*[-.–—]\s*\d+")
+# 段开头已有编号则跳过。2026-08-01 判据下沉 lib/caption_re。行为变化：短横补齐五种，
+# 旧的漏 U+2011/全角－ → `表3－1 xxx` 被当成「还没编号」再编一次（双重编号同一坑）。
+RE_HAS_TABLE_NUM = caption_re.pattern(caption_re.HAS_NUM_TABLE)
+RE_HAS_FIG_NUM = caption_re.pattern(caption_re.HAS_NUM_FIG)
 
 # 句末标点 (中英文)
 RE_SENTENCE_END = re.compile(r"[。；，.;,]$")
@@ -378,7 +383,11 @@ W_PSTYLE = f"{{{W_NS}}}pStyle"
 W_RPR = f"{{{W_NS}}}rPr"
 W_VAL = f"{{{W_NS}}}val"
 
-CAP_PATTERN = re.compile(r"^\s*表\s*(\d+)\s*[-–—]\s*(\d+)\s*(.*)$")
+# 2026-08-01：本处原是一份**与 audit.py 同名、语义相同、章号却只写 `(\d+)` 的更窄
+# 拷贝** —— 上游 `audit table-pairing` 产出 `表3.1-1`，本处匹配不上，`caption pair`
+# 对 --cn-section 文档的 decision.json 条目静默 no-op。现在 import 同一个 spec 对象。
+CAP_SPEC = caption_re.TABLE_CAPTION_LINE
+CAP_PATTERN = caption_re.pattern(CAP_SPEC)
 
 
 def lsof_check(docx_path: Path) -> Optional[str]:
@@ -479,11 +488,11 @@ def op_rename_caption(body, cap_map: dict, op: dict, dry_run: bool) -> dict:
     new_number = op.get("new_number")
     new_name = op.get("new_name")
     old_text = get_text(elem)
-    m = CAP_PATTERN.match(old_text)
+    m = caption_re.parse(old_text, CAP_SPEC)
     if not m:
         return {"op": op["op"], "caption_id": cid, "status": "skip", "msg": "不是 caption 形态"}
-    cur_number = f"表{m.group(1)}-{m.group(2)}"
-    cur_name = m.group(3).strip()
+    cur_number = f"表{m.section}-{m.seq}"
+    cur_name = old_text[m.end:].strip()
     final_number = new_number if new_number else cur_number
     final_name = new_name if new_name is not None else cur_name
     new_text = f"{final_number} {final_name}".strip()
@@ -624,12 +633,12 @@ def op_renumber_all_tables(body, dry_run: bool) -> dict:
                 current_chapter += 1
                 continue
             text = get_text(child)
-            m = CAP_PATTERN.match(text)
+            m = caption_re.parse(text, CAP_SPEC)
             if m:
                 seq = chapter_counters.get(current_chapter, 0) + 1
                 chapter_counters[current_chapter] = seq
                 old_text = text
-                name = m.group(3).strip()
+                name = text[m.end:].strip()
                 new_text = f"表{current_chapter}-{seq} {name}".strip()
                 if old_text.strip() != new_text:
                     renames.append({"old": old_text[:80], "new": new_text[:80]})

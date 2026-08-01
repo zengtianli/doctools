@@ -37,6 +37,7 @@ from lxml import etree  # noqa: E402
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
 from soffice import find_soffice, require_soffice  # noqa: E402  doctools SSOT: soffice 路径解析
 from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
 
@@ -994,7 +995,10 @@ def _img_pages(pdf):
     pages = []
     for i, pg in enumerate(rd.pages, 1):
         t = pg.extract_text() or ""
-        if re.search(r"图\s?\d+[\.．]\d+-\d+", t) or re.search(r"附图\s?\d+", t):
+        # 2026-08-01 判据下沉 lib/caption_re。**有意保持强制三段** —— 它在 PDF 文本层
+        # 只挑正文图页，放宽会把扁平号的引用页也算进来。只统一了字符类。
+        if (caption_re.pattern(caption_re.TYPESET_FIG_SECTIONED).search(t)
+                or caption_re.pattern(caption_re.TYPESET_FIG_APPENDIX).search(t)):
             pages.append(i)
     return pages
 

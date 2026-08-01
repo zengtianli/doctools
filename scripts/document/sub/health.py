@@ -25,15 +25,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from ._dispatch import exec_script, get_or_add_group, get_or_add_subparsers
-from .docx_health_render_html import render_rich_html, render_simple_html
+# 仓根 lib 进 sys.path —— 题注判据 SSOT（append 不是 insert(0)，防顶掉同名模块）
+sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
+
+from ._dispatch import exec_script, get_or_add_group, get_or_add_subparsers  # noqa: E402
+from .docx_health_render_html import render_rich_html, render_simple_html  # noqa: E402
 
 # ─── 常量 ────────────────────────────────────────────────────────────────────
 
 # 题注编号：中文「图3-1 / 表 3.1-2 / 图3」与英文「Figure 3-1 / Table 3.1」。
 # duplicate-figure-numbers 按它判重 —— 按整句文本判会被空 text 记录撞成假重复。
-CAPTION_NUM_RE = re.compile(
-    r"(?:[图表]|(?:Figure|Fig\.?|Table)\s*)\s*\d+(?:[.．-]\d+)*", re.I)
+# 2026-08-01 下沉到 lib/caption_re.py（本文件曾有**两份互相不认**的题注正则：这一处
+# 与 _gap_analysis 里的 NUM_RE，同一个 health 命令里两套口径）。行为变化：
+# ① 附图/附表 现在是独立编号族（旧实现 search 把「附图1」截成「图1」，与真「图1」
+#    撞 key 报假重复 High + exit 2）；② 短横补齐五种（旧的漏 en/em/全角/U+2011，
+#    「图3—1 图3—2」全被截成 key「图3」→ 又一批假重复）。
 
 SEVERITY = {
     "heading-level-skew":       "High",
@@ -555,10 +562,11 @@ def check_duplicate_figures(doc_path: Path, tmp_dir: Path) -> dict:
     seen: dict[str, list] = {}
     for cap in captions:
         label = cap.get("label", cap.get("text", "")) if isinstance(cap, dict) else str(cap)
-        m = CAPTION_NUM_RE.search(re.sub(r"\s+", "", label))
-        if not m:
+        n = next(caption_re.finditer(re.sub(r"\s+", "", label),
+                                     caption_re.NUM_TOKEN_ANY), None)
+        if n is None:
             continue                      # 没有编号的题注不参与判重
-        seen.setdefault(m.group(0), []).append(cap)
+        seen.setdefault(n.raw, []).append(cap)
     dups = {k: v for k, v in seen.items() if len(v) > 1}
     if dups:
         return {"found": True, "duplicate_count": len(dups),
@@ -856,20 +864,19 @@ def check_caption_count_consistency(doc_path: Path) -> dict:
     fig_cap_cnt = snap.get("caption_figure_count", 0)
     tbl_cap_cnt = snap.get("caption_table_count", 0)
 
-    NUM_RE = re.compile(r"[图表]\s*([\d．.]+)[-—–]([\d．.]+)")
-
     def _gap_analysis(num_set: list[str]) -> list[dict]:
-        """按章聚 seq, 找跳号 (章内 1..max 缺号)。"""
+        """按章聚 seq, 找跳号 (章内 1..max 缺号)。
+
+        2026-08-01 判据换 lib/caption_re.NUM_SPLIT_LOOSE。这里原有一份局部 NUM_RE，
+        与本文件 CAPTION_NUM_RE **互相不认**（那份认单号不认 en/em，这份反过来）。
+        附图/附表 照旧不参与跳号分析（扁平族无章号，`(?<!附)` 明写在 spec 上）。
+        """
         by_chapter: dict[str, list[int]] = {}
         for s in num_set:
-            m = NUM_RE.search(s)
-            if not m:
+            n = next(caption_re.finditer(s, caption_re.NUM_SPLIT_LOOSE), None)
+            if n is None or n.section is None or n.seq is None:
                 continue
-            ch = m.group(1).replace("．", ".").rstrip(".")
-            try:
-                seq = int(m.group(2).replace("．", ".").rstrip("."))
-            except ValueError:
-                continue
+            ch, seq = n.section, n.seq
             by_chapter.setdefault(ch, []).append(seq)
         gaps = []
         for ch, seqs in sorted(by_chapter.items()):

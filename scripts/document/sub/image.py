@@ -33,6 +33,7 @@ from lxml import etree
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / 'lib'))
+import caption_re  # noqa: E402  题注判据 SSOT
 from docx_parts import assert_parts_intact  # noqa: E402
 
 from docx import Document  # noqa: E402
@@ -220,7 +221,9 @@ NS_EXTRACT = {
 
 ILLEGAL_FS = re.compile(r'[\\/:*?"<>|\r\n\t]')
 WS_RUN = re.compile(r"\s+")
-CAPTION_PREFIX = re.compile(r"^图")
+# 2026-08-01 判据下沉 lib/caption_re.KIND_PREFIX_FIG。**有意只看首字、不认英文 Figure**
+# —— 它跑在中文报告链上，且要给无编号题注也能命名（同 table.py 的兜底纪律）。
+CAPTION_PREFIX = caption_re.pattern(caption_re.KIND_PREFIX_FIG)
 
 
 def _para_text(p: etree._Element) -> str:
@@ -417,14 +420,22 @@ def qn(prefix, tag):
     return f'{{{NS[prefix]}}}{tag}'
 
 
-FIG_PREFIX_RE = re.compile(r'^图\s*\d+\s*[-－]\s*\d+\s*')
+# 2026-08-01 判据下沉 lib/caption_re.IMG_FIG_PREFIX。行为变化两条：
+# ① 短横补齐五种 —— 旧的只认 ASCII 与全角，`图3—1 灌区图` 剥不掉号，同一份文档里
+#    命名规则不一致（`图3-1 灌区图` 剥成 `灌区图`）；
+# ② 章号允许小数点 —— `图3.1-2 灌区图` 旧实现整段不认，--cn-section 产出的文档
+#    抽图时一张图都对不上题注。
+# **仍要求「短横 + 序号」**（比 styles 的 PREFIX_STRIP_* 窄）：本正则同时被
+# has_fig_prefix 用来判「哪个段算图题」，放宽到零段会把任意「图+数字」段收进来。
+FIG_PREFIX_RE = caption_re.pattern(caption_re.IMG_FIG_PREFIX)
+_TBL_PREFIX_RE = caption_re.pattern(caption_re.IMG_TBL_PREFIX)
 
 
 def normalize_caption(text: str) -> str:
     """Strip 图 X-Y prefix and ideographic whitespace."""
     t = text.strip()
     t = FIG_PREFIX_RE.sub('', t)
-    t = re.sub(r'^表\s*\d+\s*[-－]\s*\d+\s*', '', t)
+    t = _TBL_PREFIX_RE.sub('', t)
     t = t.replace('　', '').replace(' ', '').strip()
     return t
 

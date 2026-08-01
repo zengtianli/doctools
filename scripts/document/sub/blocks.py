@@ -24,6 +24,7 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
+import caption_re  # noqa: E402  题注判据 SSOT
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -63,7 +64,11 @@ def _require_apply_body_styles():
 
 # ---------- heading 形态正则 ----------
 
-RE_TABLE      = re.compile(r"^表\s*[\d一二三四五六七八九十百]+[-—–]?[\d一二三四五六七八九十百]*\s")
+# 2026-08-01 判据下沉 lib/caption_re.TABLE_NAME_HEURISTIC（与 styles.RE_TABLE_NAME
+# 原是两份手抄，字符类差一个 en dash、中文数字集差一个「百」）。行为变化：章号
+# 现在允许小数点 —— `表 3.1-2 成本对照表` 旧实现 detect_heading_form 返 None
+# （落到后面的 heading 候选分支按正文处理），现在返 ("zdwp_table", 0, None)。
+RE_TABLE      = caption_re.pattern(caption_re.TABLE_NAME_HEURISTIC)
 RE_TITLE_CN   = re.compile(r"^([一二三四五六七八九十]+)、")
 RE_CHAPTER    = re.compile(r"^第([一二三四五六七八九十百零\d]+)章\s*\S")
 RE_H4         = re.compile(r"^(\d+)\.(\d+)\.(\d+)\.(\d+)\s+\S")

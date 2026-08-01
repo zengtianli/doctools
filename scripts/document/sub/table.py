@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from docx_parts import PartIntegrityError, diff_parts  # noqa: E402  部件完整性(B类:精确部件集)
 
@@ -205,7 +206,10 @@ _ILLEGAL_FILENAME_RE = re.compile(r'[/\\:*?"<>|\r\n\t]')
 _MULTI_WS_RE = re.compile(r"\s+")
 
 # Caption heuristic: starts with 表 / Table; length < 80 chars
-_CAPTION_PREFIX_RE = re.compile(r"^\s*(?:表|Table\b)", re.IGNORECASE)
+# 2026-08-01 判据下沉 lib/caption_re.KIND_PREFIX_TABLE。**有意保持只看首字、不看编号**
+# —— 切表要给无编号题注也能命名，收紧成要求编号会大面积掉回 `table-{idx:02d}` fallback
+# （违反 CLAUDE.md §抽取类工具默认契约第 ① 条）。
+_CAPTION_PREFIX_RE = caption_re.pattern(caption_re.KIND_PREFIX_TABLE)
 _CAPTION_MAX_LEN = 80
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

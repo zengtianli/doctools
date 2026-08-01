@@ -36,6 +36,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Tuple
 
+import sys as _sys
+_sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
+
 from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
@@ -44,14 +48,10 @@ from lxml import etree
 # ───────────────────────────────────────────────────────────────────────────────
 # style-name regex (覆盖中英两条线)
 # ───────────────────────────────────────────────────────────────────────────────
-_FIG_CAPTION_NAME_RE = re.compile(
-    r"(图\s*名|图名称|figure\s*caption|image\s*caption|图\s*注|^figure$)",
-    re.IGNORECASE,
-)
-_TABLE_CAPTION_NAME_RE = re.compile(
-    r"(表\s*名|表名称|表格标题|table\s*caption|表\s*注|表\s*题|^table$)",
-    re.IGNORECASE,
-)
+# 2026-08-01 搬进 lib/caption_re.py（**未与 audit / caption 两套取并集** —— 三者各有
+# 对方缺的样式名是事实，合并会给写盘动词扩范围，见 caption_re 模块 docstring）。
+_is_fig_caption_name = caption_re.is_fig_caption_style
+_is_table_caption_name = caption_re.is_table_caption_style
 
 _HEADING_NAMES = (
     "Heading 1", "Heading 2", "Heading 3", "Heading 4",
@@ -62,8 +62,11 @@ _HEADING_NAMES = (
 # caption 文本里的 "图X-Y" / "表X-Y" 编号 (Y 可缺省, 兼容 "图3-2"/"图3.2-1" 等)
 # 第 2 个 alt = 附录式 "附图N"/"附表N" (单号无短横, 院模板结论章/附录常用)。仅在带"附"
 # 前缀时放宽无短横, 故不会误吃正文内联 "见图1" (无附前缀仍需短横); 且 set 去重防重计。
-_FIG_NUM_TEXT_RE = re.compile(r"图\s*[\d．.]+[-—–][\d．.]+|附图\s*[\d．.]+")
-_TBL_NUM_TEXT_RE = re.compile(r"表\s*[\d．.]+[-—–][\d．.]+|附表\s*[\d．.]+")
+# 2026-08-01 判据下沉 lib/caption_re。行为变化：短横补齐五种 → `图3—1` / `图3－1`
+# 这类以前漏进编号集的号现在入集。⚠ 本集合是 health `_gap_analysis` 的**输入**，
+# 两条正则串接：任一条漏号跳号分析就静默少一项，所以两处必须一起改一起测。
+_FIG_NUM_TEXT_RE = caption_re.pattern(caption_re.SHAPE_FIG_NUM)
+_TBL_NUM_TEXT_RE = caption_re.pattern(caption_re.SHAPE_TBL_NUM)
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -125,8 +128,8 @@ def capture_structure(docx_path: Path | str) -> dict:
         # caption by style name — 空段不计入 caption 数: 带「图名/表名」样式但无文本 =
         # 排版占位空行 (审定模板常在题注前后留同样式空段), 非真题注; 计入会虚增 caption 段数
         # 致 caption-count-consistency 误报 (编号集 ≠ 段数).
-        is_fig = bool(_FIG_CAPTION_NAME_RE.search(name)) if name else False
-        is_tbl = bool(_TABLE_CAPTION_NAME_RE.search(name)) if name else False
+        is_fig = _is_fig_caption_name(name)
+        is_tbl = _is_table_caption_name(name)
         text = para.text or ""
         if is_fig and text.strip():
             cap_fig += 1
@@ -134,11 +137,11 @@ def capture_structure(docx_path: Path | str) -> dict:
             cap_tbl += 1
         # caption text → "图X-Y" / "表X-Y" 集合
         if is_fig or "图" in text[:6]:
-            for m in _FIG_NUM_TEXT_RE.findall(text):
-                fig_nums.add(re.sub(r"\s+", "", m))
+            for m in _FIG_NUM_TEXT_RE.finditer(text):
+                fig_nums.add(re.sub(r"\s+", "", m.group(0)))
         if is_tbl or "表" in text[:6]:
-            for m in _TBL_NUM_TEXT_RE.findall(text):
-                tbl_nums.add(re.sub(r"\s+", "", m))
+            for m in _TBL_NUM_TEXT_RE.finditer(text):
+                tbl_nums.add(re.sub(r"\s+", "", m.group(0)))
 
     # drawings_count: body <w:drawing> + zip word/media/* (取 max, 双源对账)
     drawings_body = _count_drawings_in_doc(doc)

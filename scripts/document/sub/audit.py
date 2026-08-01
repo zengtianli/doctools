@@ -34,7 +34,9 @@ from lxml import etree
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parent))
+_sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+import caption_re  # noqa: E402  题注判据 SSOT
 
 try:
     from docx import Document
@@ -168,20 +170,16 @@ def main_bookmarks(argv: list[str] | None = None) -> int:
 # ══════════ captions ← audit_caption_outline.py ══════════
 
 # 兼容 `图1.2-1` 三段、`表1-1` 两段、`表 1.2-1`、`图1.1` 两段(纯点)
-CAPTION_RE = re.compile(r"^\s*(表|图)\s*\d+([\.\-]\d+){1,2}")
+# 2026-08-01 判据下沉 lib/caption_re.CAPTION_ANY_CN。行为变化：短横补齐五种
+# （旧的只认 ASCII，`图3—1` / `图3－1` / `图3‑1` 全判不出 → 它是 health 两个检查的
+# 上游数据源，它漏掉的题注 health 根本看不到）。
+CAPTION_RE = caption_re.pattern(caption_re.CAPTION_ANY_CN)
 
 # Caption family styles — docx 里允许的 caption 类样式名(集团 ZDWP 命名 + 通用)
-CAPTION_FAMILY_KEYWORDS = ("caption", "表名", "图名", "0图", "0表", "zdwp 表名", "zdwp 图名")
-
-
-def is_caption_style(style_name: str) -> bool:
-    if not style_name:
-        return False
-    low = style_name.lower().strip()
-    for kw in CAPTION_FAMILY_KEYWORDS:
-        if kw in low:
-            return True
-    return False
+# 判据在 lib/caption_re.py，与 shape_contract 的正则式、caption 的精确集合**三套并存**
+# 不合并（合并 = 给 caption number 写盘动词扩范围，见 caption_re 模块 docstring）。
+CAPTION_FAMILY_KEYWORDS = caption_re.CAPTION_FAMILY_KEYWORDS
+is_caption_style = caption_re.is_caption_family_style
 
 
 def get_outline_lvl(p_elem) -> str | None:
@@ -1086,10 +1084,13 @@ W_TC = f"{{{W_NS}}}tc"
 
 # 兼容两种表号: 扁平 "表3-1" 与中文章节式 "表3.1-1" (章.节-序, /docx renumber --cn-section 产出)。
 # group(1)=章节号(3 或 3.1), group(2)=序号, group(3)=表名。向后兼容: (?:\.\d+)* 可选, 扁平号仍匹配。
-CAP_PATTERN = re.compile(r"^\s*表\s*(\d+(?:\.\d+)*)\s*[-–—]\s*(\d+)\s*(.*)$")
-# 附录式表号 "附表N 表名" (院模板结论章/附录常用, 单号无短横)。与 CAP_PATTERN 互斥:
-# 仅当 CAP_PATTERN 不匹配时回退此式, 把附表识别为合法 caption (否则真附表被误判孤儿表)。
-CAP_APPENDIX_PATTERN = re.compile(r"^\s*附表\s*(\d+)\s*(.*)$")
+# 2026-08-01 判据下沉 lib/caption_re。**下游 caption.py 曾有同名常量、章号只写 (\d+)**，
+# 于是本处产出的 `表3.1-1` 在 `caption pair` 侧匹配不上 → decision.json 条目静默修不了。
+# 现在两处 import 同一个 spec 对象，那条链在结构上不可能再断。
+CAP_SPEC = caption_re.TABLE_CAPTION_LINE
+# 附录式表号 "附表N 表名" (院模板结论章/附录常用, 单号无短横)。与 CAP_SPEC 互斥:
+# 仅当 CAP_SPEC 不匹配时回退此式, 把附表识别为合法 caption (否则真附表被误判孤儿表)。
+CAP_APPENDIX_SPEC = caption_re.TABLE_CAPTION_APPENDIX
 
 # 关键词→同义词字典 (字面包含即视为命中)
 KEYWORD_SYNONYMS: dict[str, list[str]] = {
@@ -1177,15 +1178,15 @@ def _audit_from_doc_table_pairing(doc, docx_path_label: str = "") -> dict:
     for i, e in enumerate(elems):
         if e.tag == W_P:
             text = get_text(e)
-            m = CAP_PATTERN.match(text)
-            ma = CAP_APPENDIX_PATTERN.match(text) if not m else None
+            m = caption_re.parse(text, CAP_SPEC)
+            ma = caption_re.parse(text, CAP_APPENDIX_SPEC) if not m else None
             if m or ma:
                 cap_counter += 1
                 if m:
-                    ch, num, name = m.group(1), m.group(2), m.group(3).strip()
+                    ch, num, name = m.section, str(m.seq), text[m.end:].strip()
                     number = f"表{ch}-{num}"
                 else:  # 附录式 "附表N"
-                    ch, num, name = "附", ma.group(1), ma.group(2).strip()
+                    ch, num, name = "附", str(ma.seq), text[ma.end:].strip()
                     number = f"附表{num}"
                 # 找紧邻下游"注:..."段 (style ZDWP, 文本以"注"开头)
                 notes_idx = []

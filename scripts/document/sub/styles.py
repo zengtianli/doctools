@@ -45,6 +45,7 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
+import caption_re  # noqa: E402  题注判据 SSOT
 from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
 
 from docx import Document
@@ -137,7 +138,10 @@ def _save_with_backup(src: Path, doc, args, wrote_needed: bool = True) -> Option
 # =============================================================================
 # 启发式分类 (按优先级, top 先匹) — 文本形态识别 (项目无关 regex)
 
-RE_TABLE_NAME = re.compile(r"^表\s*[\d一二三四五六七八九十]+[-—]?[\d一二三四五六七八九十]*\s+")
+# 2026-08-01 判据下沉 lib/caption_re.TABLE_NAME_HEURISTIC —— 与 blocks.RE_TABLE 原是
+# 两份近乎重复、字符类差一个 en dash 的手抄件。行为变化：章号现在允许小数点
+# （`表 3.1-2` 旧实现判不出，--cn-section 产出的表名段落全掉进「未知形态」）。
+RE_TABLE_NAME = caption_re.pattern(caption_re.TABLE_NAME_HEURISTIC)
 RE_TOP_CN     = re.compile(r"^[一二三四五六七八九十]+、")
 RE_CHAPTER    = re.compile(r"^第[一二三四五六七八九十\d]+章\s+")
 RE_NUM_TITLE  = re.compile(r"^\d+\s+\S")
@@ -992,7 +996,11 @@ def cmd_table(args) -> int:
 # =============================================================================
 # 子命令 3: style caption — apply_caption_styles
 # =============================================================================
-_CAPTION_PATTERN = re.compile(r"^(表|图)\s*\d+\.\d+-\d+")
+# **有意只认章节式三段** —— 这是 `style caption` 的写盘范围，放宽到扁平号等于给
+# 既有动词偷偷加破坏性范围（CLAUDE.md「动词名字承诺什么，默认就只做什么」）。
+# 2026-08-01 只统一字符类：短横补齐五种、章节点允许全角．
+_CAPTION_SPEC = caption_re.SECTIONED_CAPTION
+_CAPTION_PATTERN = caption_re.pattern(_CAPTION_SPEC)
 
 
 def _scan_and_apply_caption(doc, profile: StylesProfile, do_apply: bool) -> dict:
@@ -1009,7 +1017,7 @@ def _scan_and_apply_caption(doc, profile: StylesProfile, do_apply: bool) -> dict
         m = _CAPTION_PATTERN.match(text)
         if not m:
             continue
-        kind = m.group(1)
+        kind = m.group("kind")
         target = table_style if kind == "表" else figure_style
         current = p.style.name if p.style else None
 
@@ -1082,19 +1090,16 @@ def cmd_caption(args) -> int:
 # 静默猜；现在真读章号，章号跳号/中途起算的文档会与旧输出分叉。
 
 # 关键词集合(项目无关,中文报告通用)
-TABLE_KEYWORDS = (
-    "统计表", "配置表", "余缺水量表", "比选表", "拟定表",
-    "计算结果表", "结果表", "情况", "对照表", "汇总表",
-)
-FIG_KEYWORDS = (
-    "示意图", "分布图", "布局图", "平面图", "对比图",
-    "布置图", "线路图", "范围图", "管线", "输水",
-    "结构图", "流程图", "断面图",
-)
+TABLE_KEYWORDS = caption_re.TABLE_KEYWORDS
+# 本文件这 13 词是 caption.py 那份 9 词的**真超集**，故合成「核心 + 扩展」零行为变化。
+FIG_KEYWORDS = caption_re.FIG_KEYWORDS_EXT
 
-RE_HAS_TABLE_NUM = re.compile(r"^\s*表\s*\d+\s*[-.–—]\s*\d+")
-RE_HAS_FIG_NUM = re.compile(r"^\s*图\s*\d+\s*[-.–—]\s*\d+")
-RE_FU_TU = re.compile(r"^\s*附图\s*\d+")
+# 2026-08-01 判据下沉 lib/caption_re。RE_HAS_* 两条原与 caption.py:56-57 **逐字节相同**
+# （复制粘贴双份）。行为变化：短横补齐五种。
+RE_HAS_TABLE_NUM = caption_re.pattern(caption_re.HAS_NUM_TABLE)
+RE_HAS_FIG_NUM = caption_re.pattern(caption_re.HAS_NUM_FIG)
+# 附图 = 独立扁平编号族，第一行就 return None。这道闸正是 health.py 旧实现缺的那道。
+RE_FU_TU = caption_re.pattern(caption_re.FIG_APPENDIX_PREFIX)
 RE_ENUM_PREFIX = re.compile(r"^\s*[（(][一二三四五六七八九十0-9]+[）)]")
 RE_SENTENCE_END = re.compile(r"[。；，.;,]$")
 RE_CN_CHAPTER = re.compile(r"^([一二三四五六七八九十]+)、")
@@ -1315,8 +1320,10 @@ def cmd_caption_number_by_style(args) -> int:
 # 子命令 5: renumber h4-figures — renumber_h4_figures
 # =============================================================================
 H4_PREFIX_RE = re.compile(r"^\s*\d+(?:[.．]\d+){0,3}[.．]?\s*")
-FIG_PREFIX_RE = re.compile(r"^\s*图\s*[\d一二三四五六七八九十百零]+(?:[.．\-–—][\d一二三四五六七八九十百零]+)*\s*")
-TBL_PREFIX_RE = re.compile(r"^\s*表\s*[\d一二三四五六七八九十百零]+(?:[.．\-–—][\d一二三四五六七八九十百零]+)*\s*")
+# 2026-08-01 判据下沉 lib/caption_re。行为变化：短横补齐五种 —— 旧字符类漏 U+2011/
+# 全角－，`图3‑1 灌区分布图` 被**剥掉一半**成 `‑1 灌区分布图`（实测），不是剥不动而是剥出垃圾。
+FIG_PREFIX_RE = caption_re.pattern(caption_re.PREFIX_STRIP_FIG)
+TBL_PREFIX_RE = caption_re.pattern(caption_re.PREFIX_STRIP_TBL)
 
 
 def _get_style_name(p) -> str:

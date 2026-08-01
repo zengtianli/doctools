@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from docx_write_gate import WriteGate  # noqa: E402  原地写回并发门（同目录 SSOT）
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+import caption_re  # noqa: E402  题注判据 SSOT
 from chapter_numbering import ChapterNumbering  # noqa: E402
 from docx_parts import assert_parts_intact  # noqa: E402
 from docx_surgical import body_start_idx as _lib_body_start_idx  # noqa: E402
@@ -233,7 +234,11 @@ TABFIG_DOC = """tabfig_align — 表/图题注号与所在章号对齐（单一�
     --check  机检门: 有漂移 exit 2,干净 exit 0
 """
 
-TOKEN_RE = re.compile(r"([表图])(\s*)(\d+(?:\.\d+)*)(-\d+)")
+# 2026-08-01 判据下沉 lib/caption_re.md_token_pattern()（4 个**位置分组**被 align_text
+# 的 sub 回调按位置解包重组，所以单列一份，但字符类走同一套）。行为变化：短横补齐
+# 五种、章节点允许全角．—— 旧的只认 ASCII，`图3—1`/`图3－1` 在 md 侧一律漏检，
+# `renum.py tabfig --check` 这道机检门对它们是瞎的。
+TOKEN_RE = caption_re.md_token_pattern()
 CH_RE = re.compile(r"^ch(\d+(?:\.\d+)*)-")
 
 
@@ -357,7 +362,7 @@ def renumber(docx_path, prefix="Figure", dry_run=False):
     def ptext(p):
         return "".join(n.text or "" for n in _visible_t_nodes(p))
 
-    cap_re = re.compile(rf'^\s*(?:{prefix}|Fig\.?)\s*(\d+)\b', re.I)
+    cap_re = caption_re.en_caption_pattern(prefix)
     caption_order = []  # 现号，按物理顺序
     for p in paras:
         m = cap_re.match(ptext(p).strip())
@@ -374,7 +379,7 @@ def renumber(docx_path, prefix="Figure", dry_run=False):
         return root, remap, caption_order, True, []
 
     # 引用匹配：Figure(s)/Fig. + 数字 + 可选 范围/列举（–,-,—,，and）
-    cit = re.compile(rf'(?:{prefix}s?|Figs?\.?)\s*\d+(?:\s*(?:[–\-—,]|and)\s*\d+)*', re.I)
+    cit = caption_re.en_citation_pattern(prefix)
     num = re.compile(r'\d+')
     for p in paras:
         nodes = _visible_t_nodes(p)
@@ -408,7 +413,7 @@ def _write(src_docx, root, out_path):
 def _verify(out_path, prefix):
     """重读输出确认 captions 连续 1..N。"""
     root = etree.fromstring(zipfile.ZipFile(out_path).read("word/document.xml"))
-    cap_re = re.compile(rf'^\s*(?:{prefix}|Fig\.?)\s*(\d+)\b', re.I)
+    cap_re = caption_re.en_caption_pattern(prefix)
     nums = []
     for p in root.iter(f"{W}p"):
         txt = "".join(n.text or "" for n in _visible_t_nodes(p)).strip()
@@ -502,7 +507,11 @@ def _collect_captions(paras, kind):
     **前置区(封面/落款/目录)整段排除**（见 _body_start_idx）——图题只在正文。
     """
     body0 = _body_start_idx(paras)
-    cap_re = re.compile(rf'^\s*{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    # 2026-08-01 判据下沉 lib/caption_re.RENUM_CN_CAPTION —— 写入端/回写端/自检端
+    # 从三条各写各的 rf-string 收成同一个 spec。行为变化：短横补齐五种（旧的漏
+    # U+2011 → 已编号的 `图1‑2` 被当无号题注 prepend 出双重编号，实测）、章号放开到
+    # 任意深度（旧的最多两段，`图3.1.2-4` 同样被当无号）。
+    cap_re = caption_re.pattern(caption_re.RENUM_CN_CAPTION.for_kind(kind))
     numbered, cap_styles = [], set()
     for idx, p in enumerate(paras):
         if idx < body0:
@@ -511,12 +520,12 @@ def _collect_captions(paras, kind):
         if 0 < _caption_content_len(s) < 80:
             m = cap_re.match(s)
             if m:
-                numbered.append((idx, m.group(1), int(m.group(2))))
+                numbered.append((idx, m.group("sec"), int(m.group("seq"))))
                 st = _para_style(p)
                 if st:
                     cap_styles.add(st)
     # 附图/附表 = 独立扁平编号体系（附图1、附图2…），不属 图X.Y-N 范畴 → 排除，否则误判为无号
-    appendix_re = re.compile(r'^\s*附[图表]')
+    appendix_re = caption_re.pattern(caption_re.APPENDIX_PREFIX_ANY)
     unnumbered = []
     for idx, p in enumerate(paras):
         if idx < body0 or idx == 0 or not _has_drawing(paras[idx - 1]):
@@ -665,7 +674,9 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
         return root, plan, caps_compat, True, sorted(conflict)
 
     para_by_idx = dict(enumerate(paras))
-    n_after_re = re.compile(rf'(\s*{kind}\s*\d+(?:\.\d+)?\s*[-－—–]\s*)(\d+)')
+    # 回写端与写入端（_collect_captions 的 cap_re）**同一个 spec 对象**，named group
+    # 'seq' 定位序号。合并前这两端各写一条 rf-string，字符类可以各自漂移。
+    n_after_re = caption_re.pattern(caption_re.RENUM_CN_CAPTION.for_kind(kind))
 
     # 1) caption 改写
     for idx, typ, sec, old_n, new_n in plan:
@@ -677,14 +688,14 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
             full = "".join(n.text or "" for n in nodes)
             m2 = n_after_re.match(full)
             if m2:
-                _apply_edits(nodes, [(m2.start(2), m2.end(2), str(new_n))])
+                _apply_edits(nodes, [(*m2.span("seq"), str(new_n))])
         else:  # 补号
             _prepend_caption_number(p, f"{kind}{sec}-{new_n} ")
 
     # 2) 正文引用改写（排除**所有** caption 段：已编号 + 补号）；重复号有引用 → warning 不动
     #    ⚠ 必须含补号段——否则刚 prepend 的「图X.Y-N」会被本循环当正文引用再 remap 一次（曾踩）。
     cap_ids = {row[0] for row in plan}
-    ref_re = re.compile(rf'{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    ref_re = caption_re.pattern(caption_re.RENUM_CN_REF.for_kind(kind))
     warnings = []
     for idx, p in enumerate(paras):
         if idx in cap_ids:
@@ -695,12 +706,12 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
             continue
         edits = []
         for m in ref_re.finditer(full):
-            k = (m.group(1), int(m.group(2)))
+            k = (m.group("sec"), int(m.group("seq")))
             if k in conflict:
                 warnings.append(f"{kind}{k[0]}-{k[1]}（重复号，引用需人工确认）")
                 continue
             if k in remap and remap[k] != k[1]:
-                edits.append((m.start(2), m.end(2), str(remap[k])))
+                edits.append((*m.span("seq"), str(remap[k])))
         if edits:
             _apply_edits(nodes, edits)
 
@@ -714,19 +725,31 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
 
 
 def _verify_cn(out_path, kind):
-    """重读输出确认每个 sec 内 n 连续 1..k。返回 ({sec:[n...]}, all_ok)。"""
+    """重读输出确认每个 sec 内 n 连续 1..k。返回 ({sec:[n...]}, all_ok, [双重编号段])。
+
+    ⚠ **自检不能只复用写入端的连续性判据** —— 2026-08-01 实测：写入端字符类漏
+    U+2011 时，已编号的 `图1‑2` 被当无号题注 prepend 成 `图1-3 图1‑2 …`，而自检用
+    同一条瞎正则只看得见开头的 `图1-3`，于是对着被写坏的文档打印「✓ 每节连续」。
+    连续性 check 在结构上看不见双重编号（叠上去的号本身就是连续的），所以这里额外
+    扫「同一段里出现 ≥2 个题注编号」—— 这条判据与写入端**正交**，写入端漏了什么
+    它照样抓得到，是 fail-closed 的那一半。
+    """
     root = etree.fromstring(zipfile.ZipFile(out_path).read("word/document.xml"))
-    cap_re = re.compile(rf'^\s*{kind}\s*(\d+(?:\.\d+)?)\s*[-－—–]\s*(\d+)')
+    cap_re = caption_re.pattern(caption_re.RENUM_CN_CAPTION.for_kind(kind))
+    ref_re = caption_re.pattern(caption_re.RENUM_CN_REF.for_kind(kind))
     by_sec = {}
+    doubled = []
     for p in root.iter(f"{W}p"):
         s = "".join(n.text or "" for n in _visible_t_nodes(p)).strip()
         if _caption_content_len(s) >= 80:
             continue
         m = cap_re.match(s)
         if m:
-            by_sec.setdefault(m.group(1), []).append(int(m.group(2)))
-    ok = all(v == list(range(1, len(v) + 1)) for v in by_sec.values())
-    return by_sec, ok
+            by_sec.setdefault(m.group("sec"), []).append(int(m.group("seq")))
+            if len(ref_re.findall(s)) > 1:
+                doubled.append(s[:60])
+    ok = all(v == list(range(1, len(v) + 1)) for v in by_sec.values()) and not doubled
+    return by_sec, ok, doubled
 
 
 def figures_main(argv):
@@ -783,10 +806,19 @@ def figures_main(argv):
             _write(a.docx + ".bak", root, out)   # 从 .bak 读、写回原文件，避免读写同路径截断
         else:
             _write(a.docx, root, out)
-        by_sec, seq = _verify_cn(out, a.kind)
+        by_sec, seq, doubled = _verify_cn(out, a.kind)
         print(f"已写: {out}")
         print(f"验证: 各节 {a.kind}号 = {by_sec}")
-        print("✓ 每节连续 1..k" if seq else "✗ 重编号后仍不连续，请检查")
+        if doubled:
+            # fail-closed：同一段出现 ≥2 个题注编号 = 号被叠在原号前面（补号误判）
+            print(f"✗ {len(doubled)} 个题注出现**双重编号**（补号叠在原号上）:",
+                  file=sys.stderr)
+            for t in doubled[:5]:
+                print(f"    {t}", file=sys.stderr)
+        elif seq:
+            print("✓ 每节连续 1..k")
+        else:
+            print("✗ 重编号后仍不连续，请检查")
         sys.exit(0 if seq else 2)
 
     root, remap, order, ok, dup = renumber(a.docx, a.prefix, dry_run=a.dry_run)

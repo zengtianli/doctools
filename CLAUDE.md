@@ -27,6 +27,7 @@ lib/                  # 公共模块
 ├── docx_revise.py    # 修订注入引擎（w:ins/w:del+批注）
 ├── llm_client.py     # AI 调用（claude -p 封装）
 ├── cn_number.py      # 中文数字→int 唯一实现（纯 stdlib，见下节）
+├── caption_re.py     # 题注/图表编号判据唯一实现（纯 stdlib，见下节）
 ├── styles.py · chapter_numbering.py · text_fixes.py · schemas.py · soffice.py
 ├── clipboard.py · progress.py
 └── common.sh         # Shell 公共函数
@@ -156,6 +157,34 @@ import docx_safe_save  # noqa: E402,F401
 
 `blast_radius.py diff` 的判据全部是「老 vs 新」的相对比较，**不是「新 vs 理想值」** ——
 后者会连着造出三种假红（详见该文件里「判据的那根轴」）。
+
+### 题注/图表编号判据必走 `lib/caption_re.py`（2026-08-01 立 · 有回归门）
+
+**别再手写 `图\s*\d+[-–—]\d+` 这类正则。** 合并前全仓 12 个文件 ~30 条 pattern、
+20 个互相竞争的判据点，光「短横」就有 **8 种互不相同的字符子集**，没有一处是全集
+（`bid_gate` 有 U+2011 无全角 `－`，`renum` 恰好反过来，两个门互为盲区）。实测后果：
+`renum figures` 把已编号的 `图1‑2` 当无号题注 prepend 出 `图1-3 图1‑2 …`，而自检用
+**同一条瞎正则**读回，对着写坏的文档打印「✓ 每节连续」。
+
+```python
+from caption_re import parse, finditer, pattern, RENUM_CN_CAPTION
+n = parse(text, RENUM_CN_CAPTION.for_kind("图"))   # n.section / n.seq / n.raw / n.appendix
+pattern(PREFIX_STRIP_FIG).sub("", text)            # 也可直接拿 compiled 用
+```
+
+**不是一条正则打天下** —— 差异有一半是有意的（`bid_gate` 的右界断言防吃正文内联引用、
+`bid_residue` 的非锚定是为扫交叉引用、`styles._CAPTION_PATTERN` 强制三段是写盘范围、
+`table`/`image` 只看首字是为给无编号题注命名）。所以形状是「一套字符类 + 一个构造器 +
+若干具名 spec」：**加调用点 = 加一个 spec 声明，不是再写一条正则**。
+
+| 什么时候用什么 | |
+|---|---|
+| 回归门（44 条，含 9 种变异实证能抓） | `python3 -m pytest scripts/document/tests/test_caption_re.py` |
+| 想「顺手统一」样式名/关键词三套判据 | **先别** —— 那是给写盘动词扩范围，模块 docstring 写了为什么不合并 |
+
+⚠ `cli_surface` / `cli_forward_probe` **看不见这层**（那两个只管 argv），改判据必须跑
+上面那个 pytest；改完还要用真 fixture 走一遍 CLI（`renum figures` / `health diagnose` /
+`caption pair` 是三条已知会现形的链）。
 
 ### 全文改写 docx 必走 `lib/docx_xml.py` 的元素级遍历（2026-07-26 立）
 
