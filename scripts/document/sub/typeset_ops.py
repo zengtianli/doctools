@@ -39,7 +39,11 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import caption_re  # noqa: E402  题注判据 SSOT
 from soffice import find_soffice, require_soffice  # noqa: E402  doctools SSOT: soffice 路径解析
-from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
+from docx_parts import assert_parts_intact  # noqa: E402  部件完整性断言（仅 port-sections 直用）
+# verbatim repack SSOT —— restyle / sync-toc / center-images / line-spacing 四处的手抄
+# zipfile 重打包 2026-08-01 全部改为调它。port-sections 不迁：它是异地输出 + 新增
+# header/footer 部件，lib 契约明确「只改不增」，见该函数上方注释。
+from docx_surgical import make_backup, serialize, surgical_rewrite, surgical_rewrite_parts  # noqa: E402
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -175,29 +179,15 @@ def _restyle(target: Path, ref: Path | None, *, no_backup: bool, dry: bool = Fal
     if dry:
         return {"changed": 0, "would_change": len(clone) + len(restyle),
                 "kept": kept, "content_diff": diff}
+    # 备份走 make_backup + backup=False 两步（而不是 surgical_rewrite(backup=True)）：
+    # 「备份 → xxx」这行 print 必须留在写盘**之前**，pipeline 日志按这个时序抓。
     if not no_backup:
-        bak = target.with_suffix(target.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(target, bak)
+        bak = make_backup(target)
         print(f"  备份 → {bak.name}")
 
-    new_doc = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    with zipfile.ZipFile(target) as zin, \
-         zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "word/document.xml":
-                data = new_doc
-            zout.writestr(item, data)
-    # 部件完整性：replace 之前断言（此刻 target 未动 = 天然基线，断言炸则源件无损）。
-    # CLI cmd_apply 与 pipeline apply_path 都汇到本函数，一处覆盖双入口；
-    # 唯一改动部件 word/document.xml 在 DEFAULT_ALLOW_CHANGED，零白名单。
-    try:
-        assert_parts_intact(target, tmp, verbose=False)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-    tmp.replace(target)
+    # verbatim repack 走 lib/docx_surgical（写 .tmp → 断言 → 原子 replace → 写后自检）。
+    # 唯一改动部件 word/document.xml 在 DEFAULT_ALLOW_CHANGED，零额外白名单。
+    surgical_rewrite(target, serialize(root), backup=False)
     return {"changed": len(clone) + len(restyle), "cloned": len(clone),
             "pstyle_only": len(restyle), "kept": kept, "content_diff": diff}
 
@@ -480,34 +470,14 @@ def _sync(mine, golden, *, no_backup, dry=False) -> dict:
                 "styles_overwritten": len(overw), "toc_removed": removed,
                 "toc_inserted": inserted}
     if not no_backup:
-        bak = mine.with_suffix(mine.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(mine, bak)
+        bak = make_backup(mine)
         print(f"  备份 → {bak.name}")
 
-    new_doc = etree.tostring(md, xml_declaration=True, encoding="UTF-8", standalone=True)
-    new_sty = etree.tostring(ms, xml_declaration=True, encoding="UTF-8", standalone=True)
-    tmp = mine.with_suffix(mine.suffix + ".tmp")
-    with zipfile.ZipFile(mine) as zin, \
-         zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            if item.filename == "word/document.xml":
-                data = new_doc
-            elif item.filename == "word/styles.xml":
-                data = new_sty
-            else:
-                data = zin.read(item.filename)
-            zout.writestr(item, data)
-    # 部件完整性断言(replace 前:mine 仍是未动源件=天然基线;炸则 tmp 被清、源件无损)。
-    # styles.xml 不在 DEFAULT 白名单,显式报备。CLI cmd_apply 与 pipeline apply_path
-    # (恒 no_backup=True)都汇到本函数,一处覆盖双入口,不依赖 .bak 存在。
-    try:
-        assert_parts_intact(mine, tmp,
-                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
-                            verbose=False)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-    tmp.replace(mine)
+    # 两个部件一起换 —— 必须走 surgical_rewrite_parts，用单部件的 surgical_rewrite
+    # 会把 styles.xml 的改动整个吞掉。lib 的白名单 = DEFAULT | set(parts)，
+    # 与原来的 DEFAULT | {"word/styles.xml"} 等价（document.xml 本就在 DEFAULT 里）。
+    surgical_rewrite_parts(mine, {"word/document.xml": serialize(md),
+                                  "word/styles.xml": serialize(ms)}, backup=False)
 
     # 复验：移植完的目录锚点是不是真能解析到正文书签。解析不到 = 目录点不动，
     # 而 Word 里看上去一切正常 —— 所以这个数字必须进返回值，不能只 print。
@@ -824,6 +794,11 @@ def main_port_sections(argv=None):
     new_dr = etree.tostring(drels, xml_declaration=True, encoding="UTF-8", standalone=True)
     repl = {"word/document.xml": new_doc, "[Content_Types].xml": new_ct,
             "word/_rels/document.xml.rels": new_dr}
+    # ⚠ 这处**故意不走** lib/docx_surgical.surgical_rewrite_parts（上面四处已迁）：
+    # 三条轴都与 lib 契约不同 —— ① 异地输出（从 a.docx 读、写 out），lib 只能就地；
+    # ② 新增部件（new_parts 的 header/footer + 各自 .rels），lib 明确「只改不增」会抛
+    # RepackError；③ 断言用 allow_added 而非 allow_changed，lib 没有透传口子。
+    # 而它已手工继承 ZipInfo（zt.infolist() 逐条 writestr），迁移的唯一收益本来就有。
     tmp = out.with_suffix(out.suffix + ".tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zt.infolist():
@@ -951,20 +926,10 @@ def _center(docx, *, no_backup: bool, dry: bool = False) -> dict:
     if dry:
         return {"changed": 0, "images": len(imgs), "would_change": fixed}
     if not no_backup:
-        bak = docx.with_suffix(docx.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(docx, bak)
+        bak = make_backup(docx)
         print(f"  备份 → {bak.name}")
-    new_doc = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-    tmp = docx.with_suffix(docx.suffix + ".tmp")
-    with zipfile.ZipFile(docx) as zin, \
-         zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = new_doc if item.filename == "word/document.xml" else zin.read(item.filename)
-            zout.writestr(item, data)
-    # 部件完整性断言（fail-closed）：此刻 docx 仍是未动源件 = 天然基线；
-    # 断言炸则不 replace，源件毫发无损。只改 document.xml，默认白名单即可。
-    assert_parts_intact(docx, tmp, verbose=False)
-    tmp.replace(docx)
+    # verbatim repack 走 lib/docx_surgical，只改 document.xml，默认白名单即可。
+    surgical_rewrite(docx, serialize(root), backup=False)
     return {"changed": fixed, "images": len(imgs)}
 
 
@@ -1200,27 +1165,12 @@ def _fix(docx_path: Path, ref: Path | None, *, no_backup: bool, dry: bool = Fals
         return {"changed": 0, "would_change": fixed}
 
     if not no_backup:
-        bak = docx_path.with_suffix(
-            docx_path.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(docx_path, bak)
+        bak = make_backup(docx_path)
         print(f"  备份 → {bak.name}")
 
-    new_doc = etree.tostring(root, xml_declaration=True,
-                             encoding="UTF-8", standalone=True)
-    # surgical 重打包：只替换 document.xml，其余项 verbatim
-    tmp = docx_path.with_suffix(docx_path.suffix + ".tmp")
-    with zipfile.ZipFile(docx_path) as zin, \
-         zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "word/document.xml":
-                data = new_doc
-            zout.writestr(item, data)
-    # 部件完整性断言放 replace 之前：docx_path 此刻仍是未动源件（天然基线，
-    # pipeline 恒 no_backup 也不漏），断言炸则 tmp 不落位、源件毫发无损。
-    # 这才是 docstring「其余 zip 项逐字节 verbatim, CRC 全等」的机器兜底。
-    assert_parts_intact(docx_path, tmp, verbose=False)
-    tmp.replace(docx_path)
+    # surgical 重打包：只替换 document.xml，其余项 verbatim（走 lib/docx_surgical，
+    # 内含 replace 前的部件完整性断言 + replace 后的 CRC/parse 自检）。
+    surgical_rewrite(docx_path, serialize(root), backup=False)
     return {"changed": fixed}
 
 

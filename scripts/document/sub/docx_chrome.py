@@ -218,6 +218,12 @@ def build(raw, tpl, out, county):
     for name,(data,cttype) in new_parts.items():
         ov=etree.SubElement(ct,f'{{{CT}}}Override'); ov.set('PartName','/'+name); ov.set('ContentType',cttype)
 
+    # ⚠ 这处**故意不走** lib/docx_surgical.surgical_rewrite_parts（2026-08-01 全仓迁移时
+    # 逐条核过）：三条轴都与 lib 契约不同 —— ① 异地输出（raw 读、out 写），lib 只能就地；
+    # ② 新增部件（new_parts 的 header/footer 连同 rels + [Content_Types] Override），
+    # lib 明确「只改不增」，塞进去会抛 RepackError；③ 断言用 allow_added 而非
+    # allow_changed，lib 没有透传口子。而下面已手工逐条继承 ZipInfo（date_time /
+    # compress_type / external_attr），迁移的唯一收益（保真 ZipInfo）本来就有。
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as zout:
         for it in zin.infolist():
             if it.filename=='word/document.xml':

@@ -49,6 +49,9 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  surgical 部件完整性断言
+# verbatim repack SSOT（_add_first_line_indent_to_style 走它，2026-08-01 从手抄
+# extractall+rglob 重打包迁入 —— 那条路把 72/72 条 ZipInfo 全丢了）
+from docx_surgical import list_parts, parse_part, serialize, surgical_rewrite_parts  # noqa: E402
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -1340,64 +1343,48 @@ def _add_first_line_indent_to_style(docx_path: Path, style_id: str,
     Returns: {"found": bool, "modified": bool}
     """
     stats = {"found": False, "modified": False}
-    import zipfile as _zf
-    import tempfile
 
-    # read all parts → temp dir; modify styles.xml; rezip
+    # 2026-08-01：原来是 extractall → 改 styles.xml → rglob 重打包。那条路把每一项的
+    # ZipInfo 全丢了 —— 真件实测（72 部件 / 15MB）72/72 条 date_time 被改成当前时间、
+    # 72/72 条 external_attr 被改、条目顺序被文件系统遍历序打乱，玩具件上还实测到
+    # STORED 的 media 被强制重新 DEFLATE。而 assert_parts_intact 对这些**一条都看不见**
+    # （CRC 与部件集合都没变），守卫绿 ≠ 重打包忠实。改走 lib/docx_surgical 的部件级
+    # 读改写：只碰 word/styles.xml，其余每一项连 ZipInfo 一起 verbatim 搬运。
     src = Path(docx_path)
-    with tempfile.TemporaryDirectory() as td:
-        td_path = Path(td)
-        with _zf.ZipFile(str(src), "r") as zin:
-            zin.extractall(td_path)
-        styles_xml = td_path / "word" / "styles.xml"
-        if not styles_xml.exists():
-            return stats
-        tree = etree.parse(str(styles_xml))
-        root = tree.getroot()
-        ns = {"w": W_NS}
-        # find style by styleId OR by name
-        target_el = None
-        for st in root.findall(qn("w:style")):
-            sid = st.get(qn("w:styleId"))
-            if sid == style_id:
-                target_el = st
-                break
-            nm = st.find(qn("w:name"))
-            if nm is not None and nm.get(qn("w:val")) == style_id:
-                target_el = st
-                break
-        if target_el is None:
-            return stats
-        stats["found"] = True
-        pPr = target_el.find(qn("w:pPr"))
-        if pPr is None:
-            pPr = OxmlElement("w:pPr")
-            target_el.append(pPr)
-        ind = pPr.find(qn("w:ind"))
-        if ind is None:
-            ind = OxmlElement("w:ind")
-            pPr.append(ind)
-        ind.set(qn("w:firstLineChars"), str(chars))
-        ind.set(qn("w:firstLine"), str(twips))
-        stats["modified"] = True
+    if not list_parts(src, r"word/styles\.xml"):
+        return stats                       # 早退语义同原 styles_xml.exists() 分支
+    root = parse_part(src, "word/styles.xml")
+    ns = {"w": W_NS}
+    # find style by styleId OR by name
+    target_el = None
+    for st in root.findall(qn("w:style")):
+        sid = st.get(qn("w:styleId"))
+        if sid == style_id:
+            target_el = st
+            break
+        nm = st.find(qn("w:name"))
+        if nm is not None and nm.get(qn("w:val")) == style_id:
+            target_el = st
+            break
+    if target_el is None:
+        return stats
+    stats["found"] = True
+    pPr = target_el.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        target_el.append(pPr)
+    ind = pPr.find(qn("w:ind"))
+    if ind is None:
+        ind = OxmlElement("w:ind")
+        pPr.append(ind)
+    ind.set(qn("w:firstLineChars"), str(chars))
+    ind.set(qn("w:firstLine"), str(twips))
+    stats["modified"] = True
 
-        # write styles.xml back
-        tree.write(str(styles_xml), xml_declaration=True,
-                   encoding="UTF-8", standalone=True)
-
-        # repackage zip
-        tmp_out = src.with_suffix(src.suffix + ".firstLine.tmp")
-        with _zf.ZipFile(str(tmp_out), "w", _zf.ZIP_DEFLATED) as zout:
-            for f in td_path.rglob("*"):
-                if f.is_file():
-                    arc = f.relative_to(td_path).as_posix()
-                    zout.write(str(f), arcname=arc)
-        # 部件完整性断言（fail-closed）：move 前 src 仍是未动源件 = 天然基线；
-        # 断言炸则 tmp_out 不落位，源件无损。本函数只碰 styles.xml，显式加进白名单。
-        assert_parts_intact(src, tmp_out,
-                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
-                            verbose=False)
-        shutil.move(str(tmp_out), str(src))
+    # serialize() 与原 tree.write(xml_declaration=True, encoding="UTF-8",
+    # standalone=True) 同参；lib 内部写 .tmp → 部件断言（白名单 DEFAULT|{styles.xml}，
+    # 与原来逐字等价）→ 原子 replace → 写后 CRC/parse 自检。原来无 backup，保持 False。
+    surgical_rewrite_parts(src, {"word/styles.xml": serialize(root)}, backup=False)
     return stats
 
 

@@ -51,6 +51,10 @@ except ImportError:
     sys.exit(1)
 
 from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402
+# verbatim repack SSOT —— fonts 子命令的就地截断重写 2026-08-01 迁入。
+# clone/template/save_docx 三处**不迁**：它们是异地输出（ref→out / docx→output_path），
+# lib 的 surgical_rewrite_parts 只能就地，没有 out 参数。
+from docx_surgical import surgical_rewrite_parts  # noqa: E402
 from docx_xml import (  # noqa: E402
     ALL_SCOPES,
     NSMAP,
@@ -921,15 +925,18 @@ def fix(path: Path, font: str, ascii_font: str) -> list[str]:
             data[name] = text.encode("utf8")
             touched.add(name)
 
-    if changed:
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zout:
-            for i in items:
-                zout.writestr(i, data[i.filename])
-        # 部件完整性断言（fail-closed）：基线 = 写盘前落的 .bak-时间戳 副本；
-        # 白名单 = 本次真被规则命中改写的部件集（touched），其余必须逐字节原样。
-        assert_parts_intact(Path(f"{path}.bak-{ts}"), path,
-                            allow_changed=set(DEFAULT_ALLOW_CHANGED) | touched,
-                            verbose=False)
+    if changed and touched:
+        # 2026-08-01：原来是 ZipFile(path, "w") **就地截断**源件再逐部件写回 —— 全仓唯一
+        # 一处写到一半崩就毁源件的写法。改走 lib/docx_surgical：写 .tmp → 部件完整性断言
+        # （基线从 .bak-ts 副本换成 replace 前的源件本身，字节等价；白名单仍是动态的
+        # touched，静态清单会漏掉 theme/*.xml）→ 原子 replace → 写后 CRC/parse 自检。
+        surgical_rewrite_parts(path, {n: data[n] for n in touched}, backup=False)
+    elif changed:
+        # changed 非空而 touched 为空：规则命中但替换后字节没变（`--font 等线` 就是这样 ——
+        # DENGXIAN.sub("等线") 得到同一串，changed 已 append 而 text == orig）。原来这里会
+        # 把全部部件原样重写一遍（等价于不写），现在直接不写；lib 拒绝空 parts，
+        # 少了这个分支会撞 ValueError 崩掉。
+        pass
     else:
         Path(f"{path}.bak-{ts}").unlink(missing_ok=True)
     return changed
