@@ -22,11 +22,13 @@ CLI 通用 args (per subcommand):
 
 默认 --dry-run; --inplace 才真改 (自动留 .bak-N-DATE).
 shape_contract 跑前后对账, 漂移 → exit 3 (除非 --force, 打 4 行黄底 WARNING).
-allowed_deltas:
-  style-rebrand:       全 0 (段数 / heading 数 / caption 集合不变)
-  style-pool-cleanup:  段数 0; styles 定义减是允许的 (不进 shape_contract, 而是另算)
-  style-pane-filter:   全 0 (settings.xml 改不影响 body 结构)
-  role-fill:           段数 0; styles 定义增是允许的 (另算)
+结构容差: **全部子命令零容忍** —— body 结构(段数/表数/分节/heading/caption/图形)
+一处都不许漂。2026-08-02 之前每个子命令各自显式传一份「全 0」的 allowed_deltas,
+8 份共 67 行, 而 diff_structure 对「列出且为 0」与「不列出」处理完全相同 —— 纯 no-op,
+已删。零容忍现在由 diff_structure 的缺省兜底, 并由
+scripts/document/tests/test_shape_contract_default.py 钉死(缺省一旦放松成
+「未列入 = 不检查」, 8 道 gate 会静默从 fail-closed 变 fail-open)。
+styles 池的增减不在 shape_contract 指标里(它只看 body 结构), 另算。
 """
 
 from __future__ import annotations
@@ -280,7 +282,6 @@ def _profile_target_for_role(profile: StylesProfile, role: str) -> Optional[str]
 # CORE — shape_contract gate (跑前后对账)
 # ═════════════════════════════════════════════════════════════════════════════
 def _shape_gate(src: Path, work_fn, args,
-                allowed_deltas: dict | None = None,
                 label: str = "fix") -> tuple[dict, dict, list[str], bool]:
     """通用 fix gate:
         1. capture before
@@ -311,7 +312,7 @@ def _shape_gate(src: Path, work_fn, args,
                 tmp.unlink()
             except FileNotFoundError:
                 pass
-        violations = diff_structure(before, after, allowed_deltas)
+        violations = diff_structure(before, after)
         return before, after, violations, False
 
     # --inplace: transactional — write to tmp, capture, only swap to src if shape OK
@@ -323,7 +324,7 @@ def _shape_gate(src: Path, work_fn, args,
     try:
         doc.save(str(tmp_out))
         after = capture_structure(tmp_out)
-        violations = diff_structure(before, after, allowed_deltas)
+        violations = diff_structure(before, after)
 
         if violations and not getattr(args, "force", False):
             # REFUSE — tmp_out discarded, src untouched
@@ -431,13 +432,6 @@ def cmd_style_rebrand(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={  # 段数 / 表 / heading / caption 全 0
-            "paragraph_count": 0,
-            "table_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-        },
         label="style-rebrand",
     )
 
@@ -591,14 +585,6 @@ def cmd_style_pool_cleanup(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={
-            "paragraph_count": 0,
-            "table_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="style-pool-cleanup",
     )
 
@@ -686,15 +672,6 @@ def cmd_style_pane_filter(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={  # settings 改不影响 body — 全 0
-            "paragraph_count": 0,
-            "table_count": 0,
-            "section_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="style-pane-filter",
     )
     if refused:
@@ -819,14 +796,6 @@ def cmd_role_fill(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={
-            "paragraph_count": 0,
-            "table_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="role-fill",
     )
     if refused:
@@ -881,15 +850,6 @@ def cmd_style_rename(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={  # 改 styles.xml name 不影响 body 结构
-            "paragraph_count": 0,
-            "table_count": 0,
-            "section_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="style-rename",
     )
 
@@ -998,15 +958,6 @@ def cmd_clear_direct_format(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={  # 清 inline 直接格式不动结构
-            "paragraph_count": 0,
-            "table_count": 0,
-            "section_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="clear-direct-format",
     )
 
@@ -1135,15 +1086,6 @@ def cmd_style_create(args) -> int:
 
     before, after, violations, refused = _shape_gate(
         src, _work, args,
-        allowed_deltas={  # 加一个空 style def 不动 body
-            "paragraph_count": 0,
-            "table_count": 0,
-            "section_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        },
         label="style-create",
     )
 
@@ -1674,17 +1616,9 @@ def cmd_restore(args) -> int:
 
         # Step 8: final shape_contract verify (full doc, vs before)
         after = capture_structure(staging)
-        # default allowed_deltas: paragraph/table/heading/caption全0;
-        # styles 池减是允许的 (不在 shape_contract 指标里 — 它只看 body 结构)
-        violations = diff_structure(before, after, allowed_deltas={
-            "paragraph_count": 0,
-            "table_count": 0,
-            "section_count": 0,
-            "heading_counts": 0,
-            "caption_figure_count": 0,
-            "caption_table_count": 0,
-            "drawings_count": 0,
-        })
+        # 零容忍(diff_structure 缺省即全 0); styles 池减是允许的
+        # —— 它不在 shape_contract 指标里, 那只看 body 结构
+        violations = diff_structure(before, after)
         if violations and not getattr(args, "force", False):
             _log("8", "shape_contract_verify", {"violations": violations}, ok=False)
             raise RuntimeError(f"step8 shape_contract failed: {len(violations)} violation(s)")
