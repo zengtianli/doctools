@@ -25,6 +25,8 @@ _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
 import caption_re  # noqa: E402  题注判据 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  备份路径 SSOT（原来伸手找外仓的 make_backup_path）
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -45,14 +47,25 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 
-def _require_apply_body_styles():
-    """fix-heading-disorder / reorder 的历史依赖（见模块 docstring）。缺模块时
-    在这里 ModuleNotFoundError —— 与旧独立脚本 import 期失败同型。"""
-    global classify_paragraph_abs, make_backup_path, STYLE_NAMES
-    import apply_body_styles as _abs
-    classify_paragraph_abs = _abs.classify_paragraph
-    make_backup_path = _abs.make_backup_path
-    STYLE_NAMES = _abs.STYLE_NAMES
+def _ui_name(doc, style_id: str) -> str:
+    """styleId → 该文档里的 UI 样式名；查不到就原样返回 styleId。
+
+    这是 2026-08-02 之前那个 `apply_body_styles.STYLE_NAMES` 静态字典的真实语义 ——
+    而映射本来就在文档自己身上，不需要外仓给一张表（原实现的 fallback
+    `doc.styles.get_by_id(target, 1)` 干的就是同一件事）。
+
+    ⚠ 不能直接信 `get_by_id` 的返回：**它查不到时静默回落到默认段落样式**，
+    于是 `_ui_name(doc, "zdwp1")` 在一份没有 zdwp 样式的文档里返回 `"Normal"`，
+    报告就会写成「建议改成 Normal」（2026-08-02 实测，本函数第一版就是这么错的）。
+    所以必须回查 styleId 是否真的就是要的那个。
+    """
+    try:
+        st = doc.styles.get_by_id(style_id, 1)
+        if st is None or st.style_id != style_id:      # 回落了 → 文档里没有这个样式
+            return style_id
+        return getattr(st, "name", None) or style_id
+    except Exception:                       # noqa: BLE001 — 查不到样式不是错误
+        return style_id
 
 
 # ══════════ fix-heading-disorder ← fix_heading_disorder.py ══════════
@@ -221,7 +234,7 @@ def detect_anomalies(doc) -> tuple[list[dict], list[str]]:
         # 跳过特殊: zdwp表名 段且文本本来就是表名形态 (label=zdwp_table) — 已经对了
         if sid == "zdwp1" and label == "zdwp_table":
             continue
-        suggested_ui = STYLE_NAMES.get(suggested, suggested)
+        suggested_ui = _ui_name(doc, suggested)
         anomalies.append({
             "idx": pi["idx"],
             "category": "A_false_promotion",
@@ -344,7 +357,7 @@ def detect_anomalies(doc) -> tuple[list[dict], list[str]]:
                 "category": "E_level_mismatch",
                 "current_style": h["style_name"] or h["style_id"],
                 "current_style_id": h["style_id"],
-                "suggested_style": STYLE_NAMES.get(target, target),
+                "suggested_style": _ui_name(doc, target),
                 "suggested_style_id": target,
                 "text": h["text"],
                 "reason": (
@@ -572,11 +585,9 @@ def apply_fixes(doc, anomalies: list[dict], dry_run: bool) -> None:
             )
             continue
         try:
-            ui_name = STYLE_NAMES.get(target)
-            if ui_name and ui_name in [s.name for s in doc.styles]:
-                p.style = doc.styles[ui_name]
-            else:
-                p.style = doc.styles.get_by_id(target, 1)
+            # 原实现先按 UI 名查、查不到再按 id 查；而 UI 名本来就是从 id 派生的，
+            # 那一层是循环，直接按 id 取即可（取不到落到下面的 pStyle 兜底分支）。
+            p.style = doc.styles.get_by_id(target, 1)
             a["auto_fixed"] = True
         except Exception:
             try:
@@ -622,7 +633,6 @@ def summarize(anomalies: list[dict]) -> dict:
 # ---------- main ----------
 
 def main_fix_heading_disorder(argv: list[str] | None = None) -> int:
-    _require_apply_body_styles()
     ap = argparse.ArgumentParser(
         description="qual-supply docx 标题失序 v2 (W2 ground truth 对齐)",
     )
@@ -639,7 +649,7 @@ def main_fix_heading_disorder(argv: list[str] | None = None) -> int:
 
     backup_path = None
     if not args.dry_run and not args.no_backup:
-        backup_path = make_backup_path(src)
+        backup_path = _cc.find_next_backup(src)
         shutil.copy2(src, backup_path)
 
     doc = Document(str(src))
@@ -723,7 +733,6 @@ def main_fix_heading_disorder(argv: list[str] | None = None) -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply_fix_heading_disorder(doc, args=None) -> dict:
-    _require_apply_body_styles()
     dry = bool(getattr(args, "dry_run", False)) if args else False
     anomalies, warnings = detect_anomalies(doc)
     apply_fixes(doc, anomalies, dry_run=dry)
@@ -1212,7 +1221,6 @@ def apply_changes(doc, blocks: list[dict], misordered: list[dict],
 # ---------- main ----------
 
 def main_reorder(argv: list[str] | None = None) -> int:
-    _require_apply_body_styles()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("docx", help="输入 docx 路径")
     ap.add_argument("--dry-run", action="store_true", help="只生成 plan, 不动 docx")
@@ -1307,7 +1315,6 @@ def main_reorder(argv: list[str] | None = None) -> int:
 
 # ---------------- pipeline adapter ----------------
 def apply_reorder(doc, args=None) -> dict:
-    _require_apply_body_styles()
     dry = bool(getattr(args, "dry_run", False)) if args else False
     paras = [classify_paragraph(p, i) for i, p in enumerate(doc.paragraphs)]
     blocks = slice_blocks(paras)
