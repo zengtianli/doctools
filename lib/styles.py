@@ -40,9 +40,16 @@ except ImportError as e:
     ) from e
 
 
-DEFAULT_REGISTRY_PATH = Path(
-    "~/Dev/tools/doctools/config/styles_registry.yaml"
-).expanduser()
+# 仓自带的资源，按**本文件的位置**定位（lib/styles.py → 仓根 → config/）。
+# 旧写法是 `Path("~/Dev/tools/doctools/config/styles_registry.yaml").expanduser()`，
+# 那描述的是「这台机器上这个仓在哪」而不是「这个仓」：把仓 clone 到别处（CI /
+# git worktree / 另一台机器）之后，style·fix·outline·caption 共 12 条动词全部
+# FileNotFoundError —— 2026-08-02 在干净 ubuntu:24.04 容器里实测，smoke 13 红里占 12 条。
+# 两条路径在本机解析到同一个文件，所以本机行为不变。
+# 旧路径保留为 fallback：万一有人把 lib/ 单独拷走用（没带 config/），行为跟以前一样。
+_REPO_REGISTRY = Path(__file__).resolve().parents[1] / "config" / "styles_registry.yaml"
+_LEGACY_REGISTRY = Path("~/Dev/tools/doctools/config/styles_registry.yaml").expanduser()
+DEFAULT_REGISTRY_PATH = _REPO_REGISTRY if _REPO_REGISTRY.is_file() else _LEGACY_REGISTRY
 
 
 class StylesProfile:

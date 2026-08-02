@@ -1,0 +1,312 @@
+# doctools 闸门 CI
+#
+# 这个仓的守卫全是 fail-closed 的（枚举为空 / 判据坏了一律非 0，不许在空集上报绿）。
+# 本 workflow 的责任是：**把能在一台干净机器上成立的判据全跑一遍，把不成立的大声说出来**，
+# 而不是让不成立的那几条静默跳过 —— 哑掉的守卫和它要防的 bug 是同一类东西。
+#
+# ══ 一、跑之前必须先解决的事：本仓在干净机器上跑不起来 ═══════════════════════
+#
+# `scripts/document/docx_cli.py` L45-53 硬编码 `~/Dev/tools/dev/lib`，import 不到
+# `parallel_contract` 就 **FATAL exit 2**（2026-08-02 在干净 ubuntu:24.04 容器里实测，
+# 第一道闸门 cli_surface 当场死在这行）。`pdf_cli.py` / `scripts/data/data.py` /
+# `doc_dispatch.py` 同样消费总部 lib；另外 `lib/llm_client.py` 是一条 **track 进 git 的
+# 绝对路径 symlink** → `/Users/tianli/Dev/tools/dev/scripts/tools/llm_client.py`，
+# 在别的机器上一 clone 出来就是断链（实测 check_docx_collar 直接 FileNotFoundError 崩掉，
+# 连判红都算不上）。这些东西都在 **zengtianli/devtools（私库）**里，
+# 不在本仓，也不在 pyproject 的 dependencies 里 —— 也就是说：
+#
+#     除了 tianli 这台机器，doctools 的 CLI 在任何地方都启动不了。
+#
+# 这是铁律 #5「子公司单向消费总部能力」的代价，不是 bug；但它决定了 CI 的形状：
+# **CI 必须能拿到总部 lib，否则这个 CI 只能是假的。** 三条路里选了第二条：
+#   ① 把 parallel_contract 抄进本仓 → 两份实现，正是本仓一直在消灭的形状。否。
+#   ② CI 用 PAT 从私库 sparse-checkout 一份 lib/ 进来 → 就是下面这样。**选它**。
+#   ③ 只跑不依赖总部 lib 的那几道（collar / 部分 pytest）→ 一个只查 1/4 面的 CI
+#      挂着「gates ✅」的徽章，比没有 CI 更坏。否。
+#
+#   ⚠ 需要一次性人工配置：仓库 Settings → Secrets → Actions 新建 `HQ_DEVTOOLS_TOKEN`，
+#     值是一个对 zengtianli/devtools 有 **Contents: Read** 的 fine-grained PAT。
+#     （本仓是 public、devtools 是 private，默认的 GITHUB_TOKEN 只对本仓有权，
+#      拿不到 devtools —— 所以只能用 PAT。）没配 → 本 workflow **第一步就红**，
+#     不会退化成「跳过总部 lib 继续跑」那种半绿。
+#
+#   注入方式是 PYTHONPATH，不是往 runner 的 $HOME 里造 ~/Dev/tools/dev/lib。
+#   `docx_cli` 那段是 `sys.path.insert(...)` 之后 `from parallel_contract import`，
+#   PYTHONPATH 里有就能 import 成功，_LIB 目录存不存在它不检查（实测有效）。
+#   好处是 runner 的 $HOME 保持干净 —— 下面那道「扫描根必须一个都不存在」的
+#   自证断言才不会被自己搞脏。
+#
+# ══ 二、依赖装法（实测过，不是抄的）═════════════════════════════════════════
+#
+# 本仓在本机是 ~/Dev 的 uv workspace member，CI 上只有这一个仓、没有 workspace root。
+# 实测（2026-08-02，干净 clone + ubuntu:24.04 容器）：`uv sync` rc=0，66 个包装齐。
+# **但不能加 `--locked` / `--frozen`**：仓里 track 的 uv.lock 是 workspace 味的旧锁，
+# 里面有 `source = { editable = "../../stations/dockit" }` 这种指向兄弟仓的条目，
+# 那个路径在 CI 上不存在。`uv sync` 会就地重解析（实测把 dockit 那 32 行删掉、rc=0），
+# `--locked` 会直接判红。CI 是一次性机器，重锁无副作用。
+#
+# pytest 不在 dependencies 里（它不是运行时依赖），也没有 dev group。不为 CI 去动
+# pyproject（那是 ~/Dev workspace 共用的 SSOT），改用 uv 的临时叠加层 `--with pytest`。
+
+name: gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject: requires-python = ">=3.12"。跑声明的地板（3.12）+ 仓里
+        # .python-version 钉的开发版（3.13）两档。3.14 不进矩阵：那是承诺范围以外的
+        # 上限，红了也说不清该改哪边。
+        python-version: ["3.12", "3.13"]
+
+    env:
+      # 总部 lib 注入点，见文件头 §一。所有 step（含 docx_cli 拉起来的子进程）都吃这个。
+      PYTHONPATH: ${{ github.workspace }}/.hq-devtools/lib
+      # ⚠ 仓根有 `.python-version`（= 3.13）。只给 `uv sync` 传 --python 是**不够的**：
+      # 后面每一条 `uv run` 都会回头读 .python-version，发现 venv 是 3.12 → 当场把
+      # venv 删掉重建成 3.13。实测（2026-08-02 容器）：3.12 那条腿装完 66 个包之后，
+      # 第一条 uv run 就把它换成了 3.13，日志里印的是 `python 3.13.14` —— 矩阵看着
+      # 跑了两档，其实两档都是 3.13。UV_PYTHON 优先级高于 .python-version，钉死它。
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 取总部件（zengtianli/devtools · 私库 · 只取 lib/ 与 scripts/tools/）
+        uses: actions/checkout@v7
+        with:
+          repository: zengtianli/devtools
+          token: ${{ secrets.HQ_DEVTOOLS_TOKEN }}
+          path: .hq-devtools
+          # lib/          → parallel_contract（docx_cli / pdf_cli / data.py 硬依赖）
+          # scripts/tools/ → llm_client.py（仓里 lib/llm_client.py 是指向它的绝对 symlink）
+          sparse-checkout: |
+            lib
+            scripts/tools
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+
+      - name: 确认总部件到位（拿不到就在这里红，不许往下走）
+        run: |
+          set -euo pipefail
+          if [ ! -f .hq-devtools/lib/parallel_contract.py ]; then
+            echo "⛔ 没拿到 zengtianli/devtools 的 lib/parallel_contract.py。"
+            echo "   docx_cli.py L45-53 硬依赖它，拿不到的话后面每一道闸门都会 FATAL exit 2，"
+            echo "   而 exit 2 看起来像是「闸门发现了问题」—— 那是最会骗人的一种红。"
+            echo "   修法：仓库 Settings → Secrets → Actions 配 HQ_DEVTOOLS_TOKEN"
+            echo "         （对 zengtianli/devtools 有 Contents: Read 的 fine-grained PAT）。"
+            exit 1
+          fi
+          echo "✓ 总部 lib: $(find .hq-devtools/lib -maxdepth 1 -name '*.py' | wc -l) 个模块"
+
+      # 仓里 track 着**绝对路径的 symlink**（`lib/llm_client.py` →
+      # `/Users/tianli/Dev/tools/dev/scripts/tools/llm_client.py`）。git 会把这条
+      # symlink 原样 clone 出来，于是在任何别的机器上它都是一条断链 ——
+      # 实测 check_docx_collar 在容器里 FileNotFoundError 崩在它上面（不是判红，是崩）。
+      # 这里用总部 checkout 里的真文件把它就地补实。**目标路径不是抄的**：从
+      # `git ls-files` 枚举 mode 120000 的条目、读 readlink 现算，指向别处的一律判红。
+      - name: 把指向总部的绝对 symlink 用总部 checkout 补实
+        run: |
+          set -euo pipefail
+          mapfile -t links < <(git ls-files -s | awk '$1=="120000"{print $4}')
+          echo "仓内 track 的 symlink：${#links[@]} 条"
+          for link in "${links[@]}"; do
+            tgt="$(readlink "$link")"
+            case "$tgt" in
+              /Users/tianli/Dev/tools/dev/*) rel="${tgt#/Users/tianli/Dev/tools/dev/}" ;;
+              *) echo "⛔ $link -> $tgt 不指向总部 devtools —— 本步骤只会补总部件，"
+                 echo "   出现别的目标说明仓里多了一条没人认领的绝对 symlink，先去处理它。"
+                 exit 1 ;;
+            esac
+            if [ ! -f ".hq-devtools/$rel" ]; then
+              echo "⛔ 总部 checkout 里没有 $rel —— 上一步的 sparse-checkout 漏了它的顶层目录。"
+              exit 1
+            fi
+            rm "$link" && cp ".hq-devtools/$rel" "$link"
+            echo "✓ $link ← devtools/$rel"
+          done
+
+      - name: 装 uv
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: 装依赖（uv sync · 不加 --locked，理由见文件头 §二）
+        run: |
+          set -euo pipefail
+          uv sync --python "${{ matrix.python-version }}"
+          # 矩阵这条腿到底跑的是不是它自称的那个 Python —— 当场对一次，别信它。
+          # （见上面 UV_PYTHON 那段注释：这条断言就是那个坑的反向验证。）
+          uv run python -c "
+          import sys
+          got = '%d.%d' % sys.version_info[:2]
+          want = '${{ matrix.python-version }}'
+          print('python', sys.version)
+          sys.exit(0 if got == want else f'⛔ 矩阵说 {want}，跑起来是 {got} —— 这条腿在骗人')
+          "
+          # PYTHONPATH 得穿过 uv run 才有意义 —— 在这里当场证一次，
+          # 而不是等下面某道闸门以 FATAL exit 2 的形式替我发现。
+          uv run python -c "import parallel_contract as p; print('parallel_contract ←', p.__file__)"
+
+      # ──────────────────────────────────────────────────────────────────────
+      # 先把「本 CI 覆盖不到什么」印在日志最上面。
+      #
+      # 两处判据在 GitHub runner 上不成立，采取的都是**方案 (b)：CI 里不跑 / 不当判据**，
+      # 而且这一步会**自己验证这个理由还成立**，不是写死一句话在注释里骗人。
+      #
+      # 1) tools/check_external_refs.py —— 完全不跑。
+      #    它查的是「本机生态里 200+ 处硬编码的 doctools 脚本路径还指向存在的文件吗」，
+      #    扫描根是 ~/Work ~/Apps ~/Dev/tools/cc-home ~/Dev/wiki …，在 CI 上一个都不存在，
+      #    也永远不会存在（那些是**这台机器**的内容，不是这个仓的内容）。
+      #    没选方案 (a)「给它加 --allow-missing-roots，SKIPPED 退出、CI 当过」，因为：
+      #      · 那等于在 CI 上摆一道**永远绿**的门。永远绿的门比没有门更坏 ——
+      #        它会被当成证据（PR 页面上那个 ✅ 不会写「这条其实没查」）。
+      #      · 它在本机 pre-commit 里的行为一个字都不许变，加 flag 是净增风险、零收益。
+      #      · 实测更糟：它的 scan() 只在**所有**根都缺时才 exit 2，缺一部分是
+      #        `⚠ 扫描根缺失（跳过）` 继续扫剩下的。真在 CI 里跑，只要有一个根碰巧存在，
+      #        它就会拿 1/8 的样本报「✓ 全部指向存在的文件」—— 半扫描的绿。
+      #    结论：这条**只在本机 pre-commit 跑**。CI 绿 ≠ 仓外引用没断。
+      #
+      # 2) tools/script_graph.py 的 doc_refs() —— 图照跑，但**孤儿数在 CI 里不是判据**。
+      #    它的三条「还活着」证据里有一条是「被 cc-home 的 skill/command 文档点名」，
+      #    ~/Dev/tools/cc-home 在 CI 上不存在 → 这一路证据整条缺失 → 孤儿会被高报。
+      #    script_graph 的 main() 本来也不因孤儿判红（它是报告，fail-closed 的是枚举），
+      #    所以照跑不会假红；真正在 CI 里成立的判据是「枚举非空（空则 rc=2）+ 图建得出来」。
+      #    孤儿清单照打，但**别拿它退役脚本**。
+      #    （实测 2026-08-02：容器里跑出来仍是「104 个脚本 · 371 条引用 · 0 个没人引用」，
+      #     跟本机一样 —— 因为仓内 README/CLAUDE.md 那一路证据恰好把 cc-home 那一路
+      #     覆盖住了。但这是**冗余撞上了**，不是判据在 CI 里成立：少一路证据的孤儿判定
+      #     天然偏松，哪天真多出一个只被 skill 点名的脚本，CI 会把它判成孤儿。）
+      #
+      # 扫描根清单从两个脚本的模块常量里现取（SCAN_ROOTS / DOC_ROOTS），不在 yml 里
+      # 手抄一份 —— 抄一份就会漂，漂了之后上面这段注释就开始骗人。
+      # ──────────────────────────────────────────────────────────────────────
+      - name: 本 CI 覆盖不到什么（大声说 + 自证理由成立）
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import importlib.util as iu
+          import sys
+          from pathlib import Path
+
+          def load(rel, name):
+              spec = iu.spec_from_file_location(name, Path(rel).resolve())
+              mod = iu.module_from_spec(spec)
+              sys.modules[name] = mod
+              spec.loader.exec_module(mod)
+              return mod
+
+          xref = load("tools/check_external_refs.py", "_ci_xref")
+          sg = load("tools/script_graph.py", "_ci_sg")
+
+          print("=" * 78)
+          print("!! 本 CI **没有** 跑 tools/check_external_refs.py")
+          print("!! 它扫的是本机生态（~/Work ~/Apps ~/Dev/... 里对 doctools 脚本路径的硬编码引用），")
+          print("!! 扫描根在 GitHub runner 上不存在。这条闸门只在本机 pre-commit 跑。")
+          print("!! 后果：**CI 全绿不代表仓外那 200+ 处引用没断**。改脚本路径/文件名前，")
+          print("!!       必须在本机跑一次： python3 tools/check_external_refs.py")
+          print("-" * 78)
+          alive = [r for r in xref.SCAN_ROOTS if r.exists()]
+          for r in xref.SCAN_ROOTS:
+              print(f"    {'!! 竟然存在 !!' if r.exists() else '不存在（符合预期）'}  {r}")
+          if alive:
+              sys.exit(f"⛔ {alive} 在 CI 上竟然存在 —— 「跑不了」的理由不成立了。\n"
+                       "   而且更要命：它缺一部分根只会 ⚠ 跳过、拿剩下的报绿。\n"
+                       "   请重新判断该不该把 check_external_refs 挂进 CI，别让这段说明词过期。")
+
+          print("=" * 78)
+          print("!! tools/script_graph.py 照跑，但它的 doc_refs() 少一路证据源：")
+          missing = [r for r in sg.DOC_ROOTS if not r.exists()]
+          for r in missing:
+              print(f"    缺:  {r}")
+          in_repo = [str(r) for r in missing if str(r).startswith(str(sg.ROOT))]
+          if in_repo:
+              sys.exit(f"⛔ 缺的是**仓内**文档根 {in_repo} —— 这不是 CI 环境问题，是仓坏了。")
+          print("!! 所以 CI 打出来的「孤儿数」偏大（少了「被 skill 文档点名」这条活证据）。")
+          print("!! 别拿 CI 的孤儿清单去退役脚本，那要在本机跑。")
+          print("=" * 78)
+          PY
+
+      # ──────────────────────────────────────────────────────────────────────
+      # cli_surface：**在 CI 里它不是等价闸门**，别把它当等价闸门看。
+      #
+      # 它本来的用法是「改之前 dump 一份 / 改之后 dump 一份 / diff 必须空」，
+      # 那个「改之前」是本机工作树里的东西，CI 上没有、也造不出来
+      # （拿 base ref 重跑一份来 diff 也不行：那会把**有意**改 CLI 的 PR 判红，
+      #  变成一道要靠 `--no-verify` 绕的假门）。
+      #
+      # 那它在 CI 里到底能证明什么？三件，都是真的，而且都是那个用法的前提条件：
+      #   ① parser 树在**只有 pyproject 声明的依赖**的干净机器上建得起来。
+      #      本机跑的是共享的 ~/Dev/.venv，装了一堆没在 pyproject 里声明的东西，
+      #      「本机能 import」证明不了这条 —— 这一轮抓到的 parallel_contract
+      #      硬依赖就是这么现形的。
+      #   ② 树非空 —— cli_surface 自己 fail-closed：0 个子命令 rc=3（空树 diff 恒等于空树）。
+      #   ③ 指纹是**确定性**的：同一棵树连 dump 两次必须逐字节相同。
+      #      这条正是「before/after diff」这个用法的地基：指纹只要有一点不稳定
+      #      （dict 序 / repr 里带地址 / 默认值算了绝对路径），本机那道 diff 就会长噪音，
+      #      长噪音的 diff 迟早被人眼跳过。
+      # 证明不了的是「接口没变」。那条只在本机 / pre-commit 里成立，CI 摆不出来。
+      # ──────────────────────────────────────────────────────────────────────
+      - name: cli_surface（不是等价闸门：只证 干净环境建得起来 + 非空 + 指纹确定）
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          uv run python tools/cli_surface.py > reports/cli-surface.json
+          uv run python tools/cli_surface.py > reports/cli-surface-2.json
+          echo "--- 同一棵树 dump 两次逐字节比对（有差异 = 指纹不确定 = 本机那道 diff 不可信）---"
+          diff -u reports/cli-surface.json reports/cli-surface-2.json
+          rm reports/cli-surface-2.json
+          uv run python -c "import json,sys; n=json.load(open('reports/cli-surface.json'))['subcommands']; print('子命令节点',n); sys.exit(0 if n else '空树')"
+
+      - name: cli_forward_probe（每条子命令真正转发出去的 argv）
+        run: uv run python tools/cli_forward_probe.py > /dev/null
+
+      - name: check_docx_collar（python-docx 存盘必挂 surgical 收口）
+        run: uv run python tools/check_docx_collar.py
+
+      - name: check_function_axis（职能轴对账 · 93 条）
+        run: uv run python tools/check_function_axis.py
+
+      - name: check_verbs_reachable（每个顶层子命令敲下去必须真进得去）
+        run: uv run python tools/check_verbs_reachable.py
+
+      - name: check_smoke_coverage（冒烟表 ↔ CLI 子命令树对账）
+        run: uv run python tools/check_smoke_coverage.py
+
+      # 判据在 CI 里只剩「枚举非空 + 图建得出来」，理由见上面那一步。孤儿数照打不判红。
+      - name: script_graph（枚举 fail-closed；孤儿数在 CI 上偏大，不是判据）
+        run: uv run python tools/script_graph.py -o reports/script-graph.html
+
+      - name: pytest · 单元与回归（scripts/document/tests）
+        run: uv run --with pytest python -m pytest scripts/document/tests -q
+
+      # smoke 是 93 条动词逐条真敲（本机 ~20s）。`-rs` 把 skip 理由一起打进日志 ——
+      # 「跳了几条、为什么跳」必须留痕，否则 skip 会慢慢长成静默的空洞。
+      - name: pytest · 动词端到端冒烟（tests/smoke）
+        run: uv run --with pytest python -m pytest tests/smoke -q -rs
+
+      - name: 存档 CLI 指纹与脚本关系图
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surface-and-graph-py${{ matrix.python-version }}
+          path: |
+            reports/cli-surface.json
+            reports/script-graph.html
+          if-no-files-found: error

@@ -7,6 +7,11 @@ dynamic = ["version"]
 description = "文档处理与数据转换工具集：docx/md/pdf/pptx 的读-改-审阅-修订-排版，统一入口 docx_cli（93 条动词）"
 requires-python = ">=3.12"
 dependencies = [
+    # `docx_cli combine` 的实现（sub/combine.py）直接 `from docxcompose.composer
+    # import Composer`。以前没声明也能跑，是因为本机走的是共享的 ~/Dev/.venv —— 那里
+    # 有别的 member 装的它。干净机器上 combine 直接 rc=2「docxcompose 未安装」
+    # （2026-08-02 ubuntu:24.04 容器实测，smoke 13 红里的第 13 条）。
+    "docxcompose>=1.4",
     "fastapi>=0.135.3",
     "lxml>=6.0.3",
     "matplotlib>=3.10.8",
