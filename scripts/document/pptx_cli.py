@@ -61,6 +61,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 sys.path.insert(0, str(SCRIPT_DIR.parent.parent / "lib"))
 sys.path.insert(0, str(Path.home() / "Dev" / "tools" / "dev" / "lib"))  # canonical 5 modules
+# lsof 占用检查 SSOT。`sub/_cli_common` 顶层只 import stdlib（datetime/json/shutil/
+# subprocess/sys/pathlib），不碰 python-pptx/lxml —— 顶层 stdlib-only 契约不破。
+# append 不是 insert(0)：sub/ 里有 styles.py 等易撞名模块，不许上抢占位。
+sys.path.append(str(SCRIPT_DIR / "sub"))
+import _cli_common as _cc  # noqa: E402
 
 
 # =====================================================================
@@ -865,14 +870,14 @@ def _slide_nums(z):
 
 
 def _lsof_guard(path):
-    """Office 占用自检 — 占用则退出(调用方/用户先关或 kill)。"""
-    try:
-        r = subprocess.run(["lsof", str(path)], capture_output=True, text=True)
-        if r.stdout.strip():
-            print(f"⚠️  文件被占用(关闭 PowerPoint 后重试 或 backup+kill):\n{r.stdout}", file=sys.stderr)
-            return False
-    except FileNotFoundError:
-        pass  # 无 lsof(非 mac)跳过
+    """Office 占用自检 — 占用则退出(调用方/用户先关或 kill)。
+
+    判据 2026-08-02 起委派 `_cli_common.lsof_check`（原实现无 timeout、不看
+    returncode、不要求行数>1）；打印文案与 bool 返回值这层外壳保持不变。"""
+    occ = _cc.lsof_check(Path(path))
+    if occ:
+        print(f"⚠️  文件被占用(关闭 PowerPoint 后重试 或 backup+kill):\n{occ}", file=sys.stderr)
+        return False
     return True
 
 

@@ -40,10 +40,8 @@ import argparse
 import hashlib
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
-from datetime import date
 from pathlib import Path
 
 try:
@@ -65,6 +63,10 @@ from . import image  # media_hashes 函数复用（2026-07-31 image_dedup 并入
 # append 不是 insert(0)，防顶掉 sub/ 里同名模块）
 sys.path.append(str(Path(__file__).resolve().parents[3] / "lib"))
 from docx_parts import PartIntegrityError, diff_parts  # noqa: E402
+
+# sub/ 自身进 sys.path（append 不是 insert(0)）—— lsof 占用检查 + 备份路径 SSOT
+sys.path.append(str(Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 
 NS_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -110,27 +112,13 @@ _AGGRESSIVE_KEEP_EXACT = {
 
 
 def _lsof_check(p: Path) -> str | None:
-    try:
-        r = subprocess.run(
-            ["lsof", str(p)], capture_output=True, text=True, timeout=5
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种）。"""
+    return _cc.lsof_check(p)
 
 
 def _find_next_backup(docx_path: Path) -> Path:
-    today = date.today().isoformat()
-    n = 1
-    while True:
-        cand = docx_path.with_name(
-            f"{docx_path.stem}.bak-{n}-{today}{docx_path.suffix}"
-        )
-        if not cand.exists():
-            return cand
-        n += 1
+    """`<stem>.bak-N-YYYY-MM-DD<suffix>` → `_cli_common.find_next_backup`。"""
+    return _cc.find_next_backup(docx_path)
 
 
 # ---------------- safe mode helpers ----------------

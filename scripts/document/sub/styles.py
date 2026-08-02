@@ -26,11 +26,9 @@ profile 默认 'zdwp' (兼容 qual-supply 老用法);eco-flow / generic 等通�
 from __future__ import annotations
 
 import argparse
-import datetime as _dt
 import json
 import re
 import shutil
-import subprocess
 import sys
 from collections import Counter
 from datetime import date
@@ -47,6 +45,10 @@ import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import cn_to_int  # noqa: E402,F401  中文数字 SSOT
 import caption_re  # noqa: E402  题注判据 SSOT
 from docx_parts import DEFAULT_ALLOW_CHANGED, assert_parts_intact  # noqa: E402  部件完整性断言
+# sub/ 自身进 sys.path（append 不是 insert(0)，别顶掉 lib/styles.py = 本文件同名）——
+# lsof 占用检查 + .bak-N-日期 备份路径的 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 from docx import Document
 from docx.document import Document as DocType
@@ -81,27 +83,13 @@ def _qn_local(tag: str) -> str:
 
 
 def lsof_check(path: Path) -> Optional[str]:
-    """检测 docx 是否被 Word/WPS 占用. 返回 lsof 输出 (occupied) 或 None (free)."""
-    try:
-        r = subprocess.run(
-            ["lsof", str(path)], capture_output=True, text=True, timeout=5
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种）。"""
+    return _cc.lsof_check(path)
 
 
 def pick_backup_path(src: Path) -> Path:
-    today = _dt.date.today().isoformat()
-    parent, stem, suffix = src.parent, src.stem, src.suffix
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}{suffix}"
-        if not cand.exists():
-            return cand
-        n += 1
+    """`<stem>.bak-N-YYYY-MM-DD<suffix>` → `_cli_common.find_next_backup`。"""
+    return _cc.find_next_backup(src)
 
 
 def _common_setup(args, dry_skip_lsof: bool = False) -> Path:

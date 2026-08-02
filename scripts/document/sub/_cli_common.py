@@ -10,8 +10,12 @@ report JSON 落盘 / stdout JSON 打印。**不收**各脚本的报错文案与�
 家族里 missing-file 有 return 1 / return 2 / sys.exit(1) / sys.exit(2) 四种,
 busy 有 exit(2) / return 3 两种, 统一它们 = 行为变更, 须另立任务用户拍板。
 
-语义抄 canonical 实现 pipeline_lib.lsof_check / make_backup_path (不 import
-pipeline_lib —— 它会拖起 docx / dataclass 等重依赖, 本模块保持零副作用)。
+**canonical 就在本文件** (2026-08-02 反转): `lsof_check` / `find_next_backup`
+是全仓唯一实现, 10 处 lsof + 7 处备份路径全部委派过来 —— 包括
+`pipeline_lib.lsof_check` / `pipeline_lib.make_backup_path`, 那两个名字现在是
+**薄委派壳**, 留着只因 `pipeline_lib.__all__` 与 `typeset_apply.py:98` 在按名 import
+(名字面只增不减)。**别再去 pipeline_lib 找真身。** 反向不 import 它 —— 它会拖起
+docx / dataclass 等重依赖, 本模块保持零副作用。
 
 铁则: 本模块禁 import docx、禁任何 import 期写盘副作用
 (check_docx_collar 枚举全仓, 惊动它 = 假红)。
@@ -93,19 +97,30 @@ def family_main(subcommands, argv=None, *, file, usage_args="<args…>") -> int:
 # ---------------- lsof / backup ----------------
 
 def lsof_check(p: Path) -> str | None:
-    """被占用返回 lsof stdout, 空闲返回 None。
+    """被占用返回 lsof 输出 (strip 后的多行 join), 空闲返回 None。
 
-    5s timeout; lsof 不存在 / 超时一律当空闲 (返回 None)。
+    2026-08-02 收敛: 全仓原有 4 种语义 (A 裸 lsof / B 带 `--` 且要求行数>1 /
+    C 返 bool 且不看 returncode / D 无 timeout), 用户拍板取最健壮的一种:
+
+    - ``lsof -- <path>``: ``--`` 挡住以 ``-`` 开头的文件名被 lsof 当成 flag
+      (没有它, ``lsof -foo.docx`` 会被解析成选项 → 报 usage 或误判)。
+    - ``timeout=5``; lsof 不存在 (非 mac) / 超时一律当**空闲** (返回 None) ——
+      占用检查是尽力而为的礼貌门, 不是安全边界, 不该因工具缺失卡死写盘。
+    - 只有 ``rc == 0`` **且** 输出行数 ``> 1`` (表头之外真有持有者) 才算占用。
+      lsof 空结果时 rc=1 且 stdout 空, 两道判据互为兜底。
+
     报错文案与退出方式留在调用处 (各脚本不一致, 是契约不是债)。
     """
     try:
         r = subprocess.run(
-            ["lsof", str(p)], capture_output=True, text=True, timeout=5
+            ["lsof", "--", str(p)], capture_output=True, text=True, timeout=5
         )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        return None
+    if r.returncode == 0 and r.stdout.strip():
+        lines = r.stdout.strip().split("\n")
+        if len(lines) > 1:      # 含 header + 至少一条持有者
+            return "\n".join(lines)
     return None
 
 

@@ -30,9 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +39,10 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+# sub/ 自身进 sys.path（append 不是 insert(0)，别顶掉 lib/styles.py）——
+# lsof 占用检查 + .bak-N-日期 备份路径的 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -50,18 +52,9 @@ from docx.shared import Pt
 
 
 def lsof_check(docx_path: Path) -> Optional[str]:
-    try:
-        out = subprocess.run(
-            ["lsof", "--", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode == 0 and out.stdout.strip():
-        lines = out.stdout.strip().split("\n")
-        if len(lines) > 1:
-            return "\n".join(lines)
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种，
+    取的正是本文件原来这一版：`lsof --` + 行数>1）。"""
+    return _cc.lsof_check(docx_path)
 
 
 def clear_paragraph(p) -> None:
@@ -196,13 +189,7 @@ def main(argv: list[str] | None = None) -> int:
 
     backup_path = None
     if not args.dry_run and not args.no_backup:
-        today = date.today().isoformat()
-        n = 1
-        while True:
-            cand = src.with_name(f"{src.stem}.bak-{n}-{today}{src.suffix}")
-            if not cand.exists():
-                break
-            n += 1
+        cand = _cc.find_next_backup(src)
         shutil.copy2(src, cand)
         backup_path = cand
         print(f"[backup] {cand.name}")

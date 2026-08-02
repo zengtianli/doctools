@@ -32,10 +32,8 @@ import argparse  # noqa: E402
 import json  # noqa: E402
 import shutil  # noqa: E402
 import re  # noqa: E402
-import subprocess  # noqa: E402
 import sys  # noqa: E402
 from collections import Counter, defaultdict  # noqa: E402
-from datetime import date  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Optional  # noqa: E402
 
@@ -1236,13 +1234,7 @@ def main_reorder(argv: list[str] | None = None) -> int:
     # 备份
     backup_path = None
     if not args.dry_run and not args.no_backup:
-        today = date.today().isoformat()
-        n = 1
-        while True:
-            cand = src.with_name(f"{src.stem}.bak-{n}-{today}{src.suffix}")
-            if not cand.exists():
-                break
-            n += 1
+        cand = _cc.find_next_backup(src)
         shutil.copy2(src, cand)
         backup_path = cand
         print(f"[backup] {cand.name}")
@@ -1340,20 +1332,11 @@ W_P = f"{{{W_NS}}}p"
 W_TBL = f"{{{W_NS}}}tbl"
 W_SECTPR = f"{{{W_NS}}}sectPr"
 def lsof_check(docx_path: Path) -> Optional[str]:
-    """检测 docx 是否被 Word 等进程占用. 返回占用进程描述, 否则 None."""
-    try:
-        out = subprocess.run(
-            ["lsof", "--", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode == 0 and out.stdout.strip():
-        # lsof 列出占用行
-        lines = out.stdout.strip().split("\n")
-        if len(lines) > 1:  # 含 header + 至少一条
-            return "\n".join(lines)
-    return None
+    """检测 docx 是否被 Word 等进程占用. 返回占用进程描述, 否则 None.
+
+    → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种，取的正是本文件
+    原来这一版：`lsof --` + 行数>1）。"""
+    return _cc.lsof_check(docx_path)
 
 
 def get_body_block_children(body):
@@ -1619,13 +1602,7 @@ def main_relocate(argv: list[str] | None = None) -> int:
     # 备份
     backup_path = None
     if not args.dry_run and not args.no_backup:
-        today = date.today().isoformat()
-        m = 1
-        while True:
-            cand = src.with_name(f"{src.stem}.bak-{m}-{today}{src.suffix}")
-            if not cand.exists():
-                break
-            m += 1
+        cand = _cc.find_next_backup(src)
         shutil.copy2(src, cand)
         backup_path = cand
         print(f"[backup] {cand.name}")

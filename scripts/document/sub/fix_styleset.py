@@ -38,7 +38,6 @@ import datetime as _dt
 import json
 import os
 import shutil
-import subprocess
 import sys
 import zipfile
 from collections import Counter
@@ -53,6 +52,10 @@ import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 # verbatim repack SSOT（_add_first_line_indent_to_style 走它，2026-08-01 从手抄
 # extractall+rglob 重打包迁入 —— 那条路把 72/72 条 ZipInfo 全丢了）
 from docx_surgical import list_parts, parse_part, serialize, surgical_rewrite_parts  # noqa: E402
+# sub/ 自身进 sys.path（append 不是 insert(0)，别顶掉 lib/styles.py）——
+# lsof 占用检查 + .bak-N-日期 备份路径的 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -87,25 +90,13 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 # common helpers (lsof / backup / save / report)
 # ═════════════════════════════════════════════════════════════════════════════
 def _lsof_check(path: Path) -> Optional[str]:
-    try:
-        r = subprocess.run(["lsof", str(path)], capture_output=True,
-                           text=True, timeout=5)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种）。"""
+    return _cc.lsof_check(path)
 
 
 def _pick_backup_path(src: Path) -> Path:
-    today = _dt.date.today().isoformat()
-    parent, stem, suffix = src.parent, src.stem, src.suffix
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}{suffix}"
-        if not cand.exists():
-            return cand
-        n += 1
+    """`<stem>.bak-N-YYYY-MM-DD<suffix>` → `_cli_common.find_next_backup`。"""
+    return _cc.find_next_backup(src)
 
 
 def _will_write(args) -> bool:

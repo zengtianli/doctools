@@ -26,9 +26,7 @@ import argparse
 import json
 import re
 import shutil
-import subprocess
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +36,10 @@ from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from cn_number import chinese_to_arabic  # noqa: E402,F401  中文数字 SSOT
+# sub/ 自身进 sys.path（append 不是 insert(0)，别顶掉 lib/styles.py）——
+# lsof 占用检查 + .bak-N-日期 备份路径的 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 from docx import Document
 
@@ -63,24 +65,13 @@ except ImportError:
 
 
 def lsof_check(path: Path) -> Optional[str]:
-    try:
-        r = subprocess.run(["lsof", str(path)], capture_output=True, text=True, timeout=5)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种）。"""
+    return _cc.lsof_check(path)
 
 
 def pick_backup_path(src: Path) -> Path:
-    today = date.today().isoformat()
-    parent, stem, suffix = src.parent, src.stem, src.suffix
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}{suffix}"
-        if not cand.exists():
-            return cand
-        n += 1
+    """`<stem>.bak-N-YYYY-MM-DD<suffix>` → `_cli_common.find_next_backup`。"""
+    return _cc.find_next_backup(src)
 
 
 def _common_setup(args) -> Path:

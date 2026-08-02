@@ -3,7 +3,8 @@
 """caption.py — 题注家族二合一（2026-07-31 家族折叠）
 
 子命令 ↔ 原脚本（函数体逐字搬移；模块级 apply/main 改名 _<sub> 后缀，
-lsof_check 两版语义不同各自保留（number 版返回 bool、pair 版返回 str），
+lsof_check 两版**判据**已于 2026-08-02 收敛到 _cli_common 同一份（外壳仍是两个：
+number 版 `lsof_check_bool` 返回 bool、pair 版 `lsof_check` 返回 str），
 .bak-N-日期 备份路径生成收敛到 _cli_common（机制同构，文案不变））：
 
     number  ← number_captions.py
@@ -33,7 +34,6 @@ import datetime as _dt  # noqa: E402,F401  （原 number_captions 顶部导入�
 import json  # noqa: E402
 import re  # noqa: E402
 import shutil  # noqa: E402
-import subprocess  # noqa: E402
 import sys  # noqa: E402
 from datetime import date  # noqa: E402,F401
 from pathlib import Path  # noqa: E402
@@ -179,12 +179,13 @@ def prepend_run_text(p, prefix: str) -> bool:
 
 
 def lsof_check_bool(path: Path) -> bool:
-    """是否被打开。返回 True = 被占用。"""
-    try:
-        r = subprocess.run(["lsof", str(path)], capture_output=True, text=True, timeout=5)
-        return bool(r.stdout.strip())
-    except Exception:
-        return False
+    """是否被打开。返回 True = 被占用。
+
+    模块内部 API（`process()` 用它），名字保留；判据 2026-08-02 起与全仓同一份
+    （`_cli_common.lsof_check`）。**这是本次唯一的语义变更点**：原实现不看
+    returncode、也不要求行数>1，且 `except Exception` 全吞。收敛后 lsof 报错
+    (rc!=0) 或只吐出表头一行不再算占用。"""
+    return bool(_cc.lsof_check(path))
 
 
 def pick_backup_path(src: Path) -> Path:
@@ -391,18 +392,9 @@ CAP_PATTERN = caption_re.pattern(CAP_SPEC)
 
 
 def lsof_check(docx_path: Path) -> Optional[str]:
-    try:
-        out = subprocess.run(
-            ["lsof", "--", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode == 0 and out.stdout.strip():
-        lines = out.stdout.strip().split("\n")
-        if len(lines) > 1:
-            return "\n".join(lines)
-    return None
+    """占用检查 → `_cli_common.lsof_check`（2026-08-02 四种语义收敛为一种，
+    取的正是本文件原来这一版：`lsof --` + 行数>1）。"""
+    return _cc.lsof_check(docx_path)
 
 
 def get_text(elem) -> str:

@@ -244,6 +244,33 @@ None 分支（抛异常会直接崩）。`cn_to_int` 就是 `chinese_to_arabic` 
 
 回归门：`scripts/document/tests/test_cn_number.py`（含「sub/ 下不许再有本地副本」那条）。
 
+### lsof 占用检查 + `.bak-N-日期` 备份路径只有 `_cli_common` 一份（2026-08-02 立 · 有对拍门）
+
+收敛前全仓 **10 份 `lsof_check`，四种语义，没有任何两份逐字相同**：A 裸 `lsof <path>`（5 份）·
+B `lsof -- <path>` 且要求行数>1（3 份）· C 返 bool、不看 returncode、`except Exception` 全吞（1 份）·
+D 无 timeout（1 份）。用户拍板**取最健壮的 B**，现在真身在 `sub/_cli_common.py`：
+
+```python
+import _cli_common as _cc          # sub/ 自身 append 进 sys.path，别 insert(0)
+occ = _cc.lsof_check(path)         # str|None
+bak = _cc.find_next_backup(path)   # 只算路径；_cc.make_backup 才 copy2
+```
+
+**`--` 不是洁癖**：实测 `lsof -hold.docx` 被解析成 `-h`（帮助）→ **rc=0、stdout 空** →
+老的 A/C/D 三派一致判「空闲」，对着 Word 正开着的文件放行写盘。returncode 检查救不了它，
+只有 `--` 能。所以别顺手把它删掉当「多余参数」。
+
+⚠ `pipeline_lib.lsof_check` / `make_backup_path` 现在只是**委派壳**，别再去那里找真身 ——
+它们留着是因为 `pipeline_lib.__all__` 列着、`typeset_apply.py:98` 按名 import、外仓还有
+`import *` 的 shim；**名字面只增不减**。
+
+| 什么时候用什么 | |
+|---|---|
+| 对拍门（10 处同解 + `--` 生效 + 6 处备份委派 + 内联循环已拆） | `python3 handoffs/_loc_plan_harness/lsof_backup_ab.py` |
+| **不归本机制管** | `.bak-<时间戳>` 是**另一套命名约定**（`table` / `normalize_fonts` / `md_merge_impl` / `docx_fmt` / `bid_gate` / `lib/docx_surgical.make_backup`），扫进来就是行为变更 |
+
+`cli_surface` / `cli_forward_probe` **看不见这层**（那两个只管 argv），改判据必须跑上面那个对拍器。
+
 ### per-op 选项走后端声明,别写进 Swift（2026-07-26 立）
 
 GUI 的勾选框由 `doc_gui_backend.OPS[<op>]["options"]` + `["option_groups"]` 声明，

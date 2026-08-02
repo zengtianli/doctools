@@ -58,6 +58,10 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
+# sub/ 自身进 sys.path（append 不是 insert(0)，别顶掉 lib/styles.py）——
+# lsof 占用检查 + .bak-N-日期 备份路径的 SSOT
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402
 
 
 import argparse
@@ -66,12 +70,10 @@ import importlib.util
 import json
 import os
 import shutil
-import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
@@ -83,30 +85,20 @@ except ImportError:
 
 # ----------------- helpers -----------------
 
+# 这两个名字**必须留在模块级**（不是 `lsof_check = _cc.lsof_check` 也行，但别删）：
+# `__all__` 列着它们、`typeset_apply.py:98` 直接 `from sub.pipeline_lib import
+# load_step, lsof_check, make_backup_path`、外仓 qual-supply 还有 `import *` 的 shim。
+# 2026-08-02 起真身在 `_cli_common`，这里只剩委派壳 —— 名字面只增不减。
+
 def lsof_check(docx_path: Path) -> str | None:
-    """返回非 None 即被占用; None 表示空闲"""
-    try:
-        out = subprocess.run(
-            ["lsof", str(docx_path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
+    """返回非 None 即被占用; None 表示空闲 → `_cli_common.lsof_check`。"""
+    return _cc.lsof_check(docx_path)
 
 
 def make_backup_path(src: Path) -> Path:
-    """统一备份命名: <stem>.bak-N-YYYY-MM-DD<suffix>, N 自增"""
-    today = date.today().isoformat()
-    parent, stem, suffix = src.parent, src.stem, src.suffix
-    n = 1
-    while True:
-        cand = parent / f"{stem}.bak-{n}-{today}{suffix}"
-        if not cand.exists():
-            return cand
-        n += 1
+    """统一备份命名: <stem>.bak-N-YYYY-MM-DD<suffix>, N 自增
+    → `_cli_common.find_next_backup`。"""
+    return _cc.find_next_backup(src)
 
 
 # ----------------- step loading -----------------
