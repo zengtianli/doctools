@@ -1231,6 +1231,16 @@ def main_reorder(argv: list[str] | None = None) -> int:
         print(f"[error] 找不到 {src}", file=sys.stderr)
         return 2
 
+    # lsof 检查（2026-08-02 补）——本文件三条子命令里只有 relocate 挂了闸门，
+    # reorder 这条写盘路径从上线起裸奔：文件被 Word/WPS 开着照样备份+覆写。
+    # 只在真要写盘时拦，--dry-run 不产文件所以不拦（与 relocate 的差别是有意的）。
+    if not args.dry_run:
+        occupied = lsof_check(src)
+        if occupied:
+            print(f"[error] docx 被进程占用, 关闭 Word/WPS 后重试:\n{occupied}",
+                  file=sys.stderr)
+            return 3
+
     # 备份
     backup_path = None
     if not args.dry_run and not args.no_backup:
