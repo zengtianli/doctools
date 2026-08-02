@@ -231,3 +231,81 @@ message 写「以 `-` 开头的相对文件名被裸 lsof 解析成 `-h`(帮助)
 **核验镜头复跑过的交叉项**：`grep -rnE '^[[:space:]]*(import styles|from styles)' scripts lib tools doctools` **零命中** —— W1 扩大 `sys.path` 带来的 `lib/styles.py` vs `sub/styles.py` 同名风险当前未触发。这条 W1 声称过、核验独立复核过，一致。
 
 **没有任何断言是纯读代码推理得出的。** 唯一带推理成分的是 M3 的"今天是潜伏洞不是在跑的 bug"——依据是 `lib/` 下当前无 `.save(` 的 grep 结果，属事实而非推测。
+
+---
+
+# 后续：主会话复核轮（2026-08-02 · 上面那 6 条未修问题的处置）
+
+上面那份报告是 workflow 自己写的。主会话**逐条自验**之后，**全部修完**，
+每条都有反向验证。以下是处置账，与上面的「未修」一节互斥——**以本节为准**。
+
+## 1 · 11 条动词从上线起是死的（最重的一条）
+
+`fix`(7 条) / `seqdiff`(2) / `compare-ref`(1) / `revise-rules`(1) 注册进了 parser、
+`--help` 里列着、`verbs` 表里列着，但没进 `main()` 那份**手抄**的 `DISTILLED_GROUPS`。
+
+主会话自验：
+```
+docx_cli.py fix clear-direct-format /tmp/t.docx --inplace
+  → 打印根 usage，rc=0，目录里只有 t.docx —— 没备份、没写盘、没报错
+parser 注册的顶层名 49 · 手维护清单 29 · 漏掉的 = [compare-ref, fix, revise-rules, seqdiff] · stale = 0
+```
+
+修法（不是补 4 个名字，是让它不可能再漏）：
+- `DISTILLED_GROUPS` 改为**从 `parser._actions` 派生**
+- 顺带修第二个 fail-open：未知子命令原来也是「打 help + rc=0」，
+  于是 `docx_cli.py <拼错的动词> && echo 成功` 一路报成功 → 改成 rc=2 + 可用清单
+- 新守卫 `tools/check_verbs_reachable.py`：走**真实入口**逐个敲 49 个顶层名
+
+⚠ **守卫第一版是摆设**：只认「rc=0 + 根 help」，而同一轮把未知出口改成了 rc=2，
+反向验证时注入漏同步 → `fix` 变成「未知子命令」绕过判据、**守卫报绿**。
+补第二条判据后：注入 rc=1 点名 4 个 / 还原 rc=0。
+
+## 2 · collar 第三判据自己的三个洞（都是主会话上一轮写的）
+
+| 洞 | 实测 | 修法 |
+|---|---|---|
+| 判据 1 扫描根只有 `scripts/` | 注入 `lib/` 裸存盘（带 docx import）→ rc=0 | 扫描根加 `lib/` |
+| `_repo_files` 按 stem 去重 | `lib/styles.py` `lib/docx_revise.py` `lib/__init__.py` 整个从判据 3 视野消失；往 `lib/styles.py` 加裸 `.save()` → rc=0 | 改为按路径列全；stem 歧义时把边加给**全部**同名候选 |
+| 新包在所有扫描根之外 | 往包里放裸存盘 → 五道门全绿 | collar 与 script_graph 两处扫描根都扩 |
+
+反向验证三条：A/B/C 全部 rc=1，干净仓 rc=0。
+
+## 3 · editable 安装把整个仓根塞进共享 venv
+
+实测 `_editable_impl_doctools.pth` 里就是仓根 → `~/Dev/.venv`（`tools/dev`、
+`tools/mactools` 共用）凭空多出 `lib` `scripts` `tools` `config` 等八个顶层可导入名，
+`import lib` 当场解析到 `doctools/lib/__init__.py`。
+
+- `packages = [...]` 只管 wheel，管不到 editable
+- `dev-mode-exact = true` 能只映射一个名字，**但依赖运行时包 `editables`**（venv 里没有），
+  装完每次启动 python 都报 `.pth` 错 —— **比原问题更糟，已退回**
+- 最终改 **src-layout**（`src/doctools/`），无额外依赖
+
+改后实测（中立 cwd）：`lib/tools/scripts/config/templates/handoffs` 全部 `find_spec=None`，
+只剩 `doctools` 一个名字；两条入口 `--version` 都输出 `doctools 0.1.0`。
+
+顺带：collar 的 fail-closed 当场抓到我把扫描根指向了刚搬走的目录（rc=2）。
+
+## 4 · `blocks reorder` 写盘路径没有占用闸门
+
+本文件三条子命令里只有 `relocate` 挂了 lsof。反向验证：真起 holder 持有 fd →
+reorder rc=3 拒绝写盘；释放后 rc=0 正常产备份。`--dry-run` 不拦（有意）。
+
+## 5 · W2 commit message 里的数字错了（低）
+
+`a5cba6a` 写「裸 lsof 对 `-` 开头文件名 rc=0 且 stdout 空」，实测 **rc=1**，
+stderr 是 `lsof: illegal option character: .`。结论方向没错（旧实现确实一致误判为空闲），
+但引用的数字是错的。**代码与 docstring 措辞是准的，错的只有 commit message** ——
+commit 已入历史不改写，在此更正。
+
+## 闸门终态（本节落笔时实跑）
+
+```
+cli_surface rc=0 · 与本轮开工前指纹 diff=0
+cli_forward_probe rc=0 · check_docx_collar rc=0 · check_function_axis rc=0
+check_external_refs rc=0 · check_verbs_reachable rc=0 · script_graph rc=0
+pytest 224 passed
+family_ab 144 例 diff=0（W1 零行为变更）
+lsof_backup_ab ✓ 全过（含 `--` 生效的断言）
+```
