@@ -834,24 +834,8 @@ SUBCOMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help"):
-        print("usage: freeze.py {" + ",".join(SUBCOMMANDS) + "} <docx> [flags…]\n"
-              "每个子命令的参数与原独立脚本逐字一致：freeze.py <sub> --help 查看。")
-        return 0 if args else 2
-    sub, rest = args[0], args[1:]
-    fn = SUBCOMMANDS.get(sub)
-    if fn is None:
-        print(f"[freeze] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
-              file=sys.stderr)
-        return 2
-    saved = sys.argv[:]
-    sys.argv = [sys.argv[0]] + rest
-    try:
-        rc = fn()
-        return int(rc) if isinstance(rc, int) else 0
-    finally:
-        sys.argv = saved
+    return _cc.family_main(SUBCOMMANDS, argv, file=__file__,
+                           usage_args="<docx> [flags…]")
 
 
 if __name__ == "__main__":

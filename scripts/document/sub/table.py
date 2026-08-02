@@ -20,6 +20,10 @@ from __future__ import annotations
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.append(str(_Path(__file__).resolve().parents[3] / "lib"))
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
+_sys.path.append(str(_Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
 import caption_re  # noqa: E402  题注判据 SSOT
 import docx_safe_save  # noqa: E402,F401  详见 lib/docx_safe_save.py
 from docx_parts import PartIntegrityError, diff_parts  # noqa: E402  部件完整性(B类:精确部件集)
@@ -1159,24 +1163,7 @@ SUBCOMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help"):
-        print("usage: table.py {" + ",".join(SUBCOMMANDS) + "} <args…>\n"
-              "每个子命令的参数与原独立脚本逐字一致：table.py <sub> --help 查看。")
-        return 0 if args else 2
-    sub, rest = args[0], args[1:]
-    fn = SUBCOMMANDS.get(sub)
-    if fn is None:
-        print(f"[table] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
-              file=sys.stderr)
-        return 2
-    saved = sys.argv[:]
-    sys.argv = [sys.argv[0]] + rest
-    try:
-        rc = fn()
-        return int(rc) if isinstance(rc, int) else 0
-    finally:
-        sys.argv = saved
+    return _cc.family_main(SUBCOMMANDS, argv, file=__file__)
 
 
 if __name__ == "__main__":

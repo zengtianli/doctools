@@ -23,6 +23,12 @@ import sys  # noqa: E402
 from difflib import SequenceMatcher  # noqa: E402
 from pathlib import Path  # noqa: E402
 
+# sub/ 自身进 sys.path —— docx_cli 的 _dispatch 用 spec_from_file_location 加载,
+# 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))。
+# 本文件没有 _sys/_Path 别名, 直接用上面已 import 的裸 sys/Path。
+sys.path.append(str(Path(__file__).resolve().parent))
+import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+
 from docx import Document  # noqa: E402
 
 
@@ -767,24 +773,7 @@ SUBCOMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help"):
-        print("usage: biddiff.py {" + ",".join(SUBCOMMANDS) + "} <args…>\n"
-              "每个子命令的参数与原独立脚本逐字一致：biddiff.py <sub> --help 查看。")
-        return 0 if args else 2
-    sub, rest = args[0], args[1:]
-    fn = SUBCOMMANDS.get(sub)
-    if fn is None:
-        print(f"[biddiff] unknown subcommand: {sub!r}; choices={list(SUBCOMMANDS)}",
-              file=sys.stderr)
-        return 2
-    saved = sys.argv[:]
-    sys.argv = [sys.argv[0]] + rest
-    try:
-        rc = fn()
-        return int(rc) if isinstance(rc, int) else 0
-    finally:
-        sys.argv = saved
+    return _cc.family_main(SUBCOMMANDS, argv, file=__file__)
 
 
 if __name__ == "__main__":
