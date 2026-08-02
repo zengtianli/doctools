@@ -54,6 +54,23 @@ PART_ASSERT = re.compile(r"\b(assert_parts_intact|diff_parts)\s*\(")
 # 是同一类东西，所以判据改成 ast：只认「函数调用」这一种形态，注释和 import 不算。
 ASSERT_NAMES = {"assert_parts_intact", "diff_parts"}
 
+# ── 第三判据（2026-08-02 加）· 判据要跟着调用链走，不能跟着 import 字面量走 ──────
+# 前两条判据都问「这个文件自己 import 没 import python-docx」。于是有一个洞：
+# **把存盘逻辑抽成公共函数，该函数所在的模块往往根本不 import docx**
+# （它只是收一个 doc 参数然后 `doc.save(...)`），于是：
+#   ① 新模块 IMPORTS_DOCX=False → 不进名册 → 不要求收口
+#   ② 原来的调用方 `.save(` 没了 → 也退出名册
+# 结果是**这次存盘从此没有任何守卫**，而守卫照样报绿。
+# 2026-08-02 实测：sub/styles.py 与 sub/outline.py **各只有 1 处 `.save(`**，
+# 都在各自的 `_save_with_backup` 里 —— 一次「抽公共函数」的普通重构就能同时
+# 把这两个文件从名册上摘掉，五道闸门全绿。
+#
+# 所以第三判据按**反向 import 图**判：一个文件只要自己会 `.save(`，
+# 且有任何（传递地）import 它的文件用了 python-docx，它就要挂收口。
+# 宁可多要求（多一行 import，对非 docx 的存盘是无害 no-op），不可漏 —— fail-closed。
+SAVE_CALL = re.compile(r"\.save\s*\(")
+IMPORT_ANY = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))", re.M)
+
 
 def has_part_assert(src: str) -> bool:
     """源码里有没有**真的调用**部件完整性断言。"""
@@ -97,6 +114,71 @@ def offenders() -> tuple[list[Path], list[Path]]:
     return need, bad
 
 
+def _repo_files(roots: list[Path]) -> dict[str, Path]:
+    """stem → 路径。同名取先扫到的（与 script_graph 同口径）。"""
+    out: dict[str, Path] = {}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for p in sorted(root.rglob("*.py")):
+            if EXEMPT_DIR.search(str(p)) or p.name.startswith("test_"):
+                continue
+            out.setdefault(p.stem, p)
+    return out
+
+
+def chain_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
+    """第三判据：会 `.save(` 且被 python-docx 使用方（传递地）import 的文件，必须挂收口。
+
+    与 offenders() 不同，这里**不要求非空**：一个仓里可以确实没有这种「被 docx
+    脚本调用的存盘 helper」，那是正常状态。
+    """
+    files = _repo_files(roots)
+    src_of = {stem: p.read_text(encoding="utf-8", errors="replace") for stem, p in files.items()}
+
+    # 正向：谁 import 了谁（只认能在本仓解析到的 stem）
+    imports: dict[str, set[str]] = {}
+    for stem, src in src_of.items():
+        got = set()
+        for m in IMPORT_ANY.finditer(src):
+            name = (m.group(1) or m.group(2) or "").split(".")[-1]
+            if name in files and name != stem:
+                got.add(name)
+        imports[stem] = got
+    # 反向：谁被谁 import
+    rev: dict[str, set[str]] = {s: set() for s in files}
+    for stem, deps in imports.items():
+        for d in deps:
+            rev[d].add(stem)
+
+    def reached_by_docx(stem: str) -> bool:
+        """自己或任何（传递的）上游使用方 import 了 python-docx。"""
+        seen, stack = {stem}, [stem]
+        while stack:
+            cur = stack.pop()
+            if IMPORTS_DOCX.search(src_of[cur]):
+                return True
+            for up in rev.get(cur, ()):
+                if up not in seen:
+                    seen.add(up)
+                    stack.append(up)
+        return False
+
+    need, bad = [], []
+    for stem, p in files.items():
+        src = src_of[stem]
+        if not SAVE_CALL.search(src):
+            continue
+        if IMPORTS_DOCX.search(src):
+            continue                      # 已由第一判据管着，不重复点名
+        if not reached_by_docx(stem):
+            continue                      # 存的不是 docx（xlsx/图片/json…），不管
+        need.append(p)
+        if not COLLAR.search(src):
+            bad.append(p)
+    return need, bad
+
+
 def zip_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
     """第二判据：自己开 ZipFile 写 docx 的脚本，必须挂部件完整性断言。
 
@@ -132,6 +214,7 @@ def main() -> int:
     extra = [Path(a).expanduser() for a in sys.argv[1:] if not a.startswith("-")]
     scan_roots = [SCAN, ROOT / "lib"] + extra
     z_need, z_bad = zip_offenders(scan_roots)
+    c_need, c_bad = chain_offenders(scan_roots)
     if "--list" in sys.argv:
         for p in need:
             mark = "✗" if p in bad else "✓"
@@ -139,7 +222,22 @@ def main() -> int:
         for p in z_need:
             mark = "✗" if p in z_bad else "✓"
             print(f"{mark} [zipfile]     {p}")
+        for p in c_need:
+            mark = "✗" if p in c_bad else "✓"
+            print(f"{mark} [调用链]      {p}")
         return 0
+    if c_bad:
+        print(f"⛔ {len(c_bad)}/{len(c_need)} 个文件会 .save() 且被 python-docx 使用方"
+              f"（传递地）import，但没挂 surgical 收口：", file=sys.stderr)
+        for p in c_bad:
+            print(f"    {p}", file=sys.stderr)
+        print("\n为什么算它：判据跟着**调用链**走，不跟着 import 字面量走。"
+              "\n把存盘抽成公共函数时，新模块往往根本不 import docx（只收一个 doc 参数），"
+              "\n于是前两条判据同时看不见它、原调用方也退出名册 —— 这次存盘从此无人守。"
+              "\n修法与下面一致：文件顶部 import docx_safe_save。"
+              "\n（确实存的不是 docx？那把它挪出被 docx 脚本 import 的链，或说明白为什么。）",
+              file=sys.stderr)
+        return 1
     if z_bad:
         print(f"⛔ {len(z_bad)}/{len(z_need)} 个脚本自己开 ZipFile 写 docx，"
               f"但没挂部件完整性断言：", file=sys.stderr)
@@ -172,6 +270,8 @@ def main() -> int:
         return 1
     print(f"✓ {len(need)} 个用 python-docx 存盘的脚本全部挂了 surgical 收口")
     print(f"✓ {len(z_need)} 个自己开 ZipFile 写 docx 的脚本全部挂了部件完整性断言")
+    print(f"✓ {len(c_need)} 个「自己不 import docx、但被 docx 使用方调用」的存盘 helper "
+          f"全部挂了收口")
     return 0
 
 
