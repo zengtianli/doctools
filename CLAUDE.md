@@ -114,11 +114,26 @@ convert 2 · dispatch 1 = 93 条（另 8 条别名共用同一 parser，不单�
 没有的条目同样判红 —— 两个方向都堵死，这张表才不会变成「还在、只是不准了」。
 别名不占表项：闸门按 `id(parser)` 归组自动认领，别名清单是从真 parser 派生的，不手抄。
 
-## 全仓脚本关系图
+## 全仓脚本关系图 = 一页三视图（2026-08-02 扩）
 
 ```bash
-python3 tools/script_graph.py --open     # 92 个脚本 · 谁调谁 · 双链可点
+python3 tools/script_graph.py --open     # 99 脚本 · 365 引用 · 93 动词 · 0 孤儿
 ```
+
+| 视图 | 回答什么 | 数据从哪来 |
+|---|---|---|
+| **图谱** | 谁调谁（力导向，可拖可缩，点节点看双链） | ast：import + 字面量调用 |
+| **清单** | 99 个脚本各是什么（层/引擎/格式/行数/入←→出/首行 docstring/接住哪些动词） | 同上 + 首行 docstring |
+| **动词** | 93 条 CLI 动词各落到哪个脚本、属哪个职能 | `_groups.Target.impl` + parser 树 `func.__module__` + `CMD_TABLE` 源码 + `_function_axis` |
+
+**「实现脚本」那一列不是手抄的**，也不是猜的：三条来源都读 SSOT 本体，
+`Target.chain` 是 `(dest, 同组 target 名)`（**不是脚本名**，照字面收会把 `table borders`
+报成实现在 `center.py`），扁平组的 Target 挂在 `g.flat` 不在 `g.targets`（漏掉这支会把
+`chrome` / `md-merge` 报成实现在 `_groups.py`）—— 这两个坑本页第一版都踩过。
+交叉核验：与 `cli_forward_probe` 实录的转发脚本比对，**65 条重合项 0 不一致**。
+
+⚠ 清单里的**格式轴那一列是信号计数的启发式**（`FORMAT_SIG`），与边和动词映射不同级，
+别拿它当事实用；页面顶部也这么标了。
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。
 **「代码里没人 import」单独不算死** —— 一多半脚本是文档告诉我去敲的。

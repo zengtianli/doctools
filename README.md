@@ -59,7 +59,7 @@ python3 tools/cli_forward_probe.py    # 67 条内嵌预期 argv 比对（真正�
 python3 -m pytest scripts/document/tests scripts/document/sub/tests -q
 python3 tools/check_function_axis.py  # 职能轴表 ↔ CLI 对账，缺一条或多一条都判红
 python3 tools/check_external_refs.py   # 全生态引用存在性（已挂 pre-commit --changed-only）
-python3 tools/script_graph.py --open  # 99 脚本 · 362 引用 · 0 孤儿
+python3 tools/script_graph.py --open  # 99 脚本 · 365 引用 · 93 动词 · 0 孤儿（三视图：图谱/清单/动词）
 ```
 
 ## 安装

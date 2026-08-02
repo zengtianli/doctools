@@ -1,34 +1,40 @@
-# doctools 现状盘点 · 有几个脚本 · docx 怎么被改 · 2026-08-01
+# doctools 现状盘点 · 有几个脚本 · docx 怎么被改 · 2026-08-01（数字 2026-08-02 刷新）
 
 > 上一版（2026-07-30）盘的是**折叠前**的 133 件、且生成器判据有一处误判（见文末「判据修正」）。
 > 本版数字全部来自本日实跑的命令，每节都标了取数命令，自己跑一遍就能复现。
 
 ## 零 · 一句话
 
-**92 个脚本**（`script_graph.py`：92 个 · 316 条引用 · 0 个孤儿），
+**99 个脚本**（`script_graph.py`：99 个 · 365 条引用 · 0 个孤儿；08-01 的 92/316 是
+`cn_number` / `caption_re` 两个 SSOT + `check_function_axis` / `check_external_refs`
+两道闸门 + 对应测试落地**之前**的数），
 其中真正会动 docx 内部的 **55 个**；
 它们改 docx 只有 **4 条路**，落盘只有 **2 个收口**，全部由 2 道闸门 fail-closed 守着。
 
 ---
 
-## 一 · 92 个脚本分在哪
+## 一 · 99 个脚本分在哪
 
 ```bash
-python3 tools/script_graph.py --open        # 92 个脚本 · 316 条引用 · 0 个没人引用
+python3 tools/script_graph.py --open        # 99 个脚本 · 365 条引用 · 0 个没人引用
+                                            # 页面三视图：图谱(力导向) / 清单 / 93 条动词→落到哪个脚本
 ```
 
 | 层 | 数量 | 是什么 |
 |---|---:|---|
 | `scripts/document/` | 17 | **入口层** —— 我实际敲的命令（下节逐个列） |
-| `scripts/document/sub/` | 43 | `docx_cli` 的子命令实现（12 个族文件 + 业务模块 + 3 个基建件） |
+| `scripts/document/sub/` | 44 | `docx_cli` 的子命令实现（12 个族文件 + 业务模块 + 3 个基建件） |
 | `scripts/data/` | 5 | xlsx / 格式互转 |
-| `lib/` | 14 | 底座（收口 / 断言 / 元素级遍历 / LLM / 样式） |
-| `tools/` | 5 | 闸门与量尺（surface / probe / collar / blast_radius / script_graph） |
-| `tests/` | 8 | 回归门 |
-| **合计** | **92** | |
+| `lib/` | 16 | 底座（收口 / 断言 / 元素级遍历 / LLM / 样式） |
+| `tools/` | 7 | 闸门与量尺（surface / probe / collar / function_axis / external_refs / blast_radius / script_graph） |
+| `tests/` | 10 | 回归门（9 个测试文件 + `__init__.py`，共 202 个用例） |
+| **合计** | **99** | |
 
-`sub/` 那 43 个**不是 43 个命令**：12 个族文件各自装 2–7 个动词（strip×7 / audit×6 / table×4 …），
-所以 `docx_cli` 对外仍然是 45 个顶层族 · **125 条子命令**（`tools/cli_surface.py` 的 `subcommands` 字段）。
+`sub/` 那 44 个**不是 44 个命令**：12 个族文件各自装 2–7 个动词（strip×7 / audit×6 / table×4 …），
+所以 `docx_cli` 对外是 **126 个 parser 节点 = 93 条可跑动词 + 8 个别名 + 组父节点**
+（`tools/cli_surface.py` 的 `subcommands` 字段数的是 126 那个口径）。
+每条动词落到哪个脚本，`script_graph.py` 的「动词」视图逐条列出来了 —— 它读的是
+`sub/_groups.py` 的 `Target.impl` + parser 树的 `func.__module__` + `CMD_TABLE` 源码，不是手抄。
 
 ---
 
@@ -36,7 +42,7 @@ python3 tools/script_graph.py --open        # 92 个脚本 · 316 条引用 · 0
 
 | 脚本 | 行 | 干什么 | 子命令 |
 |---|---:|---|---|
-| `docx_cli.py` | 430 | **docx 总入口**，本身不碰 docx，只 dispatch 到 `sub/` | 45 族 / 125 条 |
+| `docx_cli.py` | 584 | **docx 总入口**，本身不碰 docx，只 dispatch 到 `sub/` | 126 节点 / 93 动词 |
 | `docx_tools.py` | 372 | extract / check / track 的组合入口（batch 并行 + library re-export） | 3 |
 | `typeset_apply.py` | 1071 | **spec(yaml) 驱动的排版引擎** —— 一份 yaml 定死整篇版式 | 29 actions |
 | `typeset_pipeline.py` | 174 | `/typeset all` 的一条龙 driver（每步 snapshot→自检→保留/回滚） | — |
@@ -69,7 +75,7 @@ flowchart TB
     R -->|"bid_gate / docx_fmt / renum …"| ENT["入口族脚本"]
     R -->|"doc_dispatch &lt;动词&gt; 任意后缀"| DIS["后缀路由层"]
 
-    CLI --> SUB["sub/*.py 43 个实现"]
+    CLI --> SUB["sub/*.py 44 个实现"]
     DIS --> CLI
     DIS --> ENT
     SPEC --> SUB
@@ -108,10 +114,10 @@ flowchart TB
 
 ```bash
 python3 tools/check_docx_collar.py      # 两条判据：收口 23/23 · 部件断言 17/17
-python3 tools/cli_surface.py            # CLI 接口指纹（125 子命令 + dest/required/metavar）
+python3 tools/cli_surface.py            # CLI 接口指纹（126 节点 + dest/required/metavar）
 python3 tools/cli_forward_probe.py      # 67 条内嵌预期 argv 比对：真正转发出去的是什么
 python3 -m pytest scripts/document/tests scripts/document/sub/tests -q   # 82 passed
-python3 tools/script_graph.py           # 92 脚本 · 316 引用 · 0 孤儿
+python3 tools/script_graph.py           # 99 脚本 · 365 引用 · 0 孤儿
 python3 tools/blast_radius.py run <docx> -- <命令，{docx} 占位>          # 量某条命令的炸开面
 ```
 
