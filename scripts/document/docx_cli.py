@@ -56,9 +56,9 @@ except ImportError as e:  # pragma: no cover
 _HERE = Path(__file__).resolve().parent
 
 
-# ─── 版本号（SSOT = 仓根 doctools/__init__.py） ─────────────────────────
+# ─── 版本号（SSOT = src/doctools/__init__.py） ──────────────────────────
 def _pkg_version() -> str:
-    """读仓根 `doctools/__init__.py` 的 `__version__`。
+    """读 `src/doctools/__init__.py` 的 `__version__`。
 
     那一个字面量同时喂三处：`pyproject.toml`（hatchling `[tool.hatch.version]`
     动态读取）、装出来的 `doctools` 命令、和这里。**别在任何地方抄第二份。**
@@ -70,7 +70,7 @@ def _pkg_version() -> str:
 
     fail-closed：读不到就 ValueError，不打「unknown」糊弄过去。
     """
-    init = _HERE.parents[1] / "doctools" / "__init__.py"
+    init = _HERE.parents[1] / "src" / "doctools" / "__init__.py"
     if init.is_file():
         spec = importlib.util.spec_from_file_location("_doctools_version_probe", init)
         if spec is not None and spec.loader is not None:

@@ -7,7 +7,7 @@
 - 改造路线图与销项账：[`handoffs/docx-refactor-roadmap.md`](handoffs/docx-refactor-roadmap.md)
 - 开发约定（收口 / 元素级遍历 / 子命令表）：[`CLAUDE.md`](CLAUDE.md)
 
-**99 个脚本**：入口 17 · `sub/` 44 · `data/` 5 · `lib/` 16 · `tools/` 7 · 测试 10。
+**103 个脚本**：入口 17 · `sub/` 44 · `data/` 5 · `lib/` 16 · `tools/` 8 · `src/doctools/` 2 · 测试 11。
 
 ## 入口层 (scripts/document/)
 
@@ -59,7 +59,8 @@ python3 tools/cli_forward_probe.py    # 67 条内嵌预期 argv 比对（真正�
 python3 -m pytest scripts/document/tests scripts/document/sub/tests -q
 python3 tools/check_function_axis.py  # 职能轴表 ↔ CLI 对账，缺一条或多一条都判红
 python3 tools/check_external_refs.py   # 全生态引用存在性（已挂 pre-commit --changed-only）
-python3 tools/script_graph.py --open  # 99 脚本 · 365 引用 · 93 动词 · 0 孤儿（三视图：图谱/清单/动词）
+python3 tools/check_verbs_reachable.py # 每个注册过的顶层子命令敲下去必须真进得去
+python3 tools/script_graph.py --open  # 103 脚本 · 370 引用 · 93 动词 · 0 孤儿（三视图：图谱/清单/动词）
 ```
 
 ## 安装
@@ -84,7 +85,7 @@ cd ~/Dev && uv sync --all-packages
 `main()`（实测同一条命令两边 stdout 逐字节相同），所以不会有「两个入口行为不一样」
 这种事。~/Work 那 130 处绝对路径不用动。
 
-**版本号 SSOT = `doctools/__init__.py` 的 `__version__`，只此一份**：
+**版本号 SSOT = `src/doctools/__init__.py` 的 `__version__`，只此一份**：
 `pyproject.toml` 声明 `dynamic = ["version"]` 由 hatchling 从该文件读走，
 `--version` 也读它。**别在 `pyproject.toml` 里补一行 `version =`** —— 那就又变回
 两处各写一份了。改完版本号要让已装的元数据跟上，得

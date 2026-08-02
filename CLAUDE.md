@@ -11,14 +11,14 @@
 
 | 敲什么 | 进哪 |
 |---|---|
-| `doctools <sub> …` | `doctools/cli.py` → 同一个 `docx_cli.main()` |
+| `doctools <sub> …` | `src/doctools/cli.py` → 同一个 `docx_cli.main()` |
 | `python3 <abs>/scripts/document/docx_cli.py <sub> …` | 同一个 `docx_cli.main()` |
 
-~/Work 有 130 处绝对路径在消费后者，**一处都不用改**。`doctools/cli.py` 里没有任何
+~/Work 有 130 处绝对路径在消费后者，**一处都不用改**。`src/doctools/cli.py` 里没有任何
 解析或分发逻辑（只做 spec_from_file_location + 调 main），所以两条入口在结构上不可能
 行为漂移 —— 实测同一条 `audit headings` 两边 stdout 逐字节相同。
 
-**版本号 SSOT = `doctools/__init__.py` 的 `__version__`，全仓只此一份。**
+**版本号 SSOT = `src/doctools/__init__.py` 的 `__version__`，全仓只此一份。**
 `pyproject.toml` 用 `dynamic = ["version"]` + `[tool.hatch.version] path=` 从该文件读走，
 `docx_cli.py --version` 也读该文件。**禁止在 `pyproject.toml` 里补 `version = "…"`**。
 实证：把它改成 `9.9.9` 后，包元数据 / `doctools --version` / 老路径 `--version` 三处
@@ -35,7 +35,9 @@ surface diff 立刻转红并点出 `_VersionAction` 那一节。要加就得先�
 ## 目录结构
 
 ```
-doctools/          # 可安装包壳：__version__ SSOT + console_script 入口（无业务逻辑）
+src/doctools/         # 可安装包壳：__version__ SSOT + console_script 入口（无业务逻辑）
+                      # 用 src-layout 是必需的：包放仓根时 editable 安装会把**整个仓根**
+                      # 写进共享 venv 的 .pth，凭空多出 lib/scripts/tools/config 等顶层名
 scripts/
 ├── document/ (17)    # 文档处理入口（docx_cli/typeset/revise/bid_gate/renum/docx_fmt/md_tools/pptx_cli/pdf_cli/chart…）
 │   └── sub/ (44)     # docx_cli 子命令实现（_groups 声明表 + _function_axis 职能表 +

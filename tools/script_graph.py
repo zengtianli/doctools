@@ -41,7 +41,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools", ROOT / "doctools"]
+SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools", ROOT / "src"]
 
 # 顶层 CLI = 人直接敲的入口，入度 0 也不算孤儿
 ENTRIES = {"docx_cli", "pdf_cli", "doc_dispatch", "typeset_pipeline", "doc_gui_backend",

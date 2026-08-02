@@ -28,8 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # 判据 2 只管 ZipFile、判据 3 又主动让开（见下面那句 continue）。实测注入
 # lib/_zz_libsaver.py（带 docx import 的裸存盘）守卫报 rc=0 —— 而 lib/ 正是本仓
 # CLAUDE.md 钦定的公共模块层，「把存盘抽进公共层」恰恰是最该被守住的动作。
-SCAN_ROOTS = [ROOT / "scripts", ROOT / "lib", ROOT / "doctools"]
-# `doctools/` 是 2026-08-02 新建的可安装包壳。它当时落在**所有**闸门的扫描根之外，
+SCAN_ROOTS = [ROOT / "scripts", ROOT / "lib", ROOT / "src"]
+# `src/doctools/` 是 2026-08-02 新建的可安装包壳。它当时落在**所有**闸门的扫描根之外，
 # 往里放一个裸存盘 docx 的脚本五道门全绿 —— 「壳里不放业务逻辑」那条规矩
 # 当时只写在 docstring 里，没有任何机器层兜着（铁律 #13）。
 SCAN = SCAN_ROOTS[0]        # 兼容既有引用

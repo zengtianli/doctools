@@ -1,6 +1,6 @@
 [project]
 name = "doctools"
-# 版本号 SSOT = doctools/__init__.py 的 __version__（hatchling 从那儿读，见
+# 版本号 SSOT = src/doctools/__init__.py 的 __version__（hatchling 从那儿读，见
 # [tool.hatch.version]）。docx_cli.py --version 读的也是同一个文件。
 # **这里不许再写一份 version 字面量** —— 两处各写一份正是本仓一直在消灭的形状。
 dynamic = ["version"]
@@ -38,11 +38,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "doctools/__init__.py"
+path = "src/doctools/__init__.py"
 
 # 只打 doctools/ 这一个包（仓根是 scripts/ lib/ tools/ 这种平铺目录，没有可打的
 # 包树）。member 在 uv workspace 里按 editable 装，壳里的相对定位指回真实工作树。
 [tool.hatch.build.targets.wheel]
-packages = ["doctools"]
+packages = ["src/doctools"]
+# ⚠ `packages` 只管 wheel。**editable 安装另走一条路**：hatchling 默认往
+# site-packages 写一个指向**项目根**的 .pth（实测 `_editable_impl_doctools.pth`
+# 里就是 `/Users/tianli/Dev/tools/doctools` 整个仓根）。后果是共享的
+# ~/Dev/.venv 里凭空多出 lib / scripts / tools / config / handoffs / reports /
+# schemas / templates 八个顶层可导入名 —— 而 tools/dev、tools/mactools 两个
+# member 共用这个 venv。实测 `import lib` 当场解析到 doctools/lib/__init__.py。
+# dev-mode-exact 改成按文件精确映射，只暴露 doctools 这一个名字。
 
 [tool.uv.sources]
