@@ -56,6 +56,40 @@ except ImportError as e:  # pragma: no cover
 _HERE = Path(__file__).resolve().parent
 
 
+# ─── 版本号（SSOT = 仓根 doctools/__init__.py） ─────────────────────────
+def _pkg_version() -> str:
+    """读仓根 `doctools/__init__.py` 的 `__version__`。
+
+    那一个字面量同时喂三处：`pyproject.toml`（hatchling `[tool.hatch.version]`
+    动态读取）、装出来的 `doctools` 命令、和这里。**别在任何地方抄第二份。**
+
+    走 spec_from_file_location 而不是 `import doctools`，是因为本脚本的主要跑法
+    是 `python3 <abs>/docx_cli.py`（系统 python，没装过包），而把仓根塞进
+    sys.path 会让 `tools/` `lib/` `config/` 这些平铺目录变成 namespace package
+    去遮蔽同名模块 —— 为读一个字符串不值当。
+
+    fail-closed：读不到就 ValueError，不打「unknown」糊弄过去。
+    """
+    init = _HERE.parents[1] / "doctools" / "__init__.py"
+    if init.is_file():
+        spec = importlib.util.spec_from_file_location("_doctools_version_probe", init)
+        if spec is not None and spec.loader is not None:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            v = getattr(mod, "__version__", None)
+            if v:
+                return str(v)
+    # 先读文件、后读包元数据的顺序是有意的：editable 装法下 `uv sync` 不会因为
+    # 版本号变了就重建 dist-info（实测改完 __version__ 再 sync，
+    # `importlib.metadata.version("doctools")` 还停在旧值）。读源文件的这条路
+    # 永远说真话，元数据只当源码树不在旁边时的兜底。
+    try:  # 装成 wheel 后源码树可能不在旁边，退回包元数据（同一个 SSOT 派生的）
+        from importlib.metadata import version as _md_version
+        return str(_md_version("doctools"))
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"版本号 SSOT 读不到（{init}）: {e}") from e
+
+
 # ALL_DOCX_CMDS — for batch-all 编排（外部消费者读此常量）
 ALL_DOCX_CMDS = [
     "extract", "check", "snapshot", "compare", "track",
@@ -332,6 +366,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  docx_cli.py style body X.docx --profile zdwp\n"
             "  docx_cli.py renumber h4-figures X.docx --profile eco-flow\n"
             "  docx_cli.py --batch tasks.jsonl --workers 8 extract\n"
+            "  docx_cli.py --version           # 版本号（装包后等价：doctools --version）\n"
             "\n详见 (script-consolidation GOAL 已随 goals/ 注册表 2026-07-10 退役):\n"
             "  hq_capabilities.yaml doctools.sub_capabilities (子命令清单)"
         ),
@@ -403,6 +438,19 @@ def _register_distilled_subcommands(sub) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
+
+    # 顶层 --version / -V
+    # **故意不注册成 argparse 参数**：tools/cli_surface.py 的等价闸门是逐 action
+    # 比对整棵子命令树，多一个 root action 就会改指纹；而「指纹逐字节不变」是这
+    # 一轮的硬前提。只认第 0 位（那一位不是 subcommand 名就没有别的合法含义），
+    # 所以不会和任何子命令自己的 --version 撞车。
+    if raw and raw[0] in ("-V", "--version"):
+        try:
+            print(f"doctools {_pkg_version()}")
+        except ValueError as e:
+            print(f"[docx_cli.py] {e}", file=sys.stderr)
+            return 2
+        return 0
 
     # 顶层 --help / -h (无 subcommand 时显示)
     if not raw or raw[0] in ("-h", "--help"):

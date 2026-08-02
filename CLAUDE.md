@@ -4,9 +4,38 @@
 
 > **Python venv**：共享于 `~/Dev/.venv`（uv workspace member · 见 `~/Dev/CLAUDE.md` § uv workspace）。本 repo 不建独立 `.venv`。改 deps → 改 `pyproject.toml` + `cd ~/Dev && uv sync`。
 
+## `doctools` 命令：装出来的入口与绝对路径入口**并存**（2026-08-02 立）
+
+`cd ~/Dev && uv sync --all-packages` 会把本 repo 按 editable 装成包，落一个
+`~/Dev/.venv/bin/doctools`。它**不替代**任何东西：
+
+| 敲什么 | 进哪 |
+|---|---|
+| `doctools <sub> …` | `doctools/cli.py` → 同一个 `docx_cli.main()` |
+| `python3 <abs>/scripts/document/docx_cli.py <sub> …` | 同一个 `docx_cli.main()` |
+
+~/Work 有 130 处绝对路径在消费后者，**一处都不用改**。`doctools/cli.py` 里没有任何
+解析或分发逻辑（只做 spec_from_file_location + 调 main），所以两条入口在结构上不可能
+行为漂移 —— 实测同一条 `audit headings` 两边 stdout 逐字节相同。
+
+**版本号 SSOT = `doctools/__init__.py` 的 `__version__`，全仓只此一份。**
+`pyproject.toml` 用 `dynamic = ["version"]` + `[tool.hatch.version] path=` 从该文件读走，
+`docx_cli.py --version` 也读该文件。**禁止在 `pyproject.toml` 里补 `version = "…"`**。
+实证：把它改成 `9.9.9` 后，包元数据 / `doctools --version` / 老路径 `--version` 三处
+一起变；改成非 PEP440 的 `9.9.9-probe` 会让 hatchling 构建直接失败（说明它真在读这个文件）。
+改完版本号要让已装元数据跟上，跑
+`uv pip install -e tools/doctools --no-deps --reinstall`（`uv sync` 不重建 dist-info）。
+
+⚠ **`--version` 故意不是 argparse 参数**，写在 `main()` 里手动拦第 0 位。因为
+`tools/cli_surface.py` 是逐 action 比对整棵子命令树的等价闸门，多注册一个 root action
+就会改指纹。实证：临时改成 `p.add_argument("--version", action="version", …)` 之后
+surface diff 立刻转红并点出 `_VersionAction` 那一节。要加就得先决定是否更新基线，
+别顺手塞。（`--help` 里靠 epilog 一行告知，epilog 不进指纹。）
+
 ## 目录结构
 
 ```
+doctools/          # 可安装包壳：__version__ SSOT + console_script 入口（无业务逻辑）
 scripts/
 ├── document/ (17)    # 文档处理入口（docx_cli/typeset/revise/bid_gate/renum/docx_fmt/md_tools/pptx_cli/pdf_cli/chart…）
 │   └── sub/ (44)     # docx_cli 子命令实现（_groups 声明表 + _function_axis 职能表 +

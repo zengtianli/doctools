@@ -72,9 +72,29 @@ cd ~/Dev && uv sync --all-packages
 
 改 deps → 改本 repo `pyproject.toml` 后重跑上面那行。
 
+同一行 sync 会把本 repo 按 editable 装成包，落一个 `doctools` 命令：
+
+```bash
+~/Dev/.venv/bin/doctools --version        # doctools 0.1.0
+~/Dev/.venv/bin/doctools verbs --fn format
+```
+
+它和绝对路径调用**是并存关系，不是替代** —— `doctools <sub> …` 与
+`python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py <sub> …` 进的是同一个
+`main()`（实测同一条命令两边 stdout 逐字节相同），所以不会有「两个入口行为不一样」
+这种事。~/Work 那 130 处绝对路径不用动。
+
+**版本号 SSOT = `doctools/__init__.py` 的 `__version__`，只此一份**：
+`pyproject.toml` 声明 `dynamic = ["version"]` 由 hatchling 从该文件读走，
+`--version` 也读它。**别在 `pyproject.toml` 里补一行 `version =`** —— 那就又变回
+两处各写一份了。改完版本号要让已装的元数据跟上，得
+`uv pip install -e tools/doctools --no-deps --reinstall`（`uv sync` 不会因为版本号
+变了就重建 dist-info）。
+
 ## docx_cli 子命令族
 
 **总入口**：`python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py <subcommand>`
+（装包后等价：`doctools <subcommand>`）
 
 声明全在 `scripts/document/sub/_groups.py` 的 `GROUPS` 表 —— **加子命令 = 加一行数据，不是加一个文件**。
 

@@ -1,7 +1,10 @@
 [project]
 name = "doctools"
-version = "0.1.0"
-description = "Add your description here"
+# 版本号 SSOT = doctools/__init__.py 的 __version__（hatchling 从那儿读，见
+# [tool.hatch.version]）。docx_cli.py --version 读的也是同一个文件。
+# **这里不许再写一份 version 字面量** —— 两处各写一份正是本仓一直在消灭的形状。
+dynamic = ["version"]
+description = "文档处理与数据转换工具集：docx/md/pdf/pptx 的读-改-审阅-修订-排版，统一入口 docx_cli（93 条动词）"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.135.3",
@@ -23,5 +26,23 @@ dependencies = [
     "uvicorn>=0.44.0",
     "xlrd>=2.0.2",
 ]
+
+# `doctools <sub> …` —— 与 `python3 <abs>/scripts/document/docx_cli.py <sub> …`
+# **并存**，不是替代（~/Work 有 130 处绝对路径在消费后者）。两条入口共用同一个
+# main()，语义不可能漂移。
+[project.scripts]
+doctools = "doctools.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "doctools/__init__.py"
+
+# 只打 doctools/ 这一个包（仓根是 scripts/ lib/ tools/ 这种平铺目录，没有可打的
+# 包树）。member 在 uv workspace 里按 editable 装，壳里的相对定位指回真实工作树。
+[tool.hatch.build.targets.wheel]
+packages = ["doctools"]
 
 [tool.uv.sources]
