@@ -101,7 +101,10 @@ def _brief(names: list[str], n: int = 6) -> str:
 
 def _digests(path: Path) -> dict[str, str]:
     with zipfile.ZipFile(path) as z:
-        names = z.namelist()
+        # zip 目录条目（`word/`、`_rels/` 这类以 / 结尾的零长条目）不是 OOXML 部件。
+        # WPS 写出的 docx 常带这类占位条目，python 侧重打包时不会复现——
+        # 若当部件比对，会把「目录占位没了」误报成「丢失 9 个部件」，属假阳性。
+        names = [n for n in z.namelist() if not n.endswith('/')]
         if not names:
             raise PartIntegrityError(f'{path} 里一个部件都没有——拒绝在空集上报绿')
         return {n: hashlib.sha256(z.read(n)).hexdigest() for n in names}

@@ -174,7 +174,8 @@ class DocxReviewer:
             # 未声明时 find == replace 自动视为 comment_only（替换成同样的字没有意义）。
             comment_only = rule.get("comment_only", replace == rule["find"])
             n = self._apply_one_rule(
-                rule["find"], replace, rule.get("comment"), comment_only
+                rule["find"], replace, rule.get("comment"), comment_only,
+                rule.get("para_index"),
             )
             count += n
         return count
@@ -185,12 +186,24 @@ class DocxReviewer:
         replace: str,
         comment: str | None,
         comment_only: bool = False,
+        para_index=None,
     ) -> int:
+        """para_index：可选，限定只在指定段落序号（body 内 w:p 的 0-based 文档序）
+        上生效。int 或 int 列表。用于 find 文本本身不唯一（如多处同名"小结"标题）
+        而必须逐处区分的场景。省略 = 全文命中，与历史行为一致。"""
         body = self.doc_root.find(qn("w:body"))
         if body is None:
             return 0
+        if para_index is None:
+            scope = None
+        elif isinstance(para_index, int):
+            scope = {para_index}
+        else:
+            scope = set(para_index)
         count = 0
-        for para in body.iter(qn("w:p")):
+        for pi, para in enumerate(body.iter(qn("w:p"))):
+            if scope is not None and pi not in scope:
+                continue
             while True:
                 result = self._find_in_paragraph(para, find)
                 if result is None:
