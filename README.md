@@ -57,11 +57,17 @@ python3 tools/check_docx_collar.py    # 收口 23/23 · 部件断言 16/16，缺
 python3 tools/cli_surface.py          # CLI 接口指纹（126 子命令）
 python3 tools/cli_forward_probe.py    # 67 条内嵌预期 argv 比对（真正转发出去的是什么）
 python3 -m pytest scripts/document/tests scripts/document/sub/tests -q
+python3 -m pytest tests/smoke -q      # 逐条真敲 91 条动词（rc + 源件 md5 双向断言）
+python3 tools/check_smoke_coverage.py # 冒烟表 ↔ CLI 对账：真跑 91 / skip 2 / 共 93
 python3 tools/check_function_axis.py  # 职能轴表 ↔ CLI 对账，缺一条或多一条都判红
 python3 tools/check_external_refs.py   # 全生态引用存在性（已挂 pre-commit --changed-only）
 python3 tools/check_verbs_reachable.py # 每个注册过的顶层子命令敲下去必须真进得去
 python3 tools/script_graph.py --open  # 103 脚本 · 370 引用 · 93 动词 · 0 孤儿（三视图：图谱/清单/动词）
 ```
+
+前四道闸门里没有一道**真的执行过**任何一条子命令 —— 接口指纹对、转发 argv 对、
+职能标签齐，仍然可能每一条敲下去都是坏的。`tests/smoke` 补的就是这一段：
+它是唯一会真敲命令、并检查「跑完源文件该不该变」的一层。
 
 ## 安装
 

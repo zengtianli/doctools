@@ -145,6 +145,42 @@ convert 2 · dispatch 1 = 93 条（另 8 条别名共用同一 parser，不单�
 没有的条目同样判红 —— 两个方向都堵死，这张表才不会变成「还在、只是不准了」。
 别名不占表项：闸门按 `id(parser)` 归组自动认领，别名清单是从真 parser 派生的，不手抄。
 
+## 冒烟轴：每条子命令**真敲一遍**（2026-08-02 立 · 有闸门）
+
+前面那几道闸门（`cli_surface` 接口指纹 · `cli_forward_probe` 转发 argv ·
+`check_function_axis` 职能标签）**没有一道真的执行过任何一条子命令**。三道全绿，
+仍然可能每一条敲下去都是坏的。立表当天实跑 93 条就撞见一例：
+`chapter delete --prefix` 声明了、也忠实转发了，可 `chapter.py` 只认
+`--h1/--h1-text` —— 这个选项从写下那天起不可能生效，前三道闸门全绿。
+
+| 干什么 | 敲什么 |
+|---|---|
+| 表本体（一条动词一行：argv / 预期 rc / 改不改源件 / 备注 / skip 理由） | `tests/smoke/_verb_specs.py` 的 `_ROWS` |
+| 真跑（一条动词一个用例，各自独享新鲜 fixture 副本） | `python3 -m pytest tests/smoke -q` |
+| 覆盖闸门（fail-closed，两个方向都堵） | `python3 tools/check_smoke_coverage.py` |
+| 看表（含 skip 理由 / 可贴文档） | `check_smoke_coverage.py --list` · `--md` |
+| fixture 造件器 | `tests/smoke/_fixture.py`（`python3 tests/smoke/_fixture.py <目录>` 可手工造一份） |
+
+当前 **真跑 91 条 / skip 2 条 / 共 93 条**（skip：`scan-sensitive` 要调 LLM、
+`para render --warm` 要起 soffice 并写 `~/.cache/`；两条都实测能跑，理由写在表里且
+`-rs` 会打印出来）。
+
+**核心断言是 `mutates` 那一列，它是双向的**：`mutates=False` 跑完源 docx 的 md5
+必须没变（抓「只读动词偷偷写盘」），`mutates=True` 必须变了（抓「写盘动词其实没写」，
+即静默空跑 —— rc 照样 0，看输出也像干了活）。注意它问的是**源件**变没变：
+`template` / `audit images` / `table extract` 都写盘，但写的是 `-o`/`--report`/`--out-dir`，
+源件必须一字节不动。
+
+⚠ **`expect_rc` 不都是 0，且与 fixture 内容绑定**：`audit-styleset` 三条 rc=severity(fail=1)、
+`health diagnose|full` rc=健康度(0/1/2)、`para scan-ppr` rc=`3 if suspects else 0`。
+换 fixture 就要重新实测这一列，**不能照抄邻居**。另外 `health diagnose` 的 rc=2 与
+docx_cli 的「参数错误 rc=2」撞码，runner 不能把 2 一律当失败。
+
+**加子命令 = 这里也加一行**（连同 `_function_axis` 那行，一共三处），否则闸门转红并点名；
+表里留了 CLI 已经没有的动词同样判红。`_verb_specs.py` 用 tuple-of-tuples 而非 dict 字面量，
+理由与 `_groups` / `_function_axis` 相同：dict 里写重复键不报错、后一条静默覆盖前一条，
+而那正是「覆盖率看起来是满的、实际少跑一条」的来源。
+
 ## 全仓脚本关系图 = 一页三视图（2026-08-02 扩）
 
 ```bash
