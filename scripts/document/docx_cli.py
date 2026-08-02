@@ -46,10 +46,20 @@ from typing import Any, Callable, Optional
 _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
+# 别的机器上没有 ~/Dev —— 而缺 parallel_contract 在这里是 **fail-closed exit 2**，
+# 不是降级，所以装出来的 wheel 会一条动词都跑不了。wheel 把这个总部 SSOT 镜像到了
+# `<根>/lib/`（见 pyproject 的 force-include），故同源目录也纳入搜索。
+# **append 不是 insert(0)**：`<根>/lib` 里有 styles.py / schemas.py / progress.py 这些
+# 与他处同名的模块，把它顶到 sys.path 首位会改变全进程的解析优先级。这里只是要多一个
+# 兜底来源，不是要提权。本机行为因此完全不变：`<repo>/lib` 没有 parallel_contract.py，
+# 解析照旧落到上面的 _LIB。（形状对齐 scripts/data/data.py 既有先例。）
+_BUNDLED_LIB = Path(__file__).resolve().parents[2] / "lib"
+if str(_BUNDLED_LIB) not in sys.path:
+    sys.path.append(str(_BUNDLED_LIB))
 try:
     from parallel_contract import add_parallel_args, run_batch, parse_batch_jsonl  # type: ignore
 except ImportError as e:  # pragma: no cover
-    print(f"[docx_cli.py] FATAL: cannot import parallel_contract from {_LIB}: {e}", file=sys.stderr)
+    print(f"[docx_cli.py] FATAL: cannot import parallel_contract from {_LIB} / {_BUNDLED_LIB}: {e}", file=sys.stderr)
     sys.exit(2)
 
 # ─── 旧脚本同目录定位 ────────────────────────────────────────────────────

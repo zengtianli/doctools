@@ -47,6 +47,13 @@ from typing import Any, Callable, Optional
 _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
+# 同 docx_cli.py：wheel 里 parallel_contract 镜像在 `<根>/lib/`。这里尤其要接上 ——
+# 下面那个 except 分支是**静默降级**（只留 --workers，丢掉 --batch/--phases/--defer/
+# --fanout-evidence），真走到就等于「同一版 pdf_cli 在两台机器上 flag 面不一样」，
+# 是最难查的一类漂移。append 理由同 docx_cli.py（不改本机解析优先级）。
+_BUNDLED_LIB = Path(__file__).resolve().parents[2] / "lib"
+if str(_BUNDLED_LIB) not in sys.path:
+    sys.path.append(str(_BUNDLED_LIB))
 try:
     from parallel_contract import add_parallel_args  # type: ignore
 except ImportError:

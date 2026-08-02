@@ -181,6 +181,41 @@ docx_cli 的「参数错误 rc=2」撞码，runner 不能把 2 一律当失败�
 理由与 `_groups` / `_function_axis` 相同：dict 里写重复键不报错、后一条静默覆盖前一条，
 而那正是「覆盖率看起来是满的、实际少跑一条」的来源。
 
+### 装出去的 wheel 必须自包含（2026-08-02 立 · 有门）
+
+`scripts/` `lib/` **不在 `src/doctools/` 里**，而 `~/Work` 有 130 处绝对路径钉着它们的
+现有位置，所以不能搬。改用 pyproject 的 `force-include` 在**构建时**把
+`scripts/ lib/ config/ schemas/` 四个根镜像进 `doctools/_bundled/`，
+**工作树一个字节都不动**。`src/doctools/cli.py` 按顺序试两个实现根：
+工作树（editable 装）→ `_bundled/`（wheel 装）。
+
+镜像时**相对深度与工作树完全一致**，所以全仓 40+ 处 `parents[2]/"lib"` /
+`parents[3]/"lib"` 的层数算术在包内原样成立，一处都不用改。
+
+| | |
+|---|---|
+| 自包含门（构建 + 逐文件 sha256 + 仓外 clean venv 实跑） | `python3 tools/check_wheel_selfcontained.py` |
+| 只对账不装（快） | `… --tier struct` |
+| 发版前（补完整依赖安装） | `… --tier full` |
+
+**「两份副本会不会漂」的答案是「仓库里根本没有第二份」**：`_bundled/` 只存在于构建
+产物中，是构建那一刻从工作树 checkout 的逐字节快照。门里那条等式
+（包内文件集 == `git ls-files scripts lib config schemas`，且逐文件 sha256 相同）
+就是这句话的机器判据，**两个方向都查**（多一个/少一个都判红）。
+
+⚠ `cli_surface` / `cli_forward_probe` **看不见包内副本那条分支** —— 它们在工作树里跑，
+命中的永远是第一条。wheel-only 分支唯一的测法就是上面这道门真去装一遍。
+2026-08-02 基线实测：加 force-include 之前 wheel 只有 **7 个文件**，
+clean venv 装完 `doctools --version` 直接 `FATAL: 找不到实现入口` rc=2。
+
+⚠ `parallel_contract`（总部 SSOT，`~/Dev/tools/dev/lib/`）**不在本仓**，而
+`docx_cli.py` 缺它是 **fail-closed exit 2 不是降级** —— wheel 不带它就一条动词都跑不了，
+故一并 force-include 进 `_bundled/lib/`（纯 stdlib，零传递依赖）。
+`docx_cli.py` / `pdf_cli.py` 因此各多**追加**一个 `<根>/lib` 搜索路径
+（**append 不是 insert(0)**，`lib/` 下有 styles.py 等同名模块，提权会改全进程解析优先级；
+形状对齐 `scripts/data/data.py` 既有先例）。本机行为不变：`<repo>/lib` 里没有
+parallel_contract.py，解析照旧落到 `~/Dev/tools/dev/lib`。
+
 ## 全仓脚本关系图 = 一页三视图（2026-08-02 扩）
 
 ```bash

@@ -57,4 +57,32 @@ packages = ["src/doctools"]
 # member 共用这个 venv。实测 `import lib` 当场解析到 doctools/lib/__init__.py。
 # dev-mode-exact 改成按文件精确映射，只暴露 doctools 这一个名字。
 
+# ─── wheel 自包含：把实现打进包，但**不搬它的物理位置** ───────────────────
+# 背景：`packages = ["src/doctools"]` 打出来的 wheel 只有 __init__.py + cli.py 两个壳
+# （实测 7 files / 6229 bytes），而 cli.py 靠 `parents[2]` 指回工作树 —— 装到别的机器上
+# 必然 `FATAL: 找不到实现入口`（2026-08-02 clean venv 实测 rc=2）。
+#
+# `scripts/` `lib/` 不能搬（~/Work 有 130 处绝对路径指着它们），所以用 force-include
+# 在**构建时**把它们镜像进 `doctools/_bundled/`，工作树里一个字节都不动。
+#
+# ⚠ 目标路径的**相对深度必须与工作树一致** —— 全仓 40+ 处 `parents[2]/"lib"`（scripts/
+# document/*.py）与 `parents[3]/"lib"`（sub/*.py）是硬编码的层数算术。`_bundled/` 下
+# scripts 与 lib 仍是兄弟，所以这套算术在包内**原样成立**，一处都不用改。
+# 同理 `lib/styles.py` 要 `parents[1]/"config"`、`lib/schemas.py` 要 `../schemas`，
+# 故这两个根级资源目录也必须进来，否则 styles / schema 校验类动词在别的机器上会瞎。
+#
+# force-include 的源端会走 VCS ignore：实测打进来的 109 个文件与
+# `git ls-files scripts lib config schemas` **逐个对齐**（__pycache__ / templates 自动
+# 落在外面）。这条等式就是「包内副本不会漂」的机器判据，见
+# tools/check_wheel_selfcontained.py。
+[tool.hatch.build.targets.wheel.force-include]
+"scripts" = "doctools/_bundled/scripts"
+"lib" = "doctools/_bundled/lib"
+"config" = "doctools/_bundled/config"
+"schemas" = "doctools/_bundled/schemas"
+# 总部 SSOT，不在本仓。docx_cli.py 缺它是 **fail-closed exit 2**（不是降级），所以
+# wheel 不带它 = 装上也一条动词都跑不了。纯 stdlib、零传递依赖，适合随包走。
+# 仍然只有一份源：这里是构建时从 SSOT 现取的快照，本仓工作树里没有第二份副本。
+"../dev/lib/parallel_contract.py" = "doctools/_bundled/lib/parallel_contract.py"
+
 [tool.uv.sources]
