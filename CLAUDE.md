@@ -194,12 +194,20 @@ pattern(PREFIX_STRIP_FIG).sub("", text)            # 也可直接拿 compiled �
 
 | 什么时候用什么 | |
 |---|---|
-| 回归门（44 条，含 9 种变异实证能抓） | `python3 -m pytest scripts/document/tests/test_caption_re.py` |
+| 回归门（55 条，含 9 种变异实证能抓） | `python3 -m pytest scripts/document/tests/test_caption_re.py` |
 | 想「顺手统一」样式名/关键词三套判据 | **先别** —— 那是给写盘动词扩范围，模块 docstring 写了为什么不合并 |
 
 ⚠ `cli_surface` / `cli_forward_probe` **看不见这层**（那两个只管 argv），改判据必须跑
 上面那个 pytest；改完还要用真 fixture 走一遍 CLI（`renum figures` / `health diagnose` /
 `caption pair` 是三条已知会现形的链）。
+
+**2026-08-02 补一处漏网**：`sub/strip.py` 的 `CAPTION_PATTERN` 与迁移前的
+`styles._CAPTION_PATTERN` 逐字节相同却没跟着搬，于是归并那轮**自己造出一处新分歧** ——
+strip 只认 ASCII `-`，styles 侧已认 5 种。现共用 `STRIP_OUTLINELVL_CAPTION`
+（= `SECTIONED_CAPTION` 同一对象）。实测 `strip outlinelvl` 在 6 种编号的 fixture 上
+从 processed 2/7 变 7/7（U+2011 / U+2013 / U+2014 / U+FF0D / 全角句点 5 条原本漏网、
+`w:outlineLvl` 继续污染 Word 导航窗格）。教训：**「逐字节相同」正是最容易被跳过的那种，
+归并收尾必须按 grep 结果逐条销号，不能靠「看起来都搬完了」**。
 
 ### 全文改写 docx 必走 `lib/docx_xml.py` 的元素级遍历（2026-07-26 立）
 

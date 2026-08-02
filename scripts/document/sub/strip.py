@@ -33,6 +33,10 @@ from docx_parts import (  # noqa: E402  部件完整性断言
 # 不带脚本目录, 裸 import _cli_common 会 ImportError (append 不是 insert(0))
 _sys.path.append(str(_Path(__file__).resolve().parent))
 import _cli_common as _cc  # noqa: E402  家族 main() 样板 SSOT
+# 题注判据 SSOT —— 别在本文件里再手写 `图\s*\d+[-–—]\d+` 这类正则（见 lib/caption_re.py）
+from caption_re import (  # noqa: E402
+    STRIP_OUTLINELVL_CAPTION, pattern as _caption_pattern,
+)
 
 import argparse  # noqa: E402
 import re  # noqa: E402
@@ -1110,7 +1114,8 @@ strip_outlinelvl_from_captions.py
 
 单功能描述
 ----------
-从 docx 中匹配 `^(表|图)\\s*\\d+\\.\\d+-\\d+` 的段移除 ``<w:outlineLvl>`` 子元素,
+从 docx 中匹配「表/图 + 两段章号 + 短横 + 序号」(判据 = caption_re
+``STRIP_OUTLINELVL_CAPTION``)的段移除 ``<w:outlineLvl>`` 子元素,
 让这些 caption 段不再出现在 Word "视图 > 导航窗格"的标题大纲里。
 
 触发场景
@@ -1126,7 +1131,9 @@ CLI
 
 启发规则
 --------
-- 命中: ``re.match(r'^(表|图)\\s*\\d+\\.\\d+-\\d+', paragraph.text.strip())``
+- 命中: ``caption_re.STRIP_OUTLINELVL_CAPTION`` 锚定匹配段文本(strip 后)。
+  = 「表/图 + 章号(两段) + 短横 + 序号」;短横认 5 种(``-`` ``‑`` ``–`` ``—`` ``－``),
+  章号内分隔符认半角与全角句点。判据在 lib/caption_re.py,本文件不写正则。
 - 移除: ``paragraph._p / w:pPr / w:outlineLvl`` 子元素(用 lxml ``pPr.remove(ol)``)
 - 段已无 outlineLvl → skip (no_outlinelvl_skip++)
 
@@ -1144,7 +1151,11 @@ CLI
 - 写前 lsof 自检 Word/WPS 占用, 占用立即退出
 """
 
-CAPTION_PATTERN = re.compile(r'^(表|图)\s*\d+\.\d+-\d+')
+#: 判据来自 lib/caption_re.py 的具名 spec，**不在这里写正则**。
+#: 旧的 `re.compile(r'^(表|图)\s*\d+\.\d+-\d+')` 与迁移前的 `styles._CAPTION_PATTERN`
+#: 逐字节相同，但 2026-08-01 那轮归并漏了它 —— 于是只认 ASCII `-`，
+#: 而 styles 侧已认 5 种短横。补归并后两处重新同源。
+CAPTION_PATTERN = _caption_pattern(STRIP_OUTLINELVL_CAPTION)
 
 
 def scan_and_strip(doc: Document, apply: bool) -> dict:

@@ -82,7 +82,8 @@ __all__ = [
     "NUM_TOKEN_ANY", "NUM_SPLIT_LOOSE", "CAPTION_ANY_CN",
     "TABLE_CAPTION_LINE", "TABLE_CAPTION_APPENDIX", "TABLE_CAPTION_FLAT_SEC",
     "HAS_NUM_FIG", "HAS_NUM_TABLE", "FIG_APPENDIX_PREFIX",
-    "SECTIONED_CAPTION", "TYPESET_FIG_SECTIONED", "TYPESET_FIG_APPENDIX",
+    "SECTIONED_CAPTION", "STRIP_OUTLINELVL_CAPTION",
+    "TYPESET_FIG_SECTIONED", "TYPESET_FIG_APPENDIX",
     "TABLE_NAME_HEURISTIC", "PREFIX_STRIP_FIG", "PREFIX_STRIP_TBL",
     "IMG_FIG_PREFIX", "IMG_TBL_PREFIX", "KIND_PREFIX_FIG", "KIND_PREFIX_TABLE",
     "BID_STRICT_CAPTION", "BID_REF_LOOSE",
@@ -372,6 +373,23 @@ FIG_APPENDIX_PREFIX = CaptionSpec(kinds=("图",), appendix="only")
 
 #: styles `style caption`：**有意只认章节式三段**。放宽 = 给写盘动词偷加范围。
 SECTIONED_CAPTION = CaptionSpec(sec_min_depth=2, sec_max_depth=2)
+
+#: strip `outlinelvl`：从「章节式三段题注」段上摘掉 ``w:outlineLvl``（清 Word 导航
+#: 大纲污染）。口径**与 SECTIONED_CAPTION 完全一致**，所以直接共用同一个对象而不是
+#: 复制一份参数 —— 两者都是「只认 `表3.1-1` 三段式」的写盘范围，理由也是同一条。
+#:
+#: 为什么单列一个名字：2026-08-01 那轮归并把 `styles._CAPTION_PATTERN` 搬成了
+#: `SECTIONED_CAPTION`，却漏了 `sub/strip.py` 里**逐字节相同**的那份
+#: ``re.compile(r'^(表|图)\s*\d+\.\d+-\d+')``，于是当场造出一处**新的**分歧：
+#: strip 只认 ASCII `-`，styles 侧经本模块之后认 5 种短横。名字挂上去 = 这个调用点
+#: 在 spec 清单里可见，下次再有人动 SECTIONED_CAPTION 会看见它有两个消费者。
+#:
+#: 归并带来的范围变化（2026-08-01 拿 6 种编号的真 fixture 走 CLI 实测）：原来
+#: 7 条题注只认出 2 条，U+2011/U+2013/U+2014/U+FF0D 四种短横 + 全角句点 `．`
+#: 共 5 条漏网、`w:outlineLvl` 留在文档里继续污染导航窗格；归并后 7 条全中。
+#: 这是**扩大**写盘范围，但扩大的正好是 bug 面（同一批题注只因短横字符不同而被
+#: 区别对待），不是给动词加新职能。
+STRIP_OUTLINELVL_CAPTION = SECTIONED_CAPTION
 
 #: typeset `shot-center-images`：PDF 文本层挑含图页，同样有意只认三段。
 TYPESET_FIG_SECTIONED = CaptionSpec(

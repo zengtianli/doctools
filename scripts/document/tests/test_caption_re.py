@@ -276,6 +276,81 @@ def test_renum_verify_cn_reports_double_numbering(tmp_path):
     assert zipfile.is_zipfile(clean)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# strip outlinelvl —— 2026-08-01 归并漏掉的最后一处，补进来之后的三条守卫
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_strip_outlinelvl_shares_the_sectioned_spec_object():
+    """结构性断言：strip 用的**就是** SECTIONED_CAPTION 那个对象，不是复制一份参数。
+
+    复制一份参数今天等价、明天就是下一次分歧 —— 上一轮漏掉这处的成本正是如此。
+    """
+    assert C.STRIP_OUTLINELVL_CAPTION is C.SECTIONED_CAPTION
+
+
+#: 只查**真正编译/执行**的正则字面量。散文（`_DOC_*` 的 --help 文本、注释里描述
+#: 判据）不在管辖范围 —— 那些不影响行为，拿它们判红只会逼人把文档写含糊。
+_RE_FUNCS = {"compile", "match", "search", "fullmatch", "findall", "finditer", "sub", "subn"}
+
+
+def _live_regex_literals(path: Path) -> list[str]:
+    import ast
+    out = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+        if name not in _RE_FUNCS or not node.args:
+            continue
+        a0 = node.args[0]
+        if isinstance(a0, ast.Constant) and isinstance(a0.value, str):
+            out.append(a0.value)
+    return out
+
+
+def test_strip_outlinelvl_module_has_no_local_caption_regex():
+    """`sub/strip.py` 里不许再有**在跑的**手写题注正则（本轮修的就是这一条）。"""
+    path = ROOT / "scripts" / "document" / "sub" / "strip.py"
+    bad = [s for s in _live_regex_literals(path) if re.search(r"[图表]", s)]
+    assert not bad, f"strip.py 里又长出手写题注正则: {bad}"
+
+
+def test_strip_outlinelvl_pattern_is_the_compiled_spec():
+    """CAPTION_PATTERN 必须是 spec 编译出来的那一个，不是碰巧写得一样的字面量。"""
+    import importlib.util
+    sub_dir = ROOT / "scripts" / "document" / "sub"
+    sys.path.insert(0, str(sub_dir))
+    sys.path.insert(0, str(ROOT / "lib"))
+    spec = importlib.util.spec_from_file_location(
+        "strip_under_test", sub_dir / "strip.py")
+    strip = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(strip)
+    assert strip.CAPTION_PATTERN is C.pattern(C.STRIP_OUTLINELVL_CAPTION)
+
+
+@pytest.mark.parametrize("dash", ALL_DASHES)
+def test_strip_outlinelvl_catches_every_dash(dash):
+    """5 种短横一视同仁。
+
+    补归并前只认 ASCII `-`：真 fixture 7 条题注只 processed 2 条，另 5 条
+    （U+2011 / U+2013 / U+2014 / U+FF0D + 全角句点章号）的 ``w:outlineLvl``
+    留在文档里继续污染 Word 导航窗格。
+    """
+    assert C.pattern(C.STRIP_OUTLINELVL_CAPTION).match(f"表3.1{dash}1 水量统计表")
+    assert C.pattern(C.STRIP_OUTLINELVL_CAPTION).match(f"图3．1{dash}6 全角句点章号")
+
+
+@pytest.mark.parametrize("text", [
+    "3.1 这是真章节标题，不是题注",   # 无种类字 → 不许碰（H1-H4 的 outlineLvl 是合法的）
+    "表3-1 扁平编号表",              # 只有一段章号 → 本档有意只认三段
+    "图书馆3.1-1 不是题注",          # 种类字后面必须直接跟编号
+])
+def test_strip_outlinelvl_scope_did_not_widen_beyond_dashes(text):
+    """扩大的只该是短横/句点字符类，**不该**顺手把别的段收进写盘范围。"""
+    assert C.pattern(C.STRIP_OUTLINELVL_CAPTION).match(text) is None
+
+
 def _make_docx(dirpath: Path, captions: list[str]) -> Path:
     """最小 docx fixture（走 python-docx，收口由 lib/docx_safe_save 自动介入）。"""
     sys.path.insert(0, str(ROOT / "lib"))
