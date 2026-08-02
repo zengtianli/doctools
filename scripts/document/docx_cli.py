@@ -464,24 +464,28 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub_cmd: Optional[str] = None
     rest: list[str] = []
     i = 0
-    # Distilled top-level groups (12+) — argparse handles their internals
+    # 顶层组名**从 parser 派生**，不手维护（2026-08-02 立）。
+    #
+    # 这里原来是一份手抄的 29 个名字的 set。它和 `_build_parser()` 里真正注册的
+    # 49 个顶层名是两份需要人肉同步的东西，于是漏了 4 个：
+    # `fix`(7 条) / `seqdiff`(2) / `compare-ref`(1) / `revise-rules`(1)。
+    # 后果不是报错，是**静默无操作**：这 11 条动词（占 93 条的 12%）走到下面
+    # 「未知顶层 token」分支 → top_p 是 add_help=False + parse_known_args 不报错 →
+    # sub_cmd 仍是 None → 打印根 help、**rc=0、不写盘、不报错**。
+    # `docx_cli.py fix clear-direct-format X.docx --inplace` 敲下去看着像跑了，
+    # 其实连备份都没产生。而 check_function_axis(93 条) 与 cli_forward_probe(67 条)
+    # 当时 rc 全 0 —— 闸门绿着，1/8 的动词是死的。
+    #
+    # 派生之后这类漏同步在结构上不可能再发生。机检：tools/check_verbs_reachable.py。
     DISTILLED_GROUPS = {
-        "audit", "audit-styleset", "styleset", "freeze", "strip", "header-footer", "chapter",
-        "renumber", "caption", "blocks", "outline", "style", "image", "legacy",
-        "pipeline", "health", "health-split",
-        "section",    # section read/list (distilled from panan-rigid, 2026-05-26)
-        "md-merge",   # merge MD content into DOCX section (distilled from panan-rigid, 2026-05-26)
-        "md-merge-track",  # MD→track-changes 锚点前插 (上提 reclaim merge-tracked, GOAL 0-B 2026-05-29)
-        "table",      # table structural ops: delete-rows / borders / center (W4 distill, 2026-05-26)
-        "fonts",      # 字体/标题色规整: normalize (distilled reclaim 节水年会征文, 2026-06-21)
-        "split",      # split docx by-h1 (eco-flow/taizhou-天台 distill, W1 2026-05-26)
-        "combine",    # combine N docx → 1 (docxcompose; inverse of split by-h1, 2026-06-07)
-        "chapters-sync",  # 成品 docx 反向回写成品章节目录 (merge 的逆操作; govern 2026-06-08)
-        "slim",       # docx-slim: safe ensemble + aggressive minimal skeleton (W 2026-05-28)
-        "chrome",     # 院报告版面装帧: 逐章分节+逐章页眉页脚水印+宽表横向节 (eco-flow distill, 2026-06-04)
-        "para",       # 段落级 查-改-验 工作台: locate/inspect/edit/fix-ppr/scan-ppr/render (context11 distill, 2026-07-03)
-        "verbs",      # 只读: 列子命令职能轴 (sub/_function_axis.py, 2026-08-01)
+        name
+        for a in parser._actions
+        if isinstance(a, argparse._SubParsersAction)
+        for name in a.choices
     }
+    if not DISTILLED_GROUPS:            # fail-closed：一个都没派生出来 = 判据坏了
+        print("[docx_cli.py] 内部错误：顶层子命令表为空", file=sys.stderr)
+        return 2
     while i < len(raw):
         tok = raw[i]
         if sub_cmd is None:
@@ -515,6 +519,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     if sub_cmd is None:
+        # 裸敲 `docx_cli.py` = 求助，打 help 返 0。
+        # 但**给了个不认识的子命令**必须是错误 —— 原来这两种情况共用一个出口，
+        # 于是 `docx_cli.py bogusxyz` 也是「打印 help + rc=0」，
+        # 脚本里 `docx_cli.py <拼错的动词> && echo 成功` 会一路报成功（2026-08-02 实测）。
+        unknown = [t for t in top_argv if not t.startswith("-")]
+        if unknown:
+            print(f"[docx_cli.py] 未知子命令: {unknown[0]!r}", file=sys.stderr)
+            print(f"  可用: {', '.join(sorted(set(CMD_TABLE) | DISTILLED_GROUPS))}",
+                  file=sys.stderr)
+            return 2
         parser.print_help()
         return 0
 
