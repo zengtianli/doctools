@@ -41,12 +41,13 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools"]
+SCAN = [ROOT / "scripts", ROOT / "lib", ROOT / "tools", ROOT / "doctools"]
 
 # 顶层 CLI = 人直接敲的入口，入度 0 也不算孤儿
 ENTRIES = {"docx_cli", "pdf_cli", "doc_dispatch", "typeset_pipeline", "doc_gui_backend",
            "pptx_cli", "md_tools", "script_graph", "blast_radius",
-           "check_docx_collar", "_inventory",
+           "check_docx_collar", "check_verbs_reachable", "_inventory",
+           "cli",   # doctools/cli.py = console_script 入口（装出来的 `doctools` 命令）
            # 2026-07-30 登记：spec 引擎入口 + 两个等价闸门
            "typeset_apply", "cli_surface", "cli_forward_probe"}
 

@@ -23,7 +23,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = ROOT / "scripts"
+# 判据 1 的扫描根**必须含 lib/**（2026-08-02 补）。原来只有 scripts/，于是 lib/ 下
+# 「import python-docx + .save() + 无收口」这一格是个三不管：判据 1 扫不到、
+# 判据 2 只管 ZipFile、判据 3 又主动让开（见下面那句 continue）。实测注入
+# lib/_zz_libsaver.py（带 docx import 的裸存盘）守卫报 rc=0 —— 而 lib/ 正是本仓
+# CLAUDE.md 钦定的公共模块层，「把存盘抽进公共层」恰恰是最该被守住的动作。
+SCAN_ROOTS = [ROOT / "scripts", ROOT / "lib", ROOT / "doctools"]
+# `doctools/` 是 2026-08-02 新建的可安装包壳。它当时落在**所有**闸门的扫描根之外，
+# 往里放一个裸存盘 docx 的脚本五道门全绿 —— 「壳里不放业务逻辑」那条规矩
+# 当时只写在 docstring 里，没有任何机器层兜着（铁律 #13）。
+SCAN = SCAN_ROOTS[0]        # 兼容既有引用
 
 # 只认 python-docx 本尊：`import docx` / `from docx import` / `from docx.xxx import`。
 # 禁写成 docx[\w.]*——那会把自家 docx_parts/docx_xml/docx_safe_save 的 import 也判成
@@ -94,11 +103,12 @@ EXEMPT_DIR = re.compile(r"/tests?/|/_backup[-\w]*/|/_archive/|/archives?/")
 
 
 def offenders() -> tuple[list[Path], list[Path]]:
-    if not SCAN.is_dir():
-        print(f"⛔ 扫描根不存在: {SCAN} —— 拒绝在空集上报通过", file=sys.stderr)
+    missing = [r for r in SCAN_ROOTS if not r.is_dir()]
+    if missing:
+        print(f"⛔ 扫描根不存在: {missing} —— 拒绝在空集上报通过", file=sys.stderr)
         raise SystemExit(2)
     need, bad = [], []
-    for p in sorted(SCAN.rglob("*.py")):
+    for p in sorted(q for r in SCAN_ROOTS for q in r.rglob("*.py")):
         if EXEMPT_DIR.search(str(p)) or p.name.startswith("test_"):
             continue
         src = p.read_text(encoding="utf-8", errors="replace")
@@ -114,16 +124,24 @@ def offenders() -> tuple[list[Path], list[Path]]:
     return need, bad
 
 
-def _repo_files(roots: list[Path]) -> dict[str, Path]:
-    """stem → 路径。同名取先扫到的（与 script_graph 同口径）。"""
-    out: dict[str, Path] = {}
+def _repo_files(roots: list[Path]) -> list[Path]:
+    """要检查的全部文件。
+
+    ⚠ **按路径列全，不能按 stem 去重**（2026-08-02 修）。原来是
+    `out.setdefault(p.stem, p)`，于是同名文件只留先扫到的那个：
+    `lib/styles.py`（被 `sub/styles.py` 顶掉）、`lib/docx_revise.py`（被
+    `scripts/document/docx_revise.py` 顶掉）、`lib/__init__.py` 三个文件
+    **整个从判据 3 的视野里消失** —— 往 lib/styles.py 里加一处裸 `.save()`
+    守卫照样报绿。stem 去重只该用在「解析 import 名字」那一步，不该用在「谁要被检查」。
+    """
+    out: list[Path] = []
     for root in roots:
         if not root.is_dir():
             continue
         for p in sorted(root.rglob("*.py")):
             if EXEMPT_DIR.search(str(p)) or p.name.startswith("test_"):
                 continue
-            out.setdefault(p.stem, p)
+            out.append(p)
     return out
 
 
@@ -134,26 +152,26 @@ def chain_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
     脚本调用的存盘 helper」，那是正常状态。
     """
     files = _repo_files(roots)
-    src_of = {stem: p.read_text(encoding="utf-8", errors="replace") for stem, p in files.items()}
+    src_of = {p: p.read_text(encoding="utf-8", errors="replace") for p in files}
 
-    # 正向：谁 import 了谁（只认能在本仓解析到的 stem）
-    imports: dict[str, set[str]] = {}
-    for stem, src in src_of.items():
-        got = set()
+    # stem → **全部**同名文件（不是只留一个）。import 名字解析必然有歧义，
+    # 遇到歧义就把边加给所有候选 —— 宁可多连一条边，也不许把某个文件从图里抹掉。
+    by_stem: dict[str, list[Path]] = {}
+    for p in files:
+        by_stem.setdefault(p.stem, []).append(p)
+
+    # 反向：谁被谁 import
+    rev: dict[Path, set[Path]] = {p: set() for p in files}
+    for p, src in src_of.items():
         for m in IMPORT_ANY.finditer(src):
             name = (m.group(1) or m.group(2) or "").split(".")[-1]
-            if name in files and name != stem:
-                got.add(name)
-        imports[stem] = got
-    # 反向：谁被谁 import
-    rev: dict[str, set[str]] = {s: set() for s in files}
-    for stem, deps in imports.items():
-        for d in deps:
-            rev[d].add(stem)
+            for target in by_stem.get(name, ()):
+                if target != p:
+                    rev[target].add(p)
 
-    def reached_by_docx(stem: str) -> bool:
+    def reached_by_docx(start: Path) -> bool:
         """自己或任何（传递的）上游使用方 import 了 python-docx。"""
-        seen, stack = {stem}, [stem]
+        seen, stack = {start}, [start]
         while stack:
             cur = stack.pop()
             if IMPORTS_DOCX.search(src_of[cur]):
@@ -165,13 +183,13 @@ def chain_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
         return False
 
     need, bad = [], []
-    for stem, p in files.items():
-        src = src_of[stem]
+    for p in files:
+        src = src_of[p]
         if not SAVE_CALL.search(src):
             continue
         if IMPORTS_DOCX.search(src):
-            continue                      # 已由第一判据管着，不重复点名
-        if not reached_by_docx(stem):
+            continue                      # 已由第一判据管着（判据 1 现在也扫 lib/）
+        if not reached_by_docx(p):
             continue                      # 存的不是 docx（xlsx/图片/json…），不管
         need.append(p)
         if not COLLAR.search(src):
