@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="html_render.py v3 (cc/html · layout=doc)">
+<title>doctools 现状 · 99 个脚本 / 93 条动词 / 6 道闸门</title>
+<style>
+:root{
+  --bg:#ffffff; --panel:#f7f8fa; --panel2:#f0f2f5; --border:#d9dee3; --hairline:#e9edf1;
+  --fg:#1f2329; --dim:#59636e; --faint:#8a939e;
+  --accent:#5469d4;
+  --green:#1a7f37; --blue:#0969da; --purple:#6639ba; --orange:#bc4c00;
+  --red:#cf222e; --yellow:#9a6700; --cyan:#1b7c83;
+  --mono:'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+  --sans:-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Segoe UI', sans-serif;
+  /* 标题字体分层(借 frontend-slides 设计令牌思路): 标题用更有性格的 display 栈,正文留 --sans。
+     全 macOS 本地字体,零 CDN/零外链(self-contained 守则)。theme: 可整套覆写,见 THEMES。 */
+  --display:'Optima', 'Avenir Next', 'PingFang SC', -apple-system, 'Helvetica Neue', sans-serif;
+  /* back-compat aliases (legacy var names used by injected blocks / old raw-html) */
+  --bg-card:var(--panel); --bg-elevated:var(--panel2); --text:var(--fg);
+  --text-dim:var(--dim); --text-bright:var(--fg); --accent-dim:#3b50c4;
+  --mute:var(--dim); --link:var(--accent); --amber:var(--yellow);
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{margin:0; padding:0; background:var(--bg); color:var(--fg);
+  font-family:var(--sans); line-height:1.75; font-size:15px;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;}
+a{color:var(--accent); text-decoration:none;} a:hover{text-decoration:underline;}
+img{max-width:100%; height:auto; border-radius:6px;}
+hr{border:none; border-top:1px solid var(--hairline); margin:36px 0;}
+p{margin:12px 0;}
+ul,ol{margin:12px 0; padding-left:24px;} li{margin:5px 0;}
+h1,h2,h3,h4,h5,h6{color:var(--fg); scroll-margin-top:32px; line-height:1.35; font-family:var(--display);}
+strong{font-weight:600;}
+code{font-family:var(--mono); font-size:12.6px; color:#4c51bf;
+  background:#f4f5fb; padding:1.5px 5px; border-radius:4px;}
+pre{background:var(--panel); border:1px solid var(--hairline); padding:14px 16px;
+  border-radius:8px; overflow-x:auto; font-family:var(--mono); font-size:12.6px;
+  line-height:1.6; color:var(--fg);}
+pre code{color:var(--fg); background:transparent; padding:0; font-size:inherit;}
+blockquote{border-left:2px solid var(--border); margin:16px 0; padding:2px 0 2px 16px; color:var(--dim);}
+blockquote p:first-child{margin-top:0;} blockquote p:last-child{margin-bottom:0;}
+/* base table — booktabs 风: 无底色块/无外框,细横线;短列 nw 单行,长列自然换行。
+   禁止任何列 width:100% (旧 grow 算法的竖条塌缩教训) */
+table{width:100%; border-collapse:collapse; margin:20px 0; font-size:13.5px; line-height:1.6;}
+th{text-align:left; font-size:12px; font-weight:600; color:var(--dim);
+  padding:0 18px 8px 0; border-bottom:1px solid #b9c2cb; white-space:nowrap; position:relative;}
+td{padding:9px 18px 9px 0; vertical-align:top; border-bottom:1px solid var(--hairline); overflow-wrap:anywhere;}
+th:last-child,td:last-child{padding-right:0;}
+td.nw,th.nw{white-space:nowrap;}
+/* legacy class no-ops (老产物里可能残留) */
+td.grow,th.grow,td.tok,th.tok{width:auto; white-space:normal; max-width:none;}
+.col-resize{position:absolute; top:0; right:0; width:6px; height:100%; cursor:col-resize; user-select:none; z-index:2;}
+.col-resize:hover{background:var(--accent); opacity:.4;}
+/* callout (raw-html or quote-derived) — 细左线 + 极淡底,无渐变 */
+.callout{border-radius:6px; padding:12px 16px; margin:18px 0; font-size:14px; border-left:3px solid var(--border); background:var(--panel);}
+.callout.rec{border-left-color:var(--green); background:rgba(26,127,55,.05);}
+.callout.danger{border-left-color:var(--red); background:rgba(207,34,46,.05);}
+.callout.info{border-left-color:var(--accent); background:rgba(84,105,212,.05);}
+.callout.star{border-left-color:var(--purple); background:rgba(102,57,186,.05);}
+.callout b,.callout strong{color:var(--fg);}
+/* inline color helpers */
+.g{color:var(--green)} .b{color:var(--blue)} .p{color:var(--purple)}
+.o{color:var(--orange)} .r{color:var(--red)} .y{color:var(--yellow)} .c{color:var(--cyan)}
+.mono{font-family:var(--mono)}
+.sid-chip{font-family:var(--mono); font-size:11px; color:var(--faint); background:var(--panel2);
+  padding:2px 6px; border-radius:3px; margin-left:6px; user-select:all;}
+/* 注入式 provenance 页脚(body 末尾,在内容列外)对齐正文宽度,禁全宽通栏 */
+#cc-session-footer{max-width:720px; margin-left:auto; margin-right:auto; margin-bottom:32px;}
+
+
+.page{max-width:720px; margin:0 auto; padding:56px 24px 32px;}
+/* 基础态在前、media 覆盖在后(同优先级靠源顺序,反过来写=宽屏永远 display:none,
+   TOC 不占格、article 掉进 200px 轨 → 2026-06-12 实犯,整页挤成窄缝) */
+nav.toc{display:none; position:sticky; top:48px; max-height:calc(100vh - 96px);
+  overflow-y:auto; font-size:12.5px; padding:4px 0;}
+@media(min-width:1140px){
+  .page.has-toc{display:grid; grid-template-columns:200px minmax(0,720px); gap:64px;
+    max-width:1032px; align-items:start;}
+  .page.has-toc nav.toc{display:block;}
+  .page.has-toc article{grid-column:2;}
+}
+nav.toc .toc-t{font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 10px;}
+nav.toc a{display:block; color:var(--dim); line-height:1.45; padding:4px 0 4px 12px;
+  border-left:1px solid var(--hairline);}
+nav.toc a.l3{padding-left:26px; font-size:12px;}
+nav.toc a:hover{color:var(--fg); text-decoration:none;}
+nav.toc a.on{color:var(--accent); border-left:2px solid var(--accent); padding-left:11px; font-weight:500;}
+nav.toc a.l3.on{padding-left:25px;}
+.eyebrow{font-size:12.5px; color:var(--faint); margin:0 0 10px;}
+.eyebrow .sep{margin:0 7px;}
+article h1{font-size:27px; font-weight:650; letter-spacing:-.01em; margin:0 0 10px; line-height:1.3;}
+.meta-nav{font-size:13px; margin:0 0 8px;}
+.meta-nav a{color:var(--dim); margin-right:14px;}
+.meta-nav a:hover{color:var(--accent);}
+article h2{font-size:19px; font-weight:650; letter-spacing:-.005em;
+  margin:46px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--hairline);}
+article h3{font-size:16px; font-weight:600; margin:30px 0 8px;}
+article h4{font-size:14.5px; font-weight:600; margin:20px 0 6px;}
+.facts{display:flex; flex-wrap:wrap; gap:12px 44px; margin:26px 0 10px; padding:16px 0;
+  border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline);}
+.fact{display:block; color:var(--fg); text-decoration:none; min-width:0;}
+.fact .v{display:block; font-size:19px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.3;}
+.fact .l{display:block; font-size:12px; color:var(--dim); margin-top:1px;}
+.fact .d{display:block; font-size:11.5px; color:var(--faint); margin-top:1px;}
+a.fact:hover{text-decoration:none;} a.fact:hover .v{color:var(--accent);}
+section.related{margin-top:56px;}
+section.related h2{font-size:12px; font-weight:600; color:var(--faint); text-transform:uppercase;
+  letter-spacing:.07em; border:none; margin:0 0 8px; padding:0;}
+section.related ul{margin:0; padding-left:20px;} section.related li{margin:3px 0; font-size:13.5px;}
+footer.doc{margin-top:64px; padding-top:14px; border-top:1px solid var(--hairline);
+  color:var(--faint); font-size:12px;}
+footer.doc code{color:var(--faint); background:transparent; padding:0; font-size:11.5px;}
+
+</style>
+
+<meta name="cc-session" content="d2f1d81d-29f7-4b4c-8f68-a990b9492666">
+<meta name="cc-generated" content="2026-08-02T04:40:11-07:00">
+<meta name="cc-cwd" content="/Users/tianli/Dev/tools/doctools">
+<style>
+  #cc-session-badge{position:fixed;top:0;right:0;background:var(--panel,#161b22);color:var(--dim,#8b949e);border-left:1px solid var(--border,#30363d);border-bottom:1px solid var(--border,#30363d);padding:4px 10px;font:11px "SF Mono",Monaco,monospace;z-index:9998;border-radius:0 0 0 6px}
+  #cc-session-badge a{color:var(--link,#58a6ff);text-decoration:none}
+  #cc-session-badge a:hover{text-decoration:underline}
+  #cc-session-badge .copy-sid{cursor:pointer;color:var(--green,#3fb950);margin-left:6px;user-select:none}
+  #cc-session-footer{margin-top:40px;padding:16px 20px;background:var(--panel,#161b22);border:1px solid var(--border,#30363d);border-top:2px solid var(--green,#3fb950);border-radius:6px;font:12px "SF Mono",Monaco,monospace;color:var(--dim,#8b949e)}
+  #cc-session-footer .row{margin:3px 0}
+  #cc-session-footer .label{color:var(--purple,#bc8cff);display:inline-block;min-width:90px}
+  #cc-session-footer code{background:var(--panel2,#21262d);padding:1px 6px;border-radius:3px;color:var(--fg,#c9d1d9);font-size:11px}
+  #cc-quote-tip{position:fixed;z-index:9999;background:var(--panel,#161b22);border:1px solid var(--green,#3fb950);border-radius:6px;padding:6px 12px;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:var(--green,#3fb950);cursor:pointer;display:none;box-shadow:0 4px 12px rgba(0,0,0,.5);user-select:none;font-weight:600}
+  #cc-quote-tip:hover{background:var(--green,#3fb950);color:var(--bg,#0d1117)}
+  #cc-quote-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--green,#3fb950);color:var(--bg,#0d1117);padding:10px 24px;border-radius:6px;font:14px -apple-system,sans-serif;font-weight:600;display:none;z-index:10000;box-shadow:0 4px 16px rgba(0,0,0,.6)}
+  @media print{#cc-session-badge,#cc-quote-tip,#cc-quote-toast{display:none!important}}
+</style>
+</head>
+<body>
+<div id="cc-session-badge">
+  CC session
+  <a href="#cc-session-footer" title="点击跳到溯源 footer">d2f1d81d</a>
+  <span class="copy-sid" data-sid="d2f1d81d-29f7-4b4c-8f68-a990b9492666" title="复制完整 UUID">⧉</span>
+</div>
+
+<div class="page has-toc"><nav class="toc"><p class="toc-t">本页目录</p><a href="#一-脚本数-99">一、脚本数：99</a><a href="#二-cli-面-126-条子命令-93-条真动词-8-别名-组父节点">二、CLI 面：126 条子命令 = 93 条真动词 + 8 别名 + 组父节点</a><a class="l3" href="#职能轴分布">职能轴分布</a><a href="#三-闸门状态-6-道全绿-本页数字即由它们产出">三、闸门状态：6 道全绿（本页数字即由它们产出）</a><a href="#四-两处与文档的口径差-已核实非问题">四、两处与文档的口径差，已核实非问题</a><a href="#五-这条改造线的账-133-92-99">五、这条改造线的账：133 → 92 → 99</a><a class="l3" href="#文件层面已经减不动了">文件层面已经减不动了</a><a href="#六-目录不重构-2026-08-01-已拍板">六、目录不重构（2026-08-01 已拍板）</a><a href="#七-仍然挂账的一条">七、仍然挂账的一条</a></nav><article><p class="eyebrow"><span>doctools</span><span class="sep">·</span><span>2026-08-02</span></p><h1>doctools 现状 · 99 个脚本 / 93 条动词 / 6 道闸门</h1><div class="facts"><div class="fact"><span class="v">99</span><span class="l">脚本</span></div><div class="fact"><span class="v">93</span><span class="l">可跑动词</span></div><div class="fact"><span class="v">41</span><span class="l">只碰版式的动词</span></div><div class="fact"><span class="v">6 / 6 绿</span><span class="l">闸门</span></div></div><h2 id="一-脚本数-99">一、脚本数：99</h2>
+<table><thead><tr><th>层</th><th class="nw">数</th><th>是什么</th></tr></thead><tbody><tr><td><code>scripts/document/</code></td><td class="nw">17</td><td>入口脚本（<code>docx_cli</code> 总入口 + 16 个直敲入口）</td></tr><tr><td><code>scripts/document/sub/</code></td><td class="nw">44</td><td>子命令实现（含 <code>_groups</code> 声明表 + <code>_function_axis</code> 职能表）</td></tr><tr><td><code>scripts/data/</code></td><td class="nw">5</td><td>数据转换（xlsx 族 + convert）</td></tr><tr><td><code>lib/</code></td><td class="nw">16</td><td>公共库（收口 / 手术引擎 / 元素级遍历 / 判据 SSOT）</td></tr><tr><td><code>tools/</code></td><td class="nw">7</td><td>闸门与图（collar · surface · probe · axis · xref · graph · blast_radius）</td></tr><tr><td><code>tests/</code> ×2</td><td class="nw">10</td><td>9 个测试文件 + 1 个 <code>__init__.py</code>，共 202 个用例</td></tr></tbody></table>
+<p>另有 <code>handoffs/_inventory.py</code>（盘点脚本自身），不计入 99，<code>script_graph</code> 也不数它。</p>
+<h2 id="二-cli-面-126-条子命令-93-条真动词-8-别名-组父节点">二、CLI 面：126 条子命令 = 93 条真动词 + 8 别名 + 组父节点</h2>
+<p><strong>三个数都对，报的时候必须说明口径</strong>：<code>cli_surface</code> 数的是节点总数 <strong>126</strong>（含 <code>audit</code> / <code>strip</code> 这类组父节点）；叶子路径 101；按 <code>id(parser)</code> 去重后 <strong>93</strong> 条可跑动词，其余 8 条是别名（<code>read</code>=extract · <code>diff</code>=compare · <code>styleset *</code>=audit-styleset *）。</p>
+<h3 id="职能轴分布">职能轴分布</h3>
+<table><thead><tr><th class="nw">职能</th><th class="nw">条数</th><th>碰的是什么</th></tr></thead><tbody><tr><td class="nw"><code>format</code></td><td class="nw">41</td><td>只碰版式：样式 / 字体 / 段落属性 / 页眉页脚 / 分节 / 编号与题注号 / 大纲层级 / 表格边框 / 装帧 / 样式集</td></tr><tr><td class="nw"><code>inspect</code></td><td class="nw">28</td><td>只读检查审计，不写盘</td></tr><tr><td class="nw"><code>content</code></td><td class="nw">15</td><td>碰正文写了什么：删段 / 改文字 / 合并拆分 / 回写章节 / 挪段落块 / 资源重挂</td></tr><tr><td class="nw"><code>review</code></td><td class="nw">6</td><td>审阅修订：<code>w:ins</code> / <code>w:del</code> / 批注 / 版本对照</td></tr><tr><td class="nw"><code>convert</code></td><td class="nw">2</td><td>跨格式转换</td></tr><tr><td class="nw"><code>dispatch</code></td><td class="nw">1</td><td>调度编排</td></tr></tbody></table>
+<p><strong>「只处理格式的脚本有哪些」现在是一条命令查得出的事实，不是一份会过期的名单：</strong></p>
+<pre><code class="lang-bash">python3 scripts/document/docx_cli.py verbs --fn format   # 41 条
+python3 scripts/document/docx_cli.py verbs               # 全部 93 条按 6 档分组</code></pre>
+<p>职能只有这 6 个值，别自创第七个。表在 <code>sub/_function_axis.py</code>，<code>tools/check_function_axis.py</code> 双向对账——<strong>新加子命令不打标签判红，表里留了 CLI 已没有的条目同样判红</strong>。</p>
+<h2 id="三-闸门状态-6-道全绿-本页数字即由它们产出">三、闸门状态：6 道全绿（本页数字即由它们产出）</h2>
+<table><thead><tr><th>闸门</th><th>管什么</th><th>刚跑的结果</th></tr></thead><tbody><tr><td><code>check_docx_collar.py</code></td><td>python-docx 存盘必挂 surgical 收口；zipfile 路线必挂部件完整性断言</td><td>✓ 23/23 · 16/16</td></tr><tr><td><code>check_function_axis.py</code></td><td>职能轴表 ↔ CLI 双向对账</td><td>✓ 93 条全有标签</td></tr><tr><td><code>cli_forward_probe.py</code></td><td>每条子命令<strong>真正转发出去的 argv</strong></td><td>✓ <code>bad: []</code>（67 条内嵌预期）</td></tr><tr><td><code>check_external_refs.py</code></td><td>全生态引用存在性（已挂 pre-commit <code>--changed-only</code>）</td><td>✓ 219 处 / 39 条不同路径全部存在</td></tr><tr><td><code>pytest</code></td><td>回归</td><td>✓ 202 passed</td></tr><tr><td><code>script_graph.py</code></td><td>谁调谁 · 孤儿判定</td><td>✓ 99 脚本 · 362 引用 · <strong>0 孤儿</strong></td></tr></tbody></table>
+<p><code>cli_surface.py</code> 是第 7 条，但它是<strong>指纹比对器</strong>（改前改后 diff 必须为空），不是能单独判绿的门。</p>
+<h2 id="四-两处与文档的口径差-已核实非问题">四、两处与文档的口径差，已核实非问题</h2>
+<table><thead><tr><th>差在哪</th><th>真相</th></tr></thead><tbody><tr><td>README 写「222 处仓外引用」，现跑 219</td><td>2026-08-01 eco-flow 顶层三层收敛（commit <code>9e64527</code> / <code>4d02d30</code>）后引用路径合并所致。<strong>闸门本身就是发现这件事的东西</strong>，现在 39 条路径全部指向存在的文件</td></tr><tr><td>「测试 10」</td><td>含 <code>sub/tests/__init__.py</code>；真实测试文件 9 个、用例 202 个</td></tr></tbody></table>
+<h2 id="五-这条改造线的账-133-92-99">五、这条改造线的账：133 → 92 → 99</h2>
+<table><thead><tr><th class="nw">阶段</th><th class="nw">脚本数</th><th>发生了什么</th></tr></thead><tbody><tr><td class="nw">折叠前</td><td class="nw">133</td><td>一个动作一个文件</td></tr><tr><td class="nw">2026-07-31 折叠后</td><td class="nw">92</td><td>42 旧件并成 12 个子命令族；20 个只做 argparse 转发的 group 模块（2265 行）折成 <code>_groups.py</code> 一张表</td></tr><tr><td class="nw">现在</td><td class="nw">99</td><td><strong>涨的 7 个不是新功能</strong></td></tr></tbody></table>
+<p>后半段涨的 7 个是：从抄了 N 份的判据里下沉出的两个 SSOT（<code>lib/cn_number.py</code>、<code>lib/caption_re.py</code>）+ 两道新闸门（<code>check_function_axis.py</code>、<code>check_external_refs.py</code>）+ 对应测试。</p>
+<p>净效果：<strong>代码净删 249 行，测试 82 → 202 个用例。</strong></p>
+<h3 id="文件层面已经减不动了">文件层面已经减不动了</h3>
+<p>上一轮 8 条折叠提议经对抗核验<strong>全部否掉，存活 0</strong>。声称的重复行数逐条核实：<code>12→0</code> · <code>20→0</code> · <code>200→55</code> · <code>90→58</code> · <code>80→33</code>。</p>
+<p><strong>真正的冗余在低一层</strong>——同一判据被抄 N 份然后各自漂移：</p>
+<table><thead><tr><th class="nw">被抄的判据</th><th>抄了几份</th><th>漂成什么样</th></tr></thead><tbody><tr><td class="nw">中文数字转 int</td><td>5 份</td><td>三档能力。<code>十六</code> 在 caption/styles 侧返 None，<code>一百零五</code> 在 blocks 侧返 None</td></tr><tr><td class="nw">题注/图表编号正则</td><td>12 个文件 · 30 条 pattern · 20 个判据点</td><td>光「短横」就有 <strong>8 种互不相同的字符子集，没有一处是全集</strong></td></tr><tr><td class="nw">zipfile 重打包</td><td>6 处手抄</td><td>已迁回 <code>lib/docx_surgical.py</code></td></tr></tbody></table>
+<h2 id="六-目录不重构-2026-08-01-已拍板">六、目录不重构（2026-08-01 已拍板）</h2>
+<p>按格式轴（docx / pdf / md / xlsx / pptx）分目录被否，两条硬数字：</p>
+<table><thead><tr><th class="nw">理由</th><th>数字</th></tr></thead><tbody><tr><td class="nw">分不均</td><td>84 个非测试脚本里 docx 占 <strong>56</strong>——<code>docx/</code> 装 56 个，<code>pdf/</code> 和 <code>pptx/</code> 各装 1 个</td></tr><tr><td class="nw">搬完没法验收</td><td>222 处外部引用有 <strong>130 处在 <code>~/Work</code> / <code>~/Apps</code></strong>，正是 <code>/refactor dir</code> 明文排除的地方（<code>paths.py:884</code> 的 roots 只有 <code>~/Dev</code>，<code>SCAN_EXCLUDE_DIRS</code> 含 <code>"Work"</code>）</td></tr></tbody></table>
+<p>替代方案已落地：<strong>目录轴回答「实现在哪」，职能轴回答「这条命令碰的是什么」，两条轴正交，所以职能不落成目录，落成一张表 + 一道机检。</strong></p>
+<h2 id="七-仍然挂账的一条">七、仍然挂账的一条</h2>
+<p><code>scripts/document/sub/strip.py:1147</code> 的 <code>CAPTION_PATTERN = re.compile(r'^(表|图)\s*\d+\.\d+-\d+')</code> 与迁移前的 <code>styles._CAPTION_PATTERN</code> 逐字节相同，但<strong>没有迁进 <code>lib/caption_re.py</code></strong>。</p>
+<p>后果：SSOT 那一轮之后留下一处新的判据分歧——<code>strip</code> 只认 ASCII 短横，<code>styles</code> 现在认 5 种短横。</p>
+<p><strong>没有自行修</strong>：这是写盘动词的作用范围问题，与上一轮那条 [high] 级发现（<code>caption pair</code> 偷偷把 <code>表3.1-1</code> 压平成 <code>表1-1</code>）同类，改之前需要你确认。</p><footer class="doc">generated <code>2026-08-02 04:40</code></footer></article></div>
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  if (!links.length) return;
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var heads = Object.keys(map).map(function(id){ return document.getElementById(id); }).filter(Boolean);
+  heads.sort(function(a, b){ return a.offsetTop - b.offsetTop; });
+  var current = null;
+  function update(){
+    var y = window.scrollY + 90, best = null;
+    for (var i = 0; i < heads.length; i++){
+      if (heads[i].offsetTop <= y) best = heads[i].id; else break;
+    }
+    if (best !== current){
+      current = best;
+      links.forEach(function(a){ a.classList.remove('on'); });
+      if (best && map[best]) map[best].classList.add('on');
+    }
+  }
+  window.addEventListener('scroll', update, {passive:true});
+  window.addEventListener('resize', update, {passive:true});
+  update();
+})();
+</script>
+<div id="cc-session-footer">
+  <div class="row"><span class="label">CC session</span> <code>d2f1d81d-29f7-4b4c-8f68-a990b9492666</code></div>
+  <div class="row"><span class="label">Generated</span> <code>2026-08-02T04:40:11-07:00</code></div>
+  <div class="row"><span class="label">CWD</span> <code>/Users/tianli/Dev/tools/doctools</code></div>
+  <div class="row"><span class="label">HTML path</span> <code>/Users/tianli/Dev/tools/doctools/handoffs/doctools-status.html</code></div>
+  <div class="row" style="margin-top:8px;color:#8b949e;font-size:11px">
+    Resume: <code>claude -r d2f1d81d-29f7-4b4c-8f68-a990b9492666</code> · 引用本文档某段: 框选文本 → 点 "📋 复制为引用" → 粘到 CC
+  </div>
+</div>
+<div id="cc-quote-tip" title="把选中文本打包成 markdown 引用，含文件路径+锚点+session UUID">📋 复制为引用</div>
+<div id="cc-quote-toast"></div>
+<script>
+(function(){
+  var meta = {
+    session: document.querySelector('meta[name="cc-session"]')?.content || 'unknown',
+    generated: document.querySelector('meta[name="cc-generated"]')?.content || '',
+    cwd: document.querySelector('meta[name="cc-cwd"]')?.content || '',
+    title: document.title,
+    path: location.pathname
+  };
+  var tip = document.getElementById('cc-quote-tip');
+  var toast = document.getElementById('cc-quote-toast');
+  var badge = document.getElementById('cc-session-badge');
+
+  function getNearestAnchor(node){
+    var el = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    while(el && el !== document.body){
+      if(el.id) return '#' + el.id;
+      var prev = el.previousElementSibling;
+      while(prev){
+        if(prev.id) return '#' + prev.id;
+        var nested = prev.querySelector ? prev.querySelector('[id]') : null;
+        if(nested) return '#' + nested.id;
+        prev = prev.previousElementSibling;
+      }
+      el = el.parentElement;
+    }
+    return '';
+  }
+
+  function showToast(msg, ok){
+    toast.textContent = msg;
+    toast.style.background = ok ? '#3fb950' : '#f85149';
+    toast.style.color = ok ? '#0d1117' : '#fff';
+    toast.style.display = 'block';
+    setTimeout(function(){ toast.style.display = 'none'; }, 2800);
+  }
+
+  document.addEventListener('mouseup', function(e){
+    if(tip.contains(e.target)) return;
+    setTimeout(function(){
+      var sel = window.getSelection();
+      var text = sel.toString().trim();
+      if(text.length < 3){ tip.style.display = 'none'; return; }
+      var rect = sel.getRangeAt(0).getBoundingClientRect();
+      var top = rect.bottom + window.scrollY + 6;
+      var left = rect.left + window.scrollX + rect.width/2 - 70;
+      tip.style.top = (rect.bottom + 8) + 'px';
+      tip.style.left = Math.max(8, rect.left + rect.width/2 - 70) + 'px';
+      tip.style.display = 'block';
+      tip._text = text;
+      tip._anchor = getNearestAnchor(sel.anchorNode);
+    }, 10);
+  });
+
+  document.addEventListener('mousedown', function(e){
+    if(!tip.contains(e.target)) tip.style.display = 'none';
+  });
+
+  tip.addEventListener('click', async function(){
+    var text = tip._text || '';
+    var anchor = tip._anchor || '';
+    var sidShort = meta.session.slice(0, 8);
+    var quote =
+      '> **[HTML 引用 · CC session `' + sidShort + '`]**\n' +
+      '> 文件: `' + meta.path + anchor + '`\n' +
+      '> 标题: ' + meta.title + '\n' +
+      '> Session: `' + meta.session + '`\n' +
+      '> \n' +
+      '> 选中文本 (' + text.length + ' 字符):\n' +
+      '\n```\n' + text + '\n```\n\n' +
+      '针对以上这段我想：';
+    try {
+      await navigator.clipboard.writeText(quote);
+      showToast('✓ 已复制 ' + text.length + ' 字符（含 session+锚点+文件路径）', true);
+      tip.style.display = 'none';
+      window.getSelection().removeAllRanges();
+    } catch(err) {
+      showToast('✗ 复制失败: ' + err.message, false);
+    }
+  });
+
+  // session UUID 复制
+  var copySid = badge && badge.querySelector('.copy-sid');
+  if(copySid){
+    copySid.addEventListener('click', async function(){
+      try {
+        await navigator.clipboard.writeText(copySid.dataset.sid);
+        showToast('✓ session UUID 已复制', true);
+      } catch(err){ showToast('✗ ' + err.message, false); }
+    });
+  }
+})();</script>
+<!-- cc-sortable-tables : 通用表格点击排序 (SSOT: ~/Dev/tools/dev/lib/html_shell.py) -->
+<style id="cc-sortable-css">
+table thead th.cc-sortable{cursor:pointer;user-select:none;white-space:nowrap}
+table thead th.cc-sortable:hover{color:var(--fg,#e6edf3)}
+table thead th.cc-sortable::after{content:"\2195";opacity:.35;margin-left:5px;font-size:.85em;font-weight:400}
+table thead th.cc-sortable[aria-sort=ascending]::after{content:"\2191";opacity:.95}
+table thead th.cc-sortable[aria-sort=descending]::after{content:"\2193";opacity:.95}
+</style>
+<script id="cc-sortable-js">
+(function(){
+  if(window.__ccSortInit)return;window.__ccSortInit=true;
+  var NUMISH=/^[-+]?[\d.,\s kKmMgG%]+$/;
+  function num(s){var m=String(s).replace(/[,\s]/g,'').match(/^([-+]?\d*\.?\d+)([kKmMgG%]?)/);if(!m)return null;var v=parseFloat(m[1]);var u=m[2].toLowerCase();if(u==='k')v*=1e3;else if(u==='m')v*=1e6;else if(u==='g')v*=1e9;return v;}
+  function val(td){
+    var d=td.getAttribute('data-sort');
+    if(d!==null){if(NUMISH.test(d)&&/\d/.test(d)){var n=num(d);if(n!==null)return n;}return d.toLowerCase();}
+    var t=(td.textContent||'').trim();
+    if(NUMISH.test(t)&&/\d/.test(t)){var n2=num(t);if(n2!==null)return n2;}
+    return t.toLowerCase();
+  }
+  function cmp(a,b){if(typeof a==='number'&&typeof b==='number')return a-b;return String(a).localeCompare(String(b),'zh');}
+  function wire(tb){
+    var thead=tb.tHead;if(!thead||!thead.rows.length)return;
+    var hr=thead.rows[thead.rows.length-1];
+    Array.prototype.forEach.call(hr.cells,function(th,ci){
+      if(th.hasAttribute('data-no-sort'))return;
+      th.classList.add('cc-sortable');th.setAttribute('aria-sort','none');
+      th.addEventListener('click',function(){
+        var body=tb.tBodies[0];if(!body)return;
+        var dir=th.getAttribute('aria-sort')==='ascending'?'descending':'ascending';
+        Array.prototype.forEach.call(hr.cells,function(o){o.setAttribute('aria-sort','none');});
+        th.setAttribute('aria-sort',dir);
+        var rows=Array.prototype.slice.call(body.rows).filter(function(r){return !r.querySelector('td[colspan]')&&r.cells[ci];});
+        rows.sort(function(a,b){var v=cmp(val(a.cells[ci]),val(b.cells[ci]));return dir==='ascending'?v:-v;});
+        rows.forEach(function(r){body.appendChild(r);});
+      });
+    });
+  }
+  function init(){Array.prototype.forEach.call(document.querySelectorAll('table'),function(t){if(!t.hasAttribute('data-no-sort'))wire(t);});}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+</script>
+</body>
+</html>
