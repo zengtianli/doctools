@@ -194,7 +194,15 @@ docx_cli 的「参数错误 rc=2」撞码，runner 不能把 2 一律当失败�
 
 | | |
 |---|---|
-| 自包含门（构建 + 逐文件 sha256 + 仓外 clean venv 实跑） | `python3 tools/check_wheel_selfcontained.py` |
+| 分发能力对账门（构建可移植 + 中立 HOME 下实测可用动词数 == 声明值） | `python3 tools/check_wheel_selfcontained.py` |
+
+⚠ **wheel 当前不可分发**（2026-08-02 实测 0/49）。本仓运行时依赖总部
+`~/Dev/tools/dev/lib/` 的 6 个**平铺模块**（finder / file_ops / display /
+parallel_contract / usage_log / env，共 1156 行）——它们不是包、只能靠 sys.path
+注入导入，**声明成 dependency 也没用**。在本机验「别的机器能不能用」时
+**必须中和 `$HOME`**：`docx_cli.py` 有一句 `Path.home()/"Dev"/"tools"/"dev"/"lib"`
+兜底导入，不中和就会把同一个 wheel 测成 49/49（实测中和后是 0/49）。
+两条出路见 `tools/check_wheel_selfcontained.py` 的 `DECLARED_WORKING` 注释，**需要人拍板**。
 | 只对账不装（快） | `… --tier struct` |
 | 发版前（补完整依赖安装） | `… --tier full` |
 
