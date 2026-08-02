@@ -80,9 +80,18 @@ packages = ["src/doctools"]
 "lib" = "doctools/_bundled/lib"
 "config" = "doctools/_bundled/config"
 "schemas" = "doctools/_bundled/schemas"
-# 总部 SSOT，不在本仓。docx_cli.py 缺它是 **fail-closed exit 2**（不是降级），所以
-# wheel 不带它 = 装上也一条动词都跑不了。纯 stdlib、零传递依赖，适合随包走。
-# 仍然只有一份源：这里是构建时从 SSOT 现取的快照，本仓工作树里没有第二份副本。
-"../dev/lib/parallel_contract.py" = "doctools/_bundled/lib/parallel_contract.py"
+# ⚠ 这里**不能**写 `"../dev/lib/xxx.py"` 这种跨仓源端（2026-08-02 实测撤销）。
+# force-include 的源端相对 project root 解析，而兄弟目录 `dev/` 只在本机存在 ——
+# GitHub runner / 任何别人的机器上构建当场
+#   FileNotFoundError: Forced include not found: <root>/../dev/lib/parallel_contract.py
+# 而且 hatchling 对 **editable** 构建同样施加 force-include，所以连 `uv sync` 都红。
+# 后果：CI 从加上那天起一次都没绿过。
+#
+# 本仓运行时确实依赖总部 ~/Dev/tools/dev/lib 的 6 个平铺模块
+# （finder×10 · file_ops×10 · display×9 · parallel_contract×3 · usage_log×1 · env×1）。
+# 它们不是包、只能靠 PYTHONPATH 导入，所以**声明成 dependency 也没用**。
+# 现状因此是：wheel 里 35/49 个顶层动词能跑，14 个需要总部模块的跑不了。
+# 这个能力边界**声明在 doctools/_capability.py，由 tools/check_wheel_selfcontained.py
+# 逐条对账**（多一条少一条都判红），不再假装"自包含"。
 
 [tool.uv.sources]

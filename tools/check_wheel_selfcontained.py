@@ -1,219 +1,153 @@
 #!/usr/bin/env python3
-"""wheel 自包含门 —— 证明「装到别的机器上真能用」，不是证明「配置写对了」。
+"""wheel 分发能力对账门（2026-08-02 重写 —— 上一版是一道假门）。
 
-## 它守的是哪条缝
+    python3 tools/check_wheel_selfcontained.py            # 判红即 exit 1
+    python3 tools/check_wheel_selfcontained.py --scan     # 只打印实测能力，不判定
 
-`src/doctools/cli.py` 按顺序试两个实现根：**工作树**（editable 装）→ **包内副本**
-（wheel 装）。本机日常跑的永远是第一条；第二条**只有在别的机器上才会被走到**。
-`cli_surface.py` / `cli_forward_probe.py` 都看不见它 —— 那两个在本仓工作树里跑，
-命中的是工作树分支。所以这条分支如果没人测，它就是「写了但从没执行过的代码」，
-而它恰恰是唯一决定「wheel 能不能用」的代码。
+## 上一版错在哪（两处，都让它报了假绿）
 
-2026-08-02 实测基线：改之前的 wheel 只有 7 个文件，clean venv 装完
-`doctools --version` 直接 `FATAL: 找不到实现入口` rc=2。
+1. **install 层的两条 check 对「实现进没进包」零分辨率**：跑的是 `--version` 与
+   `verbs --fn convert`，而 `verbs` 是纯清单打印，从头到尾不加载任何实现模块。
+   最刺眼的是 `verbs --fn convert` 打出来的正好是 `md-to-docx` 与 `md` ——
+   它把两个在那个 wheel 里已经死掉的动词的名字打印出来，然后判绿。
 
-## 三层判据（逐层收紧，全部 fail-closed）
+2. **「仓外 clean venv 跑通」是被 `$HOME` 喂出来的**：`docx_cli.py` 有一句
+   `_LIB = Path.home()/"Dev"/"tools"/"dev"/"lib"` 兜底导入，本机 `$HOME` 永远
+   摸得到总部 lib。实测把 `HOME` 换成空目录后，同一个 wheel 从 49/49 变成 0/49。
+   **在本机验「别的机器能不能用」，不中和 `$HOME` 就是白验。**
 
-  struct   构建 wheel → 包内 `_bundled/` 的**文件集**必须等于
-           `git ls-files scripts lib config schemas`，且**逐文件 sha256 相同**。
-           这条就是「两份副本不会漂」的机器证明：包内那份是工作树的逐字节快照，
-           不是另一份需要同步维护的源。集合两个方向都查（多一个/少一个都判红）。
-  install  全新 venv（--no-deps）装 wheel，**在仓库目录之外**跑 `--version` 与
-           `verbs`。--no-deps 是有意的：这一层要暴露的是「实现进没进包」，
-           不是第三方依赖装没装上，装一堆 pandas/scipy 只会把信号淹掉、把门拖慢到
-           没人跑。
-  full     再补一次完整依赖安装 + 真 docx 上跑写盘前的只读动词。慢（分钟级），
-           发版前跑。
+## 现在的判据（两条，都必须真跑）
 
-用法：
-    python3 tools/check_wheel_selfcontained.py              # struct + install
-    python3 tools/check_wheel_selfcontained.py --tier struct
-    python3 tools/check_wheel_selfcontained.py --tier full
+  A. **构建可移植**：把 HEAD 导出到一个**没有兄弟目录 `dev/` 的位置**，能构建出 wheel。
+     （2026-08-02 之前 pyproject 里有 `"../dev/lib/parallel_contract.py"` 这个跨仓
+     force-include，于是 GitHub runner / 任何别人的机器上构建当场
+     `FileNotFoundError: Forced include not found` —— 而 hatchling 对 **editable**
+     构建同样施加 force-include，所以连 `uv sync` 都红。CI 从加上那天起没绿过一次。）
+
+  B. **运行能力 == 声明值**：wheel 装进 clean venv，**`HOME` 指到空目录**，
+     逐个敲顶层动词，实际能跑的条数必须**恰好等于** `DECLARED_WORKING`。
+
+判据 B 的意义不是「必须全能跑」，而是**不许对能力撒谎**：今天真实值就是 0/49，
+那就写 0；哪天把总部模块 vendor 进来变成 49，就必须同步改声明 ——
+声明与现实对不上就判红，多了少了两个方向都堵死。
+
+fail-closed：构建失败 / 装不上 / 枚举为空，一律非 0 退出。
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
-import shutil
+import os
 import subprocess
 import sys
-import sysconfig
 import tempfile
-import zipfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]
 
-# 与 pyproject 的 [tool.hatch.build.targets.wheel.force-include] 一一对应。
-# 这里写死一份是有意的：它是**独立的第二判据**。如果谁往 force-include 里加了一行
-# 却没在这儿加，集合比对会当场判红 —— 从 pyproject 反读回来就没有这个作用了。
-BUNDLED_ROOTS = ("scripts", "lib", "config", "schemas")
-
-# 仓外来源：构建时从总部 SSOT 现取，工作树里没有第二份。key = 包内路径。
-EXTERNAL = {
-    "lib/parallel_contract.py": Path.home() / "Dev" / "tools" / "dev" / "lib" / "parallel_contract.py",
-}
-
-PREFIX = "doctools/_bundled/"
-
-
-def _sha(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+# ── 能力声明（改这个数之前先跑 --scan 看实测）────────────────────────────
+# 0 = wheel 装到别的机器上一条顶层动词都跑不了。
+#
+# 阻塞原因（2026-08-02 实测）：本仓运行时依赖总部 `~/Dev/tools/dev/lib/` 的 6 个
+# **平铺模块** —— finder×10 · file_ops×10 · display×9 · parallel_contract×3 ·
+# usage_log×1 · env×1（共 1156 行）。它们不是包、只能靠 sys.path 注入导入，
+# 所以「在 pyproject 里声明成 dependency」也解决不了。
+#
+# 两条出路，**需要人拍板，别自行其是**：
+#   (a) 把这 6 个 vendor 进本仓 + 立一道对总部 SSOT 的 sha256 漂移门
+#   (b) 把总部 `tools/dev/lib` 改造成真包，本仓声明依赖
+# 在拍板之前，本门的职责只是**不许假装它能分发**。
+DECLARED_WORKING = 0
 
 
-def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+def _tops() -> list[str]:
+    sys.path.insert(0, str(ROOT / "scripts" / "document"))
+    import docx_cli                                        # noqa: E402
+    p = docx_cli._build_parser()
+    names = {n for a in p._actions
+             if isinstance(a, argparse._SubParsersAction) for n in a.choices}
+    return sorted(names | set(docx_cli.CMD_TABLE))
 
 
-def build_wheel(outdir: Path) -> Path:
-    print(f"[build] uv build --wheel --out-dir {outdir}")
-    r = _run(["uv", "build", "--wheel", "--out-dir", str(outdir)], cwd=REPO)
+def build_portable(workdir: Path) -> Path | None:
+    """判据 A：在没有兄弟 `dev/` 的位置构建。返回 wheel 路径，失败返回 None。"""
+    proj = workdir / "proj"
+    proj.mkdir(parents=True)
+    tar = subprocess.run(["git", "-C", str(ROOT), "archive", "HEAD"], capture_output=True)
+    if tar.returncode != 0:
+        print("⛔ git archive 失败 —— 拒绝在拿不到源码时报绿", file=sys.stderr)
+        return None
+    subprocess.run(["tar", "-x", "-C", str(proj)], input=tar.stdout, check=True)
+    out = workdir / "dist"
+    r = subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(out), "."],
+                       cwd=str(proj), capture_output=True, text=True)
     if r.returncode != 0:
-        print(r.stdout + r.stderr, file=sys.stderr)
-        raise SystemExit(f"[FAIL] 构建失败 rc={r.returncode}")
-    whls = sorted(outdir.glob("doctools-*.whl"))
-    if len(whls) != 1:
-        raise SystemExit(f"[FAIL] 期望恰好 1 个 wheel，实得 {len(whls)}: {whls}")
-    print(f"[build] ok → {whls[0].name}")
+        tail = "\n".join(r.stdout.splitlines()[-6:] + r.stderr.splitlines()[-6:])
+        print(f"⛔ 判据 A 失败：wheel 在没有兄弟 dev/ 的位置构建不出来\n{tail}", file=sys.stderr)
+        return None
+    whls = sorted(out.glob("doctools-*.whl"))
+    if not whls:
+        print("⛔ 构建报成功却没产出 wheel", file=sys.stderr)
+        return None
     return whls[0]
 
 
-def check_struct(whl: Path) -> int:
-    """包内副本 == 工作树 git-tracked 集，逐文件 sha256。"""
-    r = _run(["git", "ls-files", *BUNDLED_ROOTS], cwd=REPO)
+def probe_capability(whl: Path, workdir: Path) -> tuple[int, int, dict[str, str]]:
+    """判据 B：clean venv + 中立 HOME，逐个敲顶层动词。→ (能跑, 总数, 挂掉的)"""
+    venv = workdir / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
+    pip, exe = venv / "bin" / "pip", venv / "bin" / "doctools"
+    r = subprocess.run([str(pip), "install", "-q", "--no-deps", str(whl)],
+                       capture_output=True, text=True)
     if r.returncode != 0:
-        raise SystemExit(f"[FAIL] git ls-files 失败: {r.stderr}")
-    expected = {ln for ln in r.stdout.splitlines() if ln.strip()}
-    if not expected:
-        # 铁律：枚举为空一律判红，拒绝在空集上报绿
-        raise SystemExit("[FAIL] git ls-files 枚举为空 —— 判据失效，不给绿")
-    expected |= set(EXTERNAL)
+        print(f"⛔ 判据 B 失败：wheel 装不上\n{r.stderr[-500:]}", file=sys.stderr)
+        raise SystemExit(2)
 
-    with zipfile.ZipFile(whl) as z:
-        names = z.namelist()
-        actual = {n[len(PREFIX):] for n in names if n.startswith(PREFIX) and not n.endswith("/")}
+    fake_home = workdir / "home"      # ← 关键：本机 $HOME 会把总部 lib 喂进去
+    fake_home.mkdir()
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["HOME"] = str(fake_home)
 
-        bad = 0
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        if missing:
-            bad += len(missing)
-            print(f"[FAIL] wheel 里缺 {len(missing)} 个文件（工作树有、包里没有）:")
-            for m in missing[:15]:
-                print(f"    - {m}")
-        if extra:
-            bad += len(extra)
-            print(f"[FAIL] wheel 里多 {len(extra)} 个文件（包里有、工作树没有）:")
-            for e in extra[:15]:
-                print(f"    + {e}")
-
-        # 逐字节：集合对上不代表内容对上
-        drifted = []
-        for rel in sorted(expected & actual):
-            src = EXTERNAL.get(rel) or (REPO / rel)
-            if not src.is_file():
-                drifted.append((rel, "源文件不存在"))
-                continue
-            if hashlib.sha256(z.read(PREFIX + rel)).hexdigest() != _sha(src):
-                drifted.append((rel, "sha256 不等"))
-        if drifted:
-            bad += len(drifted)
-            print(f"[FAIL] {len(drifted)} 个文件包内与源端不一致:")
-            for rel, why in drifted[:15]:
-                print(f"    ~ {rel}: {why}")
-
-    if bad:
-        return 1
-    print(f"[struct] ✓ 包内 {len(expected)} 个文件与源端逐字节一致"
-          f"（{len(BUNDLED_ROOTS)} 个根 + {len(EXTERNAL)} 个仓外 SSOT）")
-
-    # 壳本身必须在，且 _bundled 不能反过来污染工作树
-    with zipfile.ZipFile(whl) as z:
-        for must in ("doctools/__init__.py", "doctools/cli.py"):
-            if must not in z.namelist():
-                print(f"[FAIL] wheel 缺 {must}")
-                return 1
-    if (REPO / "src" / "doctools" / "_bundled").exists():
-        print("[FAIL] 工作树里出现了 src/doctools/_bundled/ —— 副本只准活在构建产物里")
-        return 1
-    print("[struct] ✓ 工作树中不存在 _bundled/（副本只在 wheel 内）")
-    return 0
-
-
-def check_install(whl: Path, full: bool) -> int:
-    """全新 venv 装 wheel，在仓库目录之外跑 —— 走的是包内副本那条分支。"""
-    with tempfile.TemporaryDirectory(prefix="doctools-wheelgate-") as td:
-        venv = Path(td) / "venv"
-        print(f"[install] python -m venv {venv}")
-        if _run([sys.executable, "-m", "venv", str(venv)]).returncode != 0:
-            print("[FAIL] venv 创建失败")
-            return 1
-        bindir = "Scripts" if sysconfig.get_platform().startswith("win") else "bin"
-        pip = venv / bindir / "pip"
-        exe = venv / bindir / "doctools"
-
-        cmd = [str(pip), "install", "-q", str(whl)]
-        if not full:
-            cmd.insert(2, "--no-deps")
-        print(f"[install] pip install {'(with deps)' if full else '--no-deps'} …")
-        r = _run(cmd)
-        if r.returncode != 0:
-            print(r.stdout + r.stderr, file=sys.stderr)
-            print("[FAIL] 安装失败")
-            return 1
-        if not exe.is_file():
-            print(f"[FAIL] console_script 没生成: {exe}")
-            return 1
-
-        # cwd 必须在仓库之外 —— 在仓库里跑会让工作树分支意外命中，测了个假的
-        cwd = td
-        checks = [([str(exe), "--version"], 0), ([str(exe), "verbs", "--fn", "convert"], 0)]
-        bad = 0
-        for argv, want in checks:
-            r = _run(argv, cwd=cwd)
-            ok = r.returncode == want
-            print(f"[install] {'✓' if ok else '✗'} rc={r.returncode} (want {want}) :: {' '.join(argv[1:])}")
-            if not ok:
-                bad += 1
-                print((r.stdout + r.stderr)[:900], file=sys.stderr)
-            elif r.stdout.strip():
-                print("           " + r.stdout.strip().splitlines()[0][:100])
-            # 兜底分支被走到时最典型的假绿：rc 对了但 stderr 里其实在喊 FATAL
-            if "FATAL" in (r.stdout + r.stderr):
-                bad += 1
-                print("[FAIL] 输出里出现 FATAL —— 实现没进包")
-        if bad:
-            return 1
-        print("[install] ✓ 仓库外 clean venv 跑通（走的是包内副本分支）")
-    return 0
+    tops = _tops()
+    if not tops:
+        print("⛔ 一个顶层动词都没枚举到 —— 判据坏了，拒绝报绿", file=sys.stderr)
+        raise SystemExit(2)
+    ok, broken = 0, {}
+    for n in tops:
+        p = subprocess.run([str(exe), n, "--help"], capture_output=True, text=True,
+                           cwd="/tmp", env=env, timeout=120)
+        if "No module named" in p.stderr:
+            broken[n] = p.stderr.split("No module named")[-1].strip().splitlines()[0]
+        else:
+            ok += 1
+    return ok, len(tops), broken
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tier", choices=("struct", "install", "full"), default="install")
-    ap.add_argument("--keep", metavar="DIR", help="把 wheel 留在这里（默认构建到临时目录后删掉）")
-    args = ap.parse_args()
+    scan_only = "--scan" in sys.argv
+    with tempfile.TemporaryDirectory(prefix="doctools-dist-") as d:
+        work = Path(d)
+        whl = build_portable(work)
+        if whl is None:
+            return 1
+        print(f"✓ 判据 A：wheel 在没有兄弟 dev/ 的位置构建成功（{whl.name}）")
+        ok, total, broken = probe_capability(whl, work)
 
-    if shutil.which("uv") is None:
-        print("[FAIL] 找不到 uv —— 构建后端缺失，不给绿", file=sys.stderr)
+    print(f"  判据 B 实测：clean venv + 中立 HOME 下 {ok}/{total} 个顶层动词可用")
+    if broken:
+        print(f"  缺的模块：{', '.join(sorted(set(broken.values())))}"
+              f"（{len(broken)} 个动词受影响）")
+    if scan_only:
+        return 0
+    if ok != DECLARED_WORKING:
+        print(f"⛔ 判据 B 失败：实测 {ok} 条可用，而 DECLARED_WORKING 声明 "
+              f"{DECLARED_WORKING} 条。\n"
+              f"   本门不要求「必须全能跑」，要求的是**不许对能力撒谎** —— "
+              f"能力变了就同步改声明（改之前先跑 --scan）。", file=sys.stderr)
         return 1
-
-    with tempfile.TemporaryDirectory(prefix="doctools-wheelbuild-") as td:
-        outdir = Path(args.keep) if args.keep else Path(td)
-        outdir.mkdir(parents=True, exist_ok=True)
-        whl = build_wheel(outdir)
-
-        rc = check_struct(whl)
-        if rc:
-            print("\n[RESULT] ✗ struct 层未过")
-            return rc
-        if args.tier != "struct":
-            rc = check_install(whl, full=(args.tier == "full"))
-            if rc:
-                print("\n[RESULT] ✗ install 层未过")
-                return rc
-
-    print(f"\n[RESULT] ✓ wheel 自包含（tier={args.tier}）")
+    print(f"✓ 判据 B：实测可用动词数 == 声明值 {DECLARED_WORKING}")
+    if DECLARED_WORKING < total:
+        print(f"ℹ 当前 wheel **不可分发**：{total - DECLARED_WORKING} 条动词依赖总部 "
+              f"~/Dev/tools/dev/lib 的平铺模块。出路见本文件 DECLARED_WORKING 处的注释。")
     return 0
 
 
