@@ -226,6 +226,95 @@ def probe_capability(whl: Path, workdir: Path) -> tuple[int, int, dict[str, str]
     return ok, len(tops), broken
 
 
+def check_bundled_snapshot(whl: Path) -> bool:
+    """判据 C：包内 `doctools/_bundled/` == HEAD 里那四个根，**两个方向都查**。
+
+    `scripts/` `lib/` 不能搬（~/Work 有 130 处绝对路径钉着），所以用 force-include 在
+    构建时镜像一份进包。「那两份副本会不会漂」的答案是「仓库里根本没有第二份」——
+    `_bundled/` 只存在于构建产物里，是构建那一刻的逐字节快照。**这个函数就是那句话
+    的机器判据**，`pyproject.toml:122-125` 与 CLAUDE.md 都指着它。
+
+    ⚠ 2026-08-03 补写：它此前**只存在于文档里**。08-02 重写这道门时被删掉，而两处
+    文档继续承诺着它 —— 一道被文档背书、实际不存在的门，比没有门更坏：读的人会以为
+    漂移有人管。（`grep -n 'sha256\\|ls-files' tools/check_wheel_selfcontained.py`
+    当时零命中，是核验镜头逐字比对文档与实现时发现的。）
+
+    两个方向都判红：包里多一个（force-include 源端扫进了不该进的东西）与少一个
+    （某个根漏配、或 VCS ignore 把该进的挡了）都是漂移。逐文件 sha256 再抓内容级差异。
+    比较对象是 **HEAD** 不是工作树 —— 因为 wheel 就是 `git archive HEAD` 构建的，
+    拿工作树比会在「改了没提交」时报出一片假红。
+    """
+    import hashlib
+    import zipfile
+
+    roots = ("scripts", "lib", "config", "schemas")
+    r = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "-r", "HEAD",
+                        "--format=%(objectmode) %(path)", "--", *roots],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"⛔ 判据 C：拿不到 HEAD 的文件清单 —— 拒绝在没有基准时报绿\n{r.stderr[-300:]}",
+              file=sys.stderr)
+        return False
+    want, links = set(), set()
+    for ln in r.stdout.splitlines():
+        if not ln.strip():
+            continue
+        mode, path = ln.split(" ", 1)
+        # mode 120000 = symlink。本仓有一条（lib/llm_client.py → 总部 SSOT 的绝对路径）。
+        # 它**必须留在包外**：整目录 force-include 会让构建依赖那条绝对路径解析得开，
+        # 实测目标悬空时 hatchling 直接 FileNotFoundError、wheel 在本机之外根本构建不出来。
+        # 所以对 symlink 的断言是**反向**的 —— 不在包里才对，进了包就是把机器依赖打了进去。
+        (links if mode == "120000" else want).add(path)
+    if not want:
+        print("⛔ 判据 C：HEAD 里这四个根一个文件都没有 —— 判据坏了，拒绝在空集上报绿",
+              file=sys.stderr)
+        return False
+
+    with zipfile.ZipFile(whl) as z:
+        pre = "doctools/_bundled/"
+        got = {n[len(pre):]: n for n in z.namelist()
+               if n.startswith(pre) and not n.endswith("/")}
+        if not got:
+            print("⛔ 判据 C：wheel 里没有 doctools/_bundled/ —— force-include 整个没生效。"
+                  "\n   这正是 2026-08-02 的基线态：那时 wheel 只有 7 个文件，"
+                  "clean venv 装完 `doctools --version` 直接 FATAL。", file=sys.stderr)
+            return False
+        missing = sorted(want - set(got))
+        extra = sorted(set(got) - want - links)
+        # 仓外 symlink 进了包 = 构建的机器依赖被打了进去，单列一类，别混进「多一个」
+        smuggled = sorted(links & set(got))
+        drift = []
+        for rel in sorted(want & set(got)):
+            blob = subprocess.run(["git", "-C", str(ROOT), "show", f"HEAD:{rel}"],
+                                  capture_output=True).stdout
+            if hashlib.sha256(blob).hexdigest() != hashlib.sha256(z.read(got[rel])).hexdigest():
+                drift.append(rel)
+
+    if missing or extra or drift or smuggled:
+        print(f"⛔ 判据 C 失败：包内副本与 HEAD 不一致（少 {len(missing)} / 多 {len(extra)}"
+              f" / 内容不同 {len(drift)} / 仓外 symlink 被打进包 {len(smuggled)}）",
+              file=sys.stderr)
+        for tag, lst in (("少", missing), ("多", extra), ("内容不同", drift),
+                         ("仓外 symlink 混入", smuggled)):
+            for rel in lst[:8]:
+                print(f"    {tag}: {rel}", file=sys.stderr)
+            if len(lst) > 8:
+                print(f"    {tag}: …… 另 {len(lst) - 8} 条", file=sys.stderr)
+        if missing:
+            print("\n   「少」多半是 force-include 漏配（lib/ 是逐文件列的，加了新文件要补一行）。",
+                  file=sys.stderr)
+        if smuggled:
+            print("\n   「仓外 symlink 混入」= 构建的机器依赖被打进了包：那条链接指向仓外绝对\n"
+                  "   路径，目标不存在时 hatchling 直接 FileNotFoundError，wheel 在别的机器上\n"
+                  "   根本构建不出来。该模块应由依赖（hq-devlib）提供，不是镜像进包。",
+                  file=sys.stderr)
+        return False
+    note = f"，另 {len(links)} 条仓外 symlink 按约定留在包外（由 hq-devlib 提供）" if links else ""
+    print(f"✓ 判据 C：包内 _bundled/ 的 {len(want)} 个文件与 HEAD 逐个 sha256 相同"
+          f"（多一个/少一个同样判红）{note}")
+    return True
+
+
 def main() -> int:
     scan_only = "--scan" in sys.argv
     with tempfile.TemporaryDirectory(prefix="doctools-dist-") as d:
@@ -234,6 +323,8 @@ def main() -> int:
         if whl is None:
             return 1
         print(f"✓ 判据 A：wheel 在没有兄弟 dev/ 的位置构建成功（{whl.name}）")
+        if not check_bundled_snapshot(whl) and not scan_only:
+            return 1
         ok, total, broken = probe_capability(whl, work)
 
     print(f"  判据 B 实测：clean venv + 中立 HOME 下 {ok}/{total} 个顶层动词可用")

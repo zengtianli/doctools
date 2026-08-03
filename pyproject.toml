@@ -97,6 +97,9 @@ allow-direct-references = true
 # 包树）。member 在 uv workspace 里按 editable 装，壳里的相对定位指回真实工作树。
 [tool.hatch.build.targets.wheel]
 packages = ["src/doctools"]
+# 见下面 force-include 前那段注释：`lib/llm_client.py` 是指向仓外绝对路径的 symlink，
+# 打进来会让「能不能构建」暗中依赖本机路径。它改由 hq-devlib 出。
+exclude = ["lib/llm_client.py"]
 # ⚠ `packages` 只管 wheel。**editable 安装另走一条路**：hatchling 默认往
 # site-packages 写一个指向**项目根**的 .pth（实测 `_editable_impl_doctools.pth`
 # 里就是 `/Users/tianli/Dev/tools/doctools` 整个仓根）。后果是共享的
@@ -123,11 +126,52 @@ packages = ["src/doctools"]
 # `git ls-files scripts lib config schemas` **逐个对齐**（__pycache__ / templates 自动
 # 落在外面）。这条等式就是「包内副本不会漂」的机器判据，见
 # tools/check_wheel_selfcontained.py。
+# ⚠ `lib/llm_client.py` 必须排除（2026-08-03 立，由 check_wheel_selfcontained 判据 C
+# 头一次跑就抓到）。它在 git 里是 **mode 120000 的 symlink**，指向绝对路径
+# `/Users/tianli/Dev/tools/dev/scripts/tools/llm_client.py`。后果是 wheel 的**构建**
+# 暗中依赖那条路径在本机解析得开 —— `git archive HEAD` 出来的树里它是条悬空链接，
+# GitHub runner 上根本不存在。也就是说判据 A 那句「在没有兄弟 dev/ 的位置构建成功」
+# 在本机为真，只是因为绝对路径恰好指得到，与上一轮 `$HOME` 那次假绿是同一形状。
+# 修法不是把文件拷一份进仓（那会造出第二份 SSOT），而是让它由 **hq-devlib 出**：
+# 该包已把 scripts/tools/llm_client.py 装进 site-packages 顶层，所以 wheel 场景
+# `from llm_client import chat` 照样解析得到，本机场景仍走 lib/ 下那条 symlink。
+# 两条路都不动任何一行 import。
 [tool.hatch.build.targets.wheel.force-include]
 "scripts" = "doctools/_bundled/scripts"
-"lib" = "doctools/_bundled/lib"
 "config" = "doctools/_bundled/config"
 "schemas" = "doctools/_bundled/schemas"
+# ⚠ `lib` **逐文件列**，不写成 `"lib" = "…/lib"` 一行（2026-08-03 改）。
+# 唯一的理由是要把 `lib/llm_client.py` 排除在外 —— 它在 git 里是 mode 120000 的
+# symlink，指向仓外绝对路径 /Users/tianli/Dev/tools/dev/scripts/tools/llm_client.py。
+# 整目录写法会让**构建本身**依赖那条路径解析得开：实测把它换成悬空链接后
+#   FileNotFoundError: [Errno 2] No such file or directory: '<proj>/lib/llm_client.py'
+#   error: Call to `hatchling.build.build_wheel` failed (exit status: 1)
+# 即 doctools 的 wheel 在这台机器之外**根本构建不出来**，而判据 A 一直在打 ✓
+# （它在本机构建，绝对路径恰好指得到）—— 与上一轮 $HOME 那次假绿同形。
+# `[tool.hatch.build.targets.wheel].exclude` 救不了：force-include 不受 exclude 约束，
+# 实测加了之后 `doctools/_bundled/lib/llm_client.py` 照样在 wheel 里。
+# llm_client 改由 **hq-devlib** 出（已装进 site-packages 顶层），所以 wheel 场景
+# `from llm_client import chat` 照样解析得到，本机场景仍走这条 symlink，import 一行不动。
+#
+# 漏加新文件不会静默：check_wheel_selfcontained 的判据 C 拿包内文件集与
+# `git ls-tree HEAD -- scripts lib config schemas` 对账，**多一个少一个都判红**
+# （symlink 类由该判据单独处理：既不要求在包里，也不许在包里）。
+"lib/__init__.py" = "doctools/_bundled/lib/__init__.py"
+"lib/caption_re.py" = "doctools/_bundled/lib/caption_re.py"
+"lib/chapter_numbering.py" = "doctools/_bundled/lib/chapter_numbering.py"
+"lib/clipboard.py" = "doctools/_bundled/lib/clipboard.py"
+"lib/cn_number.py" = "doctools/_bundled/lib/cn_number.py"
+"lib/common.sh" = "doctools/_bundled/lib/common.sh"
+"lib/docx_parts.py" = "doctools/_bundled/lib/docx_parts.py"
+"lib/docx_revise.py" = "doctools/_bundled/lib/docx_revise.py"
+"lib/docx_safe_save.py" = "doctools/_bundled/lib/docx_safe_save.py"
+"lib/docx_surgical.py" = "doctools/_bundled/lib/docx_surgical.py"
+"lib/docx_xml.py" = "doctools/_bundled/lib/docx_xml.py"
+"lib/progress.py" = "doctools/_bundled/lib/progress.py"
+"lib/schemas.py" = "doctools/_bundled/lib/schemas.py"
+"lib/soffice.py" = "doctools/_bundled/lib/soffice.py"
+"lib/styles.py" = "doctools/_bundled/lib/styles.py"
+"lib/text_fixes.py" = "doctools/_bundled/lib/text_fixes.py"
 # ⚠ 这里**不能**写 `"../dev/lib/xxx.py"` 这种跨仓源端（2026-08-02 实测撤销）。
 # force-include 的源端相对 project root 解析，而兄弟目录 `dev/` 只在本机存在 ——
 # GitHub runner / 任何别人的机器上构建当场
