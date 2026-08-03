@@ -256,10 +256,17 @@ convert 2 · dispatch 1 = 93 条（另 8 条别名共用同一 parser，不单�
 + rc=0 + 源件仍变）：加了就再没有任何一条 smoke 覆盖 `_finish_gate` 的 FAIL 分支，
 而那是这两条写盘动词唯一的安全网。
 
-⚠ **`renumber-fig` 的 `renum.EMPTY_RC=3` 分支现在没有 smoke 覆盖**：加强后的 fixture
-连 `--cn-section --kind 表 --check` 都非空（实测 rc=2「重复号 `{'1': [1]}`」）。
-要覆盖 3 必须另造一份零题注 fixture —— **不能给 `renumber-fig` 加第二行**，
-`_verb_specs._build()` 会判重复动词。
+**`renum.EMPTY_RC=3` 的回归门单开一个文件**：`scripts/document/tests/test_renum_empty_set.py`
+（7 条）。冒烟轴按设计是「一条动词一份标准 fixture」，装不下「同一条动词在空集上的
+行为」—— 而加强后的 fixture 连 `--cn-section --kind 表 --check` 都非空（实测 rc=2
+「重复号 `{'1': [1]}`」），给 `renumber-fig` 加第二行又会被 `_verb_specs._build()`
+判重复动词。所以它不进 `_verb_specs`。
+
+⚠ 立这个文件的直接原因是**它一度真的零覆盖**：`EMPTY_RC` 与加强 fixture 是同一轮
+落的，于是新判据刚写完就被自己那轮的 fixture 绕过 —— 谁把 `_empty_set_exit` 改回
+`return`，92 条 smoke 一条都不会红。反向验证：注入 `return` → 本文件 6 红 / 恢复后 7 绿。
+第 7 条是**非空对照**（有 2 条图题注的文档不许被判成空集），没有它，把
+`_empty_set_exit` 挪到函数开头无条件调用也能让前 6 条全绿。
 
 ⚠ **`mutates` 是布尔的，看不见「部分退化」**：2026-08-03 把 `caption_re.DASH_CHARS`
 注回只认 ASCII（本仓真发生过的那类回归），`strip outlinelvl` 的 `processed` 从 2 掉到 1，
@@ -284,9 +291,14 @@ convert 2 · dispatch 1 = 93 条（另 8 条别名共用同一 parser，不单�
 
 | | |
 |---|---|
-| 分发能力对账门（构建可移植 + 中立 HOME 下实测可用动词数 == 声明值） | `python3 tools/check_wheel_selfcontained.py` |
+| 分发能力对账门（A 构建可移植 · B 中立 HOME 下可用动词数 == 声明值 · C 包内副本 == HEAD） | `python3 tools/check_wheel_selfcontained.py` |
 
 **wheel 有条件可分发**（2026-08-03 实测 **49/49 全起得来**；同日中途 48/49、08-02 是 47/49、08-02 上午还是 0/49）。
+
+⚠ **判据 A 在 08-03 之前是假绿**：它验的是「在没有兄弟 `dev/` 的位置构建成功」，
+但 `lib/llm_client.py` 那条指向仓外绝对路径的 symlink 让构建暗中依赖本机路径，
+在别的机器上 `hatchling.build.build_wheel` 直接 `FileNotFoundError` 退出。
+详见下面判据 C 那节 —— 那个洞是判据 C 补回实现后**第一次运行**抓到的。
 
 ⚠ 这个 49 是**按工作树快照**测的，不是按 HEAD。本门 `git archive` 的 ref 写死是 `HEAD`，
 所以 image-caption / text-fmt / pyproject 三处改动 commit 之前直接跑它必红（rc=2，
@@ -372,15 +384,44 @@ index 替身」，**2026-08-03 已删**：hq-devlib 改成 git 直接引用之�
 代价是本门现在**要能上网 + 要有 devtools 私库读权限**，两者缺一即 `SystemExit(2)`
 （fail-closed，不退化成假绿；反向验证：把 URL 换成不存在的仓，本门实测 rc=2 并打出
 `Repository not found`）。装包那一步走真实环境，跑动词时 `HOME`/`PYTHONPATH` 照样中立。
-| 只看实测能力不判定（改 `DECLARED_WORKING` 之前先跑它） | `python3 tools/check_wheel_selfcontained.py --scan` |
-
 （`--tier struct` / `--tier full` 是 2026-08-02 写进本文却从未存在过的 flag，
-已按实际 `--help` 更正。）
+已按实际 `--help` 更正。改 `DECLARED_WORKING` 之前先跑
+`python3 tools/check_wheel_selfcontained.py --scan` 看实测，它只打印不判定。）
 
 **「两份副本会不会漂」的答案是「仓库里根本没有第二份」**：`_bundled/` 只存在于构建
-产物中，是构建那一刻从工作树 checkout 的逐字节快照。门里那条等式
-（包内文件集 == `git ls-files scripts lib config schemas`，且逐文件 sha256 相同）
-就是这句话的机器判据，**两个方向都查**（多一个/少一个都判红）。
+产物中，是构建那一刻的逐字节快照。**判据 C** 就是这句话的机器判据：包内文件集 ==
+`git ls-tree -r HEAD -- scripts lib config schemas`，且逐文件 sha256 相同，
+**两个方向都查**（多一个/少一个都判红）。
+
+⚠ **这条判据 2026-08-02~08-03 之间只存在于文档里**：08-02 重写这道门时它被删掉，
+而本文与 `pyproject.toml` 继续指着它说「漂移有人管」（`grep sha256\|ls-files` 当时
+零命中）。一道被文档背书、实际不存在的门比没有门更坏 —— 读的人不会再去查。
+08-03 已按文档承诺补回实现。
+
+判据 C 补回来的**第一次运行就抓到一个致命问题**：`lib/llm_client.py` 是 git 里
+mode 120000 的 **symlink**，指向仓外绝对路径 `~/Dev/tools/dev/scripts/tools/llm_client.py`。
+原来 `"lib" = "doctools/_bundled/lib"` 整目录 force-include，于是**构建本身**依赖
+那条绝对路径在本机解析得开 —— 实测把目标换成悬空链接后：
+
+```
+FileNotFoundError: [Errno 2] No such file or directory: '<proj>/lib/llm_client.py'
+error: Call to `hatchling.build.build_wheel` failed (exit status: 1)
+```
+
+**即这个 wheel 在这台机器之外根本构建不出来，而判据 A 一直在打 ✓**（它在本机构建，
+绝对路径恰好指得到）—— 与 08-02 那次 `$HOME` 假绿是同一形状：验「别的机器行不行」
+时把本机的东西喂了进去。`[tool.hatch.build.targets.wheel].exclude` 救不了，
+**force-include 不受 exclude 约束**（实测加了照样在包里）。
+
+修法不是把文件拷一份进仓（那会造出第二份 SSOT），而是让它由 **`hq-devlib` 出**：
+总部包已把 `scripts/tools/llm_client.py` 装进 site-packages 顶层，wheel 场景
+`from llm_client import chat` 照样解析得到，本机场景仍走 `lib/` 下那条 symlink，
+**两条路都不动任何一行 import**。doctools 侧 `lib` 改**逐文件** force-include
+（16 行）把该 symlink 排除在外。漏加新文件不会静默 —— 判据 C 的「少一个」就是为它准备的。
+
+判据 C 对 symlink 用的是**反向断言**：既不要求它在包里，也**不许**它在包里
+（进了包 = 把机器依赖打了进去）。反向验证：把 `lib` 改回整目录写法 → 判据 C 判红并
+点名 `仓外 symlink 混入: lib/llm_client.py`。
 
 ⚠ `cli_surface` / `cli_forward_probe` **看不见包内副本那条分支** —— 它们在工作树里跑，
 命中的永远是第一条。wheel-only 分支唯一的测法就是上面这道门真去装一遍。
@@ -423,6 +464,12 @@ python3 tools/script_graph.py --open     # 99 脚本 · 365 引用 · 93 动词 
 
 ⚠ 清单里的**格式轴那一列是信号计数的启发式**（`FORMAT_SIG`），与边和动词映射不同级，
 别拿它当事实用；页面顶部也这么标了。
+
+⚠ **动词轴解不出来 = `exit 2`，不是打一行 ⚠ 就照常出图**（2026-08-03 改）。
+原来 `verb_map()` 载入失败只 print 一行警告、**rc 照样 0** —— 实测注入一句 ImportError
+后，输出仍是「106 个脚本 · 374 条引用 · 0 个没人引用」、退出码 0，而三视图里整整一视图
+已经空了。本脚本挂在必跑闸门清单里，它的 rc=0 被当成「动词映射对得上」的证据引用过，
+那个引用当时不成立。
 
 孤儿判据是三条证据全无：代码里没人引用 + 没有文档点名 + 不是顶层入口。
 **「代码里没人 import」单独不算死** —— 一多半脚本是文档告诉我去敲的。

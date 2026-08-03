@@ -354,6 +354,16 @@ def build() -> dict:
     verbs, verb_warn = verb_map()
     if verb_warn:
         print(f"⚠ {verb_warn}", file=sys.stderr)
+    # ⚠ 动词轴塌了必须判红（2026-08-03 补，核验镜头实测这里原来是 fail-open）：
+    # `verb_map()` 载入失败时返回 `([], 原因)`，原来只 print 一行 ⚠ 就照常出图、**rc=0**。
+    # 实测注入一句 ImportError 后，输出仍是「106 个脚本 · 374 条引用 · 0 个没人引用」、
+    # 退出码 0 —— 而三视图里整整一视图（93 条动词落到哪个脚本）已经空了。
+    # 本脚本挂在必跑闸门清单里，它的 rc=0 被当成「动词映射对得上」的证据引用过，
+    # 那个引用当时不成立。空集不报绿，这条与 build() 开头「一个脚本都没扫到」同规格。
+    if not verbs:
+        print(f"⛔ 动词轴整个塌了（{verb_warn or '解出 0 条动词'}）—— 三视图少一视图，"
+              "拒绝出一张看着完整的图并报 rc=0", file=sys.stderr)
+        raise SystemExit(2)
     by_impl: dict[str, list[dict]] = defaultdict(list)
     for v in verbs:
         for s in v["impl"]:
