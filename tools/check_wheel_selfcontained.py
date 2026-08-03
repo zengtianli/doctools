@@ -71,16 +71,41 @@ ROOT = Path(__file__).resolve().parents[1]
 #
 # ⚠ 这个数只说明「动词起得来」（每条敲 `--help`，import 链全通），**不等于**
 # 每条动词的完整功能都在别的机器上验过。别把它当功能覆盖率读。
-DECLARED_WORKING = 49
+# 47 而不是 49：`image-caption`（rc=1）与 `text-fmt`（rc=2）的 `--help` 本身就非 0，
+# 在本机工作树上同样非 0 —— 既有问题，不是分发引入的。判据同时看 returncode 之后
+# 它们如实落进 broken；修好那两条再把这个数改回 49。
+DECLARED_WORKING = 47
 
 
-def _tops() -> list[str]:
-    sys.path.insert(0, str(ROOT / "scripts" / "document"))
-    import docx_cli                                        # noqa: E402
-    p = docx_cli._build_parser()
-    names = {n for a in p._actions
-             if isinstance(a, argparse._SubParsersAction) for n in a.choices}
-    return sorted(names | set(docx_cli.CMD_TABLE))
+_ENUM_SNIPPET = """
+import argparse, json, importlib.util, sys
+spec = importlib.util.find_spec("doctools")
+import doctools.cli as c
+m = c._load_docx_cli()
+p = m._build_parser()
+names = {n for a in p._actions if isinstance(a, argparse._SubParsersAction) for n in a.choices}
+print(json.dumps(sorted(names | set(m.CMD_TABLE))))
+"""
+
+
+def tops_from_wheel(py: Path, env: dict) -> list[str]:
+    """动词清单必须**从被测 wheel 里**枚举，不能从工作树。
+
+    原来是 `sys.path.insert(ROOT/"scripts"/"document"); import docx_cli` —— 那是
+    **工作树**的 parser，而被测 wheel 是 `git archive HEAD` 构建的，两者可以不一致。
+    2026-08-02 反向验证实证：往工作树 CMD_TABLE 注入一条 wheel 里根本没有的
+    `ghost-verb-not-in-wheel`，再按本门红字提示把声明值 +1，本门当场报
+    「50/50 可用 ✓」——而真敲那条动词是 `rc=2 未知子命令`。
+    这正是本门 docstring 自称杀掉的那类假绿，机制只是从 verbs 打印挪到了枚举源。
+    """
+    r = subprocess.run([str(py), "-c", _ENUM_SNIPPET], capture_output=True, text=True,
+                       cwd="/tmp", env=env, timeout=120)
+    if r.returncode != 0:
+        print(f"⛔ 从 wheel 里枚举动词失败 —— 拒绝退回工作树枚举\n{r.stderr[-400:]}",
+              file=sys.stderr)
+        raise SystemExit(2)
+    import json as _json
+    return _json.loads(r.stdout.strip().splitlines()[-1])
 
 
 def build_portable(workdir: Path) -> Path | None:
@@ -153,7 +178,7 @@ def probe_capability(whl: Path, workdir: Path) -> tuple[int, int, dict[str, str]
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     env["HOME"] = str(fake_home)
 
-    tops = _tops()
+    tops = tops_from_wheel(py, env)
     if not tops:
         print("⛔ 一个顶层动词都没枚举到 —— 判据坏了，拒绝报绿", file=sys.stderr)
         raise SystemExit(2)
@@ -161,8 +186,14 @@ def probe_capability(whl: Path, workdir: Path) -> tuple[int, int, dict[str, str]
     for n in tops:
         p = subprocess.run([str(exe), n, "--help"], capture_output=True, text=True,
                            cwd="/tmp", env=env, timeout=120)
+        # 判据必须同时看 **returncode** 和 import 错误。原来只 grep stderr 里的
+        # "No module named"，于是「未知子命令 rc=2」「argparse 报错 rc=2」这类
+        # 启动崩溃一条都拦不住 —— 实测 image-caption rc=1 / text-fmt rc=2 当时被计为 ok。
         if "No module named" in p.stderr:
-            broken[n] = p.stderr.split("No module named")[-1].strip().splitlines()[0]
+            broken[n] = f"ImportError: {p.stderr.split('No module named')[-1].strip().splitlines()[0]}"
+        elif p.returncode != 0:
+            first = (p.stderr.strip().splitlines() or [""])[0][:60]
+            broken[n] = f"rc={p.returncode} {first}"
         else:
             ok += 1
     return ok, len(tops), broken
@@ -180,8 +211,8 @@ def main() -> int:
 
     print(f"  判据 B 实测：clean venv + 中立 HOME 下 {ok}/{total} 个顶层动词可用")
     if broken:
-        print(f"  缺的模块：{', '.join(sorted(set(broken.values())))}"
-              f"（{len(broken)} 个动词受影响）")
+        for n, why in sorted(broken.items()):
+            print(f"    ✗ {n:20} {why}")
     if scan_only:
         return 0
     if ok != DECLARED_WORKING:
@@ -192,8 +223,8 @@ def main() -> int:
         return 1
     print(f"✓ 判据 B：实测可用动词数 == 声明值 {DECLARED_WORKING}")
     if DECLARED_WORKING < total:
-        print(f"ℹ 当前 wheel **不可分发**：{total - DECLARED_WORKING} 条动词依赖总部 "
-              f"~/Dev/tools/dev/lib 的平铺模块。出路见本文件 DECLARED_WORKING 处的注释。")
+        print(f"ℹ {total - DECLARED_WORKING} 条动词起不来（原因见上面逐条列出的 rc / "
+              f"ImportError）。这不必然是分发问题 —— 本机工作树上同样非 0 的属既有问题。")
     return 0
 
 

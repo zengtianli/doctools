@@ -105,5 +105,11 @@ packages = ["src/doctools"]
 # tools/check_wheel_selfcontained.py 的 DECLARED_WORKING，实测对不上就判红
 # （多一条少一条两个方向都堵）。
 
-[tool.uv.sources]
-hq-devlib = { workspace = true }
+# ⚠ 这里**不能**写 `[tool.uv.sources] hq-devlib = { workspace = true }`（2026-08-02 撤）。
+# member 自己的 uv.sources 在**独立 checkout** 里照样被解析，而那时根本没有 workspace：
+#   × Failed to build `doctools @ …`
+#   ╰─▶ `hq-devlib` references a workspace in `tool.uv.sources`, but is not a workspace member
+# CI 的装依赖步就是 `uv sync`，于是 CI 从那个 commit 起全红、11 道闸门一道都不执行 ——
+# 与 7735240 修掉的「CI 从来没绿过」是同一个病，只是机制从 force-include 换成了 uv.sources。
+# 正确位置是 **workspace 根** `~/Dev/pyproject.toml` 的 [tool.uv.sources]：
+# 那份只在工作区内生效，独立 checkout 看不到它。

@@ -196,7 +196,17 @@ docx_cli 的「参数错误 rc=2」撞码，runner 不能把 2 一律当失败�
 |---|---|
 | 分发能力对账门（构建可移植 + 中立 HOME 下实测可用动词数 == 声明值） | `python3 tools/check_wheel_selfcontained.py` |
 
-**wheel 可分发**（2026-08-02 实测 49/49，同日上午还是 0/49）。本仓运行时依赖总部
+**wheel 有条件可分发**（2026-08-02 实测 **47/49 起得来**，同日上午还是 0/49）。
+
+⚠ **「有条件」三个字不能省**：`hq-devlib` 没发到任何公开 index，所以**只拿
+doctools 的 wheel 会直接解析失败**（`Because hq-devlib was not found in the package
+registry …`），不是「装上后几条动词不能用」，是 pip 一步都进不去。
+成立的前提是两个 wheel 摆在同一个 `--find-links` 目录里。要真正可分发，
+必须先把 `hq-devlib` 发到某个 index（或改成 git URL 依赖）——**这一步还没做**。
+另：`image-caption`(rc=1) 与 `text-fmt`(rc=2) 的 `--help` 本身就非 0，
+在本机工作树上同样非 0，属既有问题，故声明值是 47 不是 49。
+
+本仓运行时依赖总部
 `~/Dev/tools/dev/lib/` 的 6 个**平铺模块**（finder / file_ops / display /
 parallel_contract / usage_log / env，共 1156 行）。它们原来不是包、只能靠 sys.path
 注入导入，所以「声明成 dependency」这条路当时走不通；现在总部仓把这 6 个打成了
