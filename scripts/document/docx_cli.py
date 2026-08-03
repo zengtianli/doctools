@@ -42,24 +42,38 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-# ─── parallel_contract 兜底导入 ──────────────────────────────────────────
+# ─── parallel_contract：三条来源，本机源码树优先 ──────────────────────────
+# 1) 总部工作树 `~/Dev/tools/dev/lib`（本机 SSOT，改了立刻生效）
+# 2) `<根>/lib`（wheel 里 force-include 的镜像；本机这里没有 parallel_contract.py）
+# 3) 装出来的 `hq-devlib` 包（site-packages 顶层，见 pyproject 的 dependencies）
+#
+# 第 3 条是 2026-08-02 新增的**分发通路**：那 6 个总部平铺模块本身不是包，
+# 单靠 sys.path 注入永远出不了这台机器 —— 实测装到中立 HOME 的 clean venv 里
+# **0/49** 条动词能跑，全死在 `No module named 'parallel_contract'`。总部仓打成
+# `hq-devlib` 之后本仓声明依赖，同一测法变 **49/49**。
+#
+# 这里只**加**来源、不改优先级：`_LIB` 仍是 insert(0)（本机总部工作树说了算），
+# `_BUNDLED_LIB` 仍是 **append 不是 insert(0)**（`<根>/lib` 里有 styles.py /
+# schemas.py / progress.py 这些与他处同名的模块，顶到首位会改变全进程解析优先级）。
+# site-packages 排在两者之后，所以本机行为一个字节都没变。
+# 目录不存在就不往 sys.path 里塞：别的机器上 `~/Dev` 根本没有，塞一条死路径只会
+# 让下面的报错信息指向一个不存在的地方。
 _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
-if str(_LIB) not in sys.path:
+if _LIB.is_dir() and str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
-# 别的机器上没有 ~/Dev —— 而缺 parallel_contract 在这里是 **fail-closed exit 2**，
-# 不是降级，所以装出来的 wheel 会一条动词都跑不了。wheel 把这个总部 SSOT 镜像到了
-# `<根>/lib/`（见 pyproject 的 force-include），故同源目录也纳入搜索。
-# **append 不是 insert(0)**：`<根>/lib` 里有 styles.py / schemas.py / progress.py 这些
-# 与他处同名的模块，把它顶到 sys.path 首位会改变全进程的解析优先级。这里只是要多一个
-# 兜底来源，不是要提权。本机行为因此完全不变：`<repo>/lib` 没有 parallel_contract.py，
-# 解析照旧落到上面的 _LIB。（形状对齐 scripts/data/data.py 既有先例。）
 _BUNDLED_LIB = Path(__file__).resolve().parents[2] / "lib"
 if str(_BUNDLED_LIB) not in sys.path:
     sys.path.append(str(_BUNDLED_LIB))
 try:
     from parallel_contract import add_parallel_args, run_batch, parse_batch_jsonl  # type: ignore
 except ImportError as e:  # pragma: no cover
-    print(f"[docx_cli.py] FATAL: cannot import parallel_contract from {_LIB} / {_BUNDLED_LIB}: {e}", file=sys.stderr)
+    # 缺它是 **fail-closed exit 2 不是降级** —— 没有 parallel_contract 就没有
+    # --batch/--phases/--defer，同一版 CLI 在两台机器上 flag 面不一样是最难查的漂移。
+    print(f"[docx_cli.py] FATAL: cannot import parallel_contract: {e}\n"
+          f"  找过：{_LIB}（总部工作树）· {_BUNDLED_LIB}（包内镜像）· 已装的包\n"
+          f"  修法：pip install hq-devlib   （= 总部 ~/Dev/tools/dev/lib 的 6 个平铺模块，\n"
+          f"        本仓 pyproject 已声明为依赖；正常 `pip install doctools` 会自动带上它）",
+          file=sys.stderr)
     sys.exit(2)
 
 # ─── 旧脚本同目录定位 ────────────────────────────────────────────────────

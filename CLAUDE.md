@@ -196,15 +196,30 @@ docx_cli 的「参数错误 rc=2」撞码，runner 不能把 2 一律当失败�
 |---|---|
 | 分发能力对账门（构建可移植 + 中立 HOME 下实测可用动词数 == 声明值） | `python3 tools/check_wheel_selfcontained.py` |
 
-⚠ **wheel 当前不可分发**（2026-08-02 实测 0/49）。本仓运行时依赖总部
+**wheel 可分发**（2026-08-02 实测 49/49，同日上午还是 0/49）。本仓运行时依赖总部
 `~/Dev/tools/dev/lib/` 的 6 个**平铺模块**（finder / file_ops / display /
-parallel_contract / usage_log / env，共 1156 行）——它们不是包、只能靠 sys.path
-注入导入，**声明成 dependency 也没用**。在本机验「别的机器能不能用」时
-**必须中和 `$HOME`**：`docx_cli.py` 有一句 `Path.home()/"Dev"/"tools"/"dev"/"lib"`
-兜底导入，不中和就会把同一个 wheel 测成 49/49（实测中和后是 0/49）。
-两条出路见 `tools/check_wheel_selfcontained.py` 的 `DECLARED_WORKING` 注释，**需要人拍板**。
-| 只对账不装（快） | `… --tier struct` |
-| 发版前（补完整依赖安装） | `… --tier full` |
+parallel_contract / usage_log / env，共 1156 行）。它们原来不是包、只能靠 sys.path
+注入导入，所以「声明成 dependency」这条路当时走不通；现在总部仓把这 6 个打成了
+分发名 **`hq-devlib`**（`lib/*.py` 零改动、44 处 sys.path 注入原样继续工作），
+本仓 `pyproject.toml` 声明 `hq-devlib>=0.1` + `[tool.uv.sources]` 指回 workspace
+member `tools/dev`。**本机行为一个字节没变**：`hq-devlib` 在 workspace 里是
+virtual，`uv sync` 不会把它装进共享的 `~/Dev/.venv`（装了也只是多一条排在
+sys.path 注入之后的来源）。
+
+⚠ 在本机验「别的机器能不能用」时**必须中和 `$HOME`**：`docx_cli.py` 有一句
+`Path.home()/"Dev"/"tools"/"dev"/"lib"` 兜底导入，不中和的话 0/49 的 wheel 也能
+测成 49/49 —— 2026-08-02 上午就是这么报出一次假绿的。这门自己中和（`HOME` 指空
+目录 + 清 `PYTHONPATH`），别绕过它手验。
+
+⚠ 判据 B **带依赖装**（`pip install <whl>`，不是 `--no-deps`）。`--no-deps` 装法下
+这门永远只能测出 0，而且卡点会随修复一路搬家（parallel_contract → yaml → lxml），
+把「依赖声明对不对」这个真问题挡在门外。`hq-devlib` 尚未发到公开 index，门里先在
+本地把兄弟目录 `../dev` 构建成 wheel 丢进 `--find-links` 目录当替身 —— 那只影响
+**装包**那一步，跑动词时 `HOME`/`PYTHONPATH` 照样是中立的。
+| 只看实测能力不判定（改 `DECLARED_WORKING` 之前先跑它） | `python3 tools/check_wheel_selfcontained.py --scan` |
+
+（`--tier struct` / `--tier full` 是 2026-08-02 写进本文却从未存在过的 flag，
+已按实际 `--help` 更正。）
 
 **「两份副本会不会漂」的答案是「仓库里根本没有第二份」**：`_bundled/` 只存在于构建
 产物中，是构建那一刻从工作树 checkout 的逐字节快照。门里那条等式
@@ -217,12 +232,20 @@ parallel_contract / usage_log / env，共 1156 行）——它们不是包、只
 clean venv 装完 `doctools --version` 直接 `FATAL: 找不到实现入口` rc=2。
 
 ⚠ `parallel_contract`（总部 SSOT，`~/Dev/tools/dev/lib/`）**不在本仓**，而
-`docx_cli.py` 缺它是 **fail-closed exit 2 不是降级** —— wheel 不带它就一条动词都跑不了，
-故一并 force-include 进 `_bundled/lib/`（纯 stdlib，零传递依赖）。
-`docx_cli.py` / `pdf_cli.py` 因此各多**追加**一个 `<根>/lib` 搜索路径
-（**append 不是 insert(0)**，`lib/` 下有 styles.py 等同名模块，提权会改全进程解析优先级；
-形状对齐 `scripts/data/data.py` 既有先例）。本机行为不变：`<repo>/lib` 里没有
-parallel_contract.py，解析照旧落到 `~/Dev/tools/dev/lib`。
+`docx_cli.py` 缺它是 **fail-closed exit 2 不是降级** —— 不解决就一条动词都跑不了。
+它现在有**三条来源，按这个顺序**：
+
+| # | 来源 | 谁在用 |
+|---|---|---|
+| 1 | `~/Dev/tools/dev/lib`（`insert(0)`，**目录不存在就不塞**） | 本机所有直接敲绝对路径的调用 |
+| 2 | `<根>/lib`（**append 不是 insert(0)**） | 留给包内镜像；本机这里**没有** parallel_contract.py |
+| 3 | 装出来的 `hq-devlib` 包（site-packages 顶层） | wheel 装到别的机器上时 |
+
+2 用 append 的理由：`lib/` 下有 styles.py / schemas.py / progress.py 等与他处同名的
+模块，顶到 sys.path 首位会改变全进程解析优先级（形状对齐 `scripts/data/data.py`
+既有先例）。3 排在最后，所以**本机行为一个字节没变** —— 解析照旧落到 1。
+`pdf_cli.py` 同款三来源，但它的 except 分支是**静默降级**（丢 `--batch/--phases/
+--defer/--fanout-evidence`，只留 `--workers`），比 exit 2 更难查，别以为它无所谓。
 
 ## 全仓脚本关系图 = 一页三视图（2026-08-02 扩）
 

@@ -45,9 +45,10 @@ from typing import Any, Callable, Optional
 
 # ─── parallel_contract for --workers/--max-workers cohesion ────────────
 _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
-if str(_LIB) not in sys.path:
+if _LIB.is_dir() and str(_LIB) not in sys.path:   # 别的机器上没有 ~/Dev，不塞死路径
     sys.path.insert(0, str(_LIB))
-# 同 docx_cli.py：wheel 里 parallel_contract 镜像在 `<根>/lib/`。这里尤其要接上 ——
+# 同 docx_cli.py：三条来源 = 总部工作树 / `<根>/lib` 镜像 / 装出来的 hq-devlib 包。
+# 这里尤其要接上 ——
 # 下面那个 except 分支是**静默降级**（只留 --workers，丢掉 --batch/--phases/--defer/
 # --fanout-evidence），真走到就等于「同一版 pdf_cli 在两台机器上 flag 面不一样」，
 # 是最难查的一类漂移。append 理由同 docx_cli.py（不改本机解析优先级）。

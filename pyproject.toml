@@ -13,6 +13,15 @@ dependencies = [
     # （2026-08-02 ubuntu:24.04 容器实测，smoke 13 红里的第 13 条）。
     "docxcompose>=1.4",
     "fastapi>=0.135.3",
+    # 总部 ~/Dev/tools/dev/lib 的 6 个平铺模块（display/env/file_ops/finder/
+    # parallel_contract/usage_log）的**可分发形态**。本仓 44 处 sys.path 注入照旧
+    # 工作，这条只是让 wheel 装到别的机器上时那 6 个名字也 import 得到 ——
+    # 没有它，`doctools <任意动词>` 一律死在
+    #   ModuleNotFoundError: No module named 'parallel_contract'（实测 0/49）。
+    # 分发名是 hq-devlib 不是 devtools：PyPI 上 devtools 已被别人占用，写错名会
+    # 静默装回一个完全无关的调试打印库。工作区内它由 [tool.uv.sources] 指回
+    # workspace member `tools/dev`，不走网络。
+    "hq-devlib>=0.1",
     "lxml>=6.0.3",
     "matplotlib>=3.10.8",
     "numpy>=2.4.4",
@@ -89,9 +98,12 @@ packages = ["src/doctools"]
 #
 # 本仓运行时确实依赖总部 ~/Dev/tools/dev/lib 的 6 个平铺模块
 # （finder×10 · file_ops×10 · display×9 · parallel_contract×3 · usage_log×1 · env×1）。
-# 它们不是包、只能靠 PYTHONPATH 导入，所以**声明成 dependency 也没用**。
-# 现状因此是：wheel 里 35/49 个顶层动词能跑，14 个需要总部模块的跑不了。
-# 这个能力边界**声明在 doctools/_capability.py，由 tools/check_wheel_selfcontained.py
-# 逐条对账**（多一条少一条都判红），不再假装"自包含"。
+# 2026-08-02 之前它们不是包、只能靠 PYTHONPATH 导入，所以「声明成 dependency」这条路
+# 走不通，wheel 装到别的机器上 **0/49** 条动词能跑。现在总部仓把那 6 个打成了
+# `hq-devlib`（lib/*.py 零改动），本仓在上面 [project].dependencies 里声明它 ——
+# 同一测法变 **49/49**。能力值不写在注释里赌人自觉：它是
+# tools/check_wheel_selfcontained.py 的 DECLARED_WORKING，实测对不上就判红
+# （多一条少一条两个方向都堵）。
 
 [tool.uv.sources]
+hq-devlib = { workspace = true }
