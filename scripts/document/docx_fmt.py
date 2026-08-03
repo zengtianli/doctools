@@ -1412,6 +1412,43 @@ def process_docx(input_file, cfg=None):
         return False
 
 
+TEXT_USAGE = """用法: docx_fmt.py text [选项] <docx...>
+     (等价入口: docx_cli.py text-fmt [选项] <docx...>)
+
+文本规范化：中文引号/标点/单位。默认另存 `<名>_fixed.docx`，源文件不动。
+不给文件名时从 Finder 当前选中项取（选中 .docx 后直接跑）。
+
+规则开关（三个都不给 = 三项全做；给了任一项则只做给出的那些）：
+  --quotes          修中文引号（"" '' 配对方向），并把引号拆成独立 run 设宋体
+  --punct           修标点（全角/半角、重复标点等）
+  --units           统一单位写法（带词边界，不误伤「小时候」「Item2」）
+  --no-quote-font   只改引号字符，不给引号单独设宋体（关掉排版动作）
+
+范围（不给 = 全域）：
+  --scope a,b,c     只处理这些域，逗号分隔。可选值:
+                      body(正文) table(表格) revision(审阅修订)
+                      comments(批注) notes(脚注/尾注) headers(页眉页脚)
+
+输出与页眉页脚：
+  --in-place        原地写回源文件，先备份 .bak-时间戳（默认另存 _fixed.docx）
+  --strip-headers   额外删掉页眉页脚引用（headerReference/footerReference）
+  --keep-headers    兼容 no-op：保留页眉页脚已是默认行为
+  --strip-only      只删页眉页脚，正文一个字都不改（隐含 --strip-headers）
+
+  -h, --help        显示本用法并退出
+
+示例:
+  # 全套规范化，另存 报告_fixed.docx
+  python3 scripts/document/docx_fmt.py text 报告.docx
+
+  # 只修引号、只碰正文和表格，原地写回并留备份
+  python3 scripts/document/docx_fmt.py text --quotes --scope body,table --in-place 报告.docx
+
+  # 走 docx_cli 等价入口，批量处理
+  python3 scripts/document/docx_cli.py text-fmt --punct a.docx b.docx
+"""
+
+
 def text_main(argv):
     """text 子命令主入口（原 docx_text_formatter.py __main__ 块，argv 显式穿参）。
 
@@ -1421,6 +1458,11 @@ def text_main(argv):
     """
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = list(argv)
+    # -h/--help 必须在 --scope 取值与未知 flag 判定之前拦：手搓解析没有 argparse
+    # 的 help action，不拦就落进「未知参数」分支 rc=2（2026-08-03 修）
+    if any(a in ("-h", "--help") for a in _argv):
+        print(TEXT_USAGE)
+        return 0
     _flags = {"--quotes", "--punct", "--units", "--no-quote-font",
               "--in-place", "--keep-headers", "--strip-headers", "--strip-only"}
     _sel = {a for a in _argv if a in _flags}

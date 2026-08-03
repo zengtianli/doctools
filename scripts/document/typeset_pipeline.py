@@ -79,6 +79,11 @@ def main(argv=None):
         work = a.out or a.docx.with_name(a.docx.stem + "_typeset.docx")
         shutil.copy2(a.docx, work)
 
+    # steps 三元组：(名称, argv, keep_rcs)。keep_rcs = 「非 0 但不该回滚」的退出码集合。
+    # 目前只有 ③ 用到：renum.py 的 EMPTY_RC=3 表示「一个图题注都没枚举到」（2026-08-03
+    # 立的空集判据，铁律「拒绝在空集上报绿」），**不是失败**。它必须留在这里而不是
+    # 被当 rc!=0 回滚 —— 该步同时带 --fix-center，居中是与题注枚举正交的真活，
+    # 已经写进盘了；一律回滚会把居中成果连同「没有题注」这个无害事实一起撤掉。
     steps = []
     # ⓪ restyle：输入若被剥样式（pStyle 全空），且 --ref 是同源 golden → 按文本把
     #    院样式移植回来。restyle 只套「目标无 pStyle + golden 有同文本」的段，非同源
@@ -86,31 +91,33 @@ def main(argv=None):
     if a.ref:
         steps.append(("⓪ restyle 重套院样式(对同源参照)",
                       [sys.executable, str(TYPESET_OPS), "restyle", str(work),
-                       "--ref", str(a.ref), "--apply", "--no-backup"]))
+                       "--ref", str(a.ref), "--apply", "--no-backup"], ()))
     steps.append(("① styleset 样式池清理",
-                  [sys.executable, str(DC), "styleset", "restore", str(work)]))
+                  [sys.executable, str(DC), "styleset", "restore", str(work)], ()))
     if a.ref:
         steps.append(("② spacing 固定行距(对参照)",
                       [sys.executable, str(TYPESET_OPS), "line-spacing", str(work),
-                       "--fix", "--ref", str(a.ref), "--no-backup"]))
+                       "--fix", "--ref", str(a.ref), "--no-backup"], ()))
     steps.append(("③ figs 图号节内重排+补无号题注",
                   [sys.executable, str(DC), "renumber-fig", "--cn-section",
-                   "--fix-center", "--inplace", str(work)]))
+                   "--fix-center", "--inplace", str(work)], (3,)))
     steps.append(("③.5 center-img 图片显式居中+零缩进",
                   [sys.executable, str(TYPESET_OPS), "center-images", str(work),
-                   "--apply", "--no-backup"]))
+                   "--apply", "--no-backup"], ()))
 
     report = []
-    for name, cmd in steps:
+    for name, cmd, keep_rcs in steps:
         snap = work.with_suffix(work.suffix + ".snap")
         shutil.copy2(work, snap)
         rc, out = _run(cmd)
-        if rc != 0 or not _intact(work):
+        if (rc != 0 and rc not in keep_rcs) or not _intact(work):
             shutil.copy2(snap, work)  # 回滚
             report.append((name, "⚠ 跳过(回滚)", out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"))
         else:
             tail = next((l for l in reversed(out.splitlines()) if l.strip()), "")
-            report.append((name, "✅ 完成", tail[:60]))
+            # 空集不冒充「✅ 完成」—— 对账卡上必须看得出这步没有对象
+            status = "✅ 完成" if rc == 0 else f"○ 空集(rc={rc})"
+            report.append((name, status, tail[:60]))
         snap.unlink(missing_ok=True)
 
     # ④ port_sections（从同源 golden 精确移植节结构：分节符+横竖+页眉脚水印+封面无页眉）

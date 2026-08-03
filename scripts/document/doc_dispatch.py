@@ -534,15 +534,23 @@ def do_typeset(files) -> int:
 # ───────────────────────────────────────────── renum(docx 序号修正:标题/图/表)
 
 def _renum_has_en_figures(docx: str) -> bool:
-    """document.xml 里有英文 Figure N 引用、且没有中文 图/表 X-Y 题注 → 走英文模式。"""
-    import re as _re
+    """document.xml 里有英文 Figure N 引用、且没有中文 图/表 X-Y 题注 → 走英文模式。
+
+    2026-08-03 判据下沉 lib/caption_re（原来是两条手写字面量,违反本仓「题注编号
+    判据只有一份」的硬约束）。行为变化：中文那条原本只认 4 种短横、章号最多两段
+    （`[-－—–]` 缺 U+2011、`\\d+(?:\\.\\d+)?`）—— `图1‑2` / `图3.1.2-4` 的文档会被
+    **误判成英文稿**,于是走上英文线、中文题注一个都不重排,而英文线又是空集。
+    caption_re 的字符类是五种短横 + 全角句点 + 不限深度,两个方向都收得住。
+    """
     import zipfile as _zip
+    sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+    import caption_re as _cap  # 题注判据 SSOT
     try:
         xml = _zip.ZipFile(docx).read("word/document.xml").decode("utf-8", "ignore")
     except Exception:
         return False
-    cn = _re.search(r"[图表]\s*\d+(?:\.\d+)?\s*[-－—–]\s*\d+", xml)
-    en = _re.search(r"(?:Figure|Fig\.?)\s*\d+", xml)
+    cn = _cap.pattern(_cap.RENUM_CN_REF).search(xml)          # 图/表 X(.Y)-N，非锚定
+    en = _cap.en_citation_pattern("Figure").search(xml)       # Figure N / Fig. N
     return bool(en and not cn)
 
 
@@ -570,14 +578,25 @@ def do_renum(files, target: str = "all") -> int:
             if _run(_py("sub/renumber.py", "seq", str(out), "--no-backup"), "标题号重排(按现有深度)"):
                 failed = True
         if not failed and target in ("all", "tabfig"):
+            # renum.py 的 EMPTY_RC=3 = 「这份文档一个该类题注都没有」,不是失败：
+            # 一份只有表没有图的报告,「图」那轮必然是空集,拿它当 failed 会 break 掉
+            # 后面的「表」整轮（旧代码就是这么写的,只是当时空集恒返 0 所以没炸）。
+            EMPTY = 3
             if _renum_has_en_figures(str(out)):
-                if _run(_py("renum.py", "figures", str(out), "--inplace"), "Figure 号重排(英文)"):
+                if _run(_py("renum.py", "figures", str(out), "--inplace"),
+                        "Figure 号重排(英文)") not in (0, EMPTY):
                     failed = True
             else:
+                empty_kinds = []
                 for kind in ("图", "表"):
-                    if _run(_py("renum.py", "figures", str(out),
-                                "--cn-section", "--kind", kind, "--inplace"), f"{kind}号重排"):
+                    krc = _run(_py("renum.py", "figures", str(out),
+                                   "--cn-section", "--kind", kind, "--inplace"), f"{kind}号重排")
+                    if krc == EMPTY:
+                        empty_kinds.append(kind); continue
+                    if krc:
                         failed = True; break
+                if len(empty_kinds) == 2 and not failed:
+                    warn(f"{p.name}: 图/表题注都没枚举到,序号修正只做了标题号")
         bak = Path(str(out) + ".bak")
         if bak.exists():
             bak.unlink()  # 工作副本的中间备份,原件本身就是备份

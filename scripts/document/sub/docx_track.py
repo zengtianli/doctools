@@ -9,6 +9,11 @@ add_track_parser() 只写一遍。review 的 --no-include-ins / --no-strict 默�
 
     python3 sub/docx_track.py track-changes read input.docx [--format md|json]
     python3 sub/docx_track.py track-changes review input.docx -o out.docx -r rules.json
+    python3 sub/docx_track.py track-changes compare 原.docx 改.docx -o 修订.docx
+
+三条分支的分工：read=只读回显 · review=按规则表注入 · compare=拿两份文档比出修订。
+compare 2026-08-03 落地（此前是 `print("compare 功能将在 v2 实现。")` 的空桩，
+rc 还是 0 —— 敲下去像成功了、一件事没干）。粒度**段落级**，见下方 compare 段注释。
 """
 
 import argparse
@@ -562,6 +567,309 @@ def review_docx(
         raise
 
 
+# ── compare：两份 docx → 带 Word 修订标记的第三份 ─────────────────────────
+#
+# 粒度是**段落级**（difflib 对齐 body 顶层 w:p）：改过的段整段 w:del + 整段 w:ins，
+# 不做 run 级字符粒度 diff。做法是 surgical：以**原稿**的 zip 为底，只重写
+# word/document.xml，其余部件逐字节 verbatim + assert_parts_intact 断言。
+#
+# 为什么不用 python-docx 重建：它会剥 OLE / 原生图表（lib/docx_revise.py 开头记的
+# 丢 11 个 chart 事故），而 compare 的输入正是「一份完整的真报告」。
+#
+# 范围外的差异（表格内、页眉页脚、文本框、改稿新增的图片）不会被静默吞掉：
+# 一律进 out_of_scope 清单 → 打到 stderr + rc=3。见 _EXIT_* 常量。
+
+_EXIT_OK = 0
+_EXIT_IDENTICAL = 1        # 段落级无差异：不产出文件（禁「产一个没有修订的副本」冒充成功）
+_EXIT_USAGE = 2            # 输入不合法 / 空文档
+_EXIT_PARTIAL = 3          # 产出了修订件，但存在本引擎范围外的差异（未标注）
+
+_REL_ATTR_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+class CompareError(SystemExit):
+    """输入问题一律带上下文抛出 —— 绝不静默产出一个「没有修订标记的副本」。"""
+
+
+def _cmp_body(zf: zipfile.ZipFile):
+    root = etree.fromstring(zf.read("word/document.xml"))
+    body = root.find(qn("w:body"))
+    if body is None:
+        raise CompareError("✗ word/document.xml 里没有 w:body")
+    return root, body
+
+
+def _cmp_pstyle(p) -> str:
+    ppr = p.find(qn("w:pPr"))
+    if ppr is None:
+        return ""
+    ps = ppr.find(qn("w:pStyle"))
+    return (ps.get(qn("w:val")) or "") if ps is not None else ""
+
+
+def _cmp_text(el) -> str:
+    """可见文本：跳过 w:del / w:moveFrom 子树 —— 那是已删除的字，不参与比对
+    （否则原稿里别人未接受的删除会被当成「改稿删掉了它」再删一遍）。"""
+    from docx_xml import in_deleted  # noqa: PLC0415  局部导入：只有 compare 用得到
+    return "".join(t.text or "" for t in el.iter(qn("w:t")) if not in_deleted(t))
+
+
+def _cmp_key(p) -> tuple[str, str]:
+    """段落比对键。带上 pStyle：文本相同但一个是标题一个是正文 = 真的不同。
+    文本不做空白归一化 —— 归一化会把「只差空格」判成相同，那是假绿。"""
+    return (_cmp_pstyle(p), _cmp_text(p))
+
+
+def _cmp_blocks(body) -> list[tuple[str, str]]:
+    """body 顶层里**不参与段落 diff** 的块（表格等）的文本签名，用于范围外差异检测。"""
+    out = []
+    for k in body:
+        ln = etree.QName(k).localname
+        if ln in ("p", "sectPr"):
+            continue
+        out.append((ln, _cmp_text(k)))
+    return out
+
+
+def _cmp_part_texts(zf: zipfile.ZipFile) -> dict[str, str]:
+    """页眉/页脚/脚注/尾注等旁路 part 的文本 —— 本引擎不碰它们，但差异要报出来。"""
+    out = {}
+    for name in zf.namelist():
+        if re.fullmatch(r"word/(header\d*|footer\d*|footnotes|endnotes)\.xml", name):
+            try:
+                out[name] = _cmp_text(etree.fromstring(zf.read(name)))
+            except etree.XMLSyntaxError:
+                out[name] = "<unparsable>"
+    return out
+
+
+def _style_ids(zf: zipfile.ZipFile) -> set[str]:
+    if "word/styles.xml" not in zf.namelist():
+        return set()
+    root = etree.fromstring(zf.read("word/styles.xml"))
+    return {s.get(qn("w:styleId")) for s in root.iter(qn("w:style"))}
+
+
+def _sanitize_inserted(p, orig_style_ids: set[str], same_numbering: bool,
+                       notes: list[str]) -> None:
+    """把改稿段落搬进原稿的 zip 之前，掐断它对**改稿 rels** 的引用。
+
+    r:id / r:embed 指向的是改稿自己的 document.xml.rels；原稿包里没有那条关系，
+    直接搬过来 = Word 开门就报「文件已损坏」。所以：
+      w:hyperlink → 只摘掉 r:id（文字留着，链接失效）
+      其余（图片 w:drawing / OLE w:object …）→ 连所在 w:r 一起摘掉
+    两种都记进 notes（→ rc=3），绝不静默丢内容。
+    """
+    for el in list(p.iter()):
+        rattrs = [k for k in el.attrib if k.startswith(_REL_ATTR_NS)]
+        if not rattrs:
+            continue
+        if el.getroottree().getroot() is not p.getroottree().getroot():
+            continue  # 已被上一轮连根摘走
+        if el.tag == qn("w:hyperlink"):
+            for k in rattrs:
+                del el.attrib[k]
+            notes.append(f"新增段里的超链接已降级为纯文字（原稿包内没有该关系）：{_cmp_text(el)[:24]!r}")
+            continue
+        holder = el
+        while holder is not None and holder.tag != qn("w:r"):
+            holder = holder.getparent()
+            if holder is p:
+                holder = None
+                break
+        victim = holder if holder is not None else el
+        if victim.getparent() is not None:
+            victim.getparent().remove(victim)
+        notes.append(f"新增段里的 {etree.QName(el).localname} 已摘除"
+                     f"（引用改稿 rels，搬进原稿包会开不了门）")
+    ppr = p.find(qn("w:pPr"))
+    if ppr is None:
+        return
+    ps = ppr.find(qn("w:pStyle"))
+    if ps is not None and orig_style_ids and ps.get(qn("w:val")) not in orig_style_ids:
+        notes.append(f"新增段引用了原稿没有的样式 {ps.get(qn('w:val'))!r}（Word 会退回默认样式）")
+    if ppr.find(qn("w:numPr")) is not None and not same_numbering:
+        notes.append("新增段带自动编号(w:numPr)，而两份 numbering.xml 不同 —— 编号可能对不上")
+
+
+def _mark_para_inserted(p, ids, meta: dict) -> int:
+    """整段标插入：全部 run 包 w:ins + 段落标记也标 w:ins（Word 里能一键整段接受/拒绝）。"""
+    ppr = p.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = etree.Element(qn("w:pPr"))
+        p.insert(0, ppr)
+    rpr = ppr.find(qn("w:rPr"))
+    if rpr is None:
+        rpr = etree.SubElement(ppr, qn("w:rPr"))
+    if rpr.find(qn("w:ins")) is None:
+        mark = etree.Element(qn("w:ins"))
+        mark.set(qn("w:id"), str(next(ids)))
+        mark.set(qn("w:author"), meta["author"])
+        mark.set(qn("w:date"), meta["date"])
+        rpr.insert(0, mark)
+    n = 0
+    for r in list(p.iter(qn("w:r"))):
+        parent = r.getparent()
+        if parent is None:
+            continue
+        if any(a.tag in (qn("w:ins"), qn("w:del"), qn("w:moveFrom"), qn("w:moveTo"))
+               for a in r.iterancestors()):
+            continue  # 改稿里本就带修订标记的 run，原样搬（别人的修订不改写）
+        pos = list(parent).index(r)
+        ins = etree.Element(qn("w:ins"))
+        ins.set(qn("w:id"), str(next(ids)))
+        ins.set(qn("w:author"), meta["author"])
+        ins.set(qn("w:date"), meta["date"])
+        parent.remove(r)
+        ins.append(r)
+        parent.insert(pos, ins)
+        n += 1
+    return n
+
+
+def compare_docx(original: str, modified: str, output: str,
+                 author: str = "CC对比", date: str | None = None) -> dict:
+    """段落级对比 original vs modified，产出带 w:ins/w:del 的第三份 docx。
+
+    返回 stats dict；不产出文件的两种情形（无差异 / 只有范围外差异）也如实返回，
+    由调用方决定退出码。硬错误一律抛 CompareError（fail-closed）。
+    """
+    import difflib  # noqa: PLC0415
+
+    from docx_revise import tracked_delete_runs  # noqa: PLC0415  修订注入引擎(总部 SSOT)
+
+    src, dst, out = Path(original), Path(modified), Path(output)
+    for label, p_ in (("原稿", src), ("改稿", dst)):
+        if not p_.exists():
+            raise CompareError(f"✗ 找不到{label}：{p_}")
+    if out.resolve() in (src.resolve(), dst.resolve()):
+        raise CompareError(f"✗ 输出路径与输入相同：{out} —— 拒绝覆盖输入件")
+
+    meta = {"author": author,
+            "date": date or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+    zs, zd = zipfile.ZipFile(src), zipfile.ZipFile(dst)
+    try:
+        root, body = _cmp_body(zs)
+        _mroot, mbody = _cmp_body(zd)
+
+        o_paras = [k for k in body if k.tag == qn("w:p")]
+        m_paras = [k for k in mbody if k.tag == qn("w:p")]
+        # 空集判红：0 段落的两份文件 difflib 会安静地报「无差异」——那是最会骗人的绿
+        if not o_paras:
+            raise CompareError(f"✗ 原稿 body 里一个顶层段落都没有：{src}")
+        if not m_paras:
+            raise CompareError(f"✗ 改稿 body 里一个顶层段落都没有：{dst}")
+
+        used = [int(v) for e in root.iter() for v in [e.get(qn("w:id"))] if v and v.isdigit()]
+        ids = iter(range(max(used, default=0) + 1000, 10 ** 8))
+
+        # ── 范围外差异（本引擎不标注，但必须报出来）──────────────────────
+        notes: list[str] = []
+        if _cmp_blocks(body) != _cmp_blocks(mbody):
+            notes.append("表格等非段落顶层块存在差异（段落级引擎不标注表格改动）")
+        op, mp = _cmp_part_texts(zs), _cmp_part_texts(zd)
+        for name in sorted(set(op) | set(mp)):
+            if op.get(name) != mp.get(name):
+                notes.append(f"旁路部件 {name} 文本有差异（页眉/页脚/脚注不参与段落 diff）")
+        same_numbering = (("word/numbering.xml" in zs.namelist()) ==
+                          ("word/numbering.xml" in zd.namelist())) and (
+            "word/numbering.xml" not in zs.namelist()
+            or zs.read("word/numbering.xml") == zd.read("word/numbering.xml"))
+        o_styles = _style_ids(zs)
+
+        # ── 段落级对齐 ─────────────────────────────────────────────────
+        sm = difflib.SequenceMatcher(
+            None, [_cmp_key(p) for p in o_paras], [_cmp_key(p) for p in m_paras],
+            autojunk=False)
+        n_del = n_ins = n_ins_runs = 0
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                continue
+            if tag in ("delete", "replace"):
+                for p_ in o_paras[i1:i2]:
+                    tracked_delete_runs(p_, ids, meta, include_nontext=True)
+                    n_del += 1
+            if tag in ("insert", "replace"):
+                new_ps = [copy.deepcopy(p_) for p_ in m_paras[j1:j2]]
+                for np_ in new_ps:
+                    _sanitize_inserted(np_, o_styles, same_numbering, notes)
+                    n_ins_runs += _mark_para_inserted(np_, ids, meta)
+                    n_ins += 1
+                # 落位：原稿 o_paras[i1] 之前；i1 越界（改稿尾部新增）则贴在
+                # 最后一个顶层段落之后（sectPr 之前——sectPr 必须留在 body 末尾）
+                if i1 < len(o_paras):
+                    for np_ in new_ps:
+                        o_paras[i1].addprevious(np_)
+                else:
+                    tail = o_paras[-1]
+                    for np_ in new_ps:
+                        tail.addnext(np_)
+                        tail = np_
+
+        stats = {"deleted_paras": n_del, "inserted_paras": n_ins,
+                 "inserted_runs": n_ins_runs, "out_of_scope": notes,
+                 "orig_paras": len(o_paras), "mod_paras": len(m_paras),
+                 "out": None}
+        if n_del == 0 and n_ins == 0:
+            return stats   # 段落级无差异 → 一个字节都不写（由调用方判非 0 退出）
+
+        if out.exists():
+            bak = out.with_suffix(out.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
+            shutil.copy2(out, bak)
+            stats["backup"] = str(bak)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        new_doc = etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                                 standalone=True)
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
+            for item in zs.infolist():
+                zo.writestr(item, new_doc if item.filename == "word/document.xml"
+                            else zs.read(item.filename))
+        clear_quarantine(str(out))
+        # 部件完整性断言（fail-closed）：底件是原稿，除 document.xml 外任何部件
+        # 变动/增删都判红 —— 丢 chart / 截断部件那类事故的结构性防复发
+        assert_parts_intact(str(src), str(out), verbose=False)
+        stats["out"] = str(out)
+        return stats
+    finally:
+        zs.close()
+        zd.close()
+
+
+def cmd_track_compare(args) -> int:
+    """compare 分支：返回退出码（0 正常 / 1 无差异 / 2 输入不合法 / 3 有范围外差异）。"""
+    for attr in ("original", "modified", "output"):
+        if getattr(args, attr, None) is None:
+            print(f"错误：compare 缺少参数 {attr}", file=sys.stderr)
+            return _EXIT_USAGE
+    try:
+        st = compare_docx(args.original, args.modified, args.output,
+                          author=getattr(args, "author", "CC对比"))
+    except CompareError as e:
+        print(str(e.code) if e.code else "✗ compare 失败", file=sys.stderr)
+        return _EXIT_USAGE
+    for n in st["out_of_scope"]:
+        print(f"⚠ 范围外差异：{n}", file=sys.stderr)
+    if st["out"] is None:
+        print(f"无差异：两份文档在段落级完全相同"
+              f"（原稿 {st['orig_paras']} 段 / 改稿 {st['mod_paras']} 段），"
+              f"未产出文件 {args.output}")
+        if st["out_of_scope"]:
+            print("⚠ 但存在上列范围外差异 —— 本引擎标不了，别当成「两份一样」",
+                  file=sys.stderr)
+            return _EXIT_PARTIAL
+        return _EXIT_IDENTICAL
+    if st.get("backup"):
+        print(f"旧件已备份 → {st['backup']}")
+    print(f"完成：{st['deleted_paras']} 段标删除 / {st['inserted_paras']} 段标新增"
+          f"（{st['inserted_runs']} 个 run 包 w:ins）→ {st['out']}")
+    if st["out_of_scope"]:
+        print(f"⚠ 上列 {len(st['out_of_scope'])} 处范围外差异未写进修订标记（rc=3）",
+              file=sys.stderr)
+        return _EXIT_PARTIAL
+    return _EXIT_OK
+
+
 def cmd_track_changes(args):
     """track-changes 子命令入口"""
     if args.tc_command == "read":
@@ -590,8 +898,10 @@ def cmd_track_changes(args):
             sys.exit(1)
         print(f"完成：{count} 处替换已写入 {args.output}")
     elif args.tc_command == "compare":
-        print("compare 功能将在 v2 实现。")
-        sys.exit(1)
+        rc = cmd_track_compare(args)
+        if rc:
+            sys.exit(rc)   # 成功路径不 sys.exit：batch 的 _run_one 只 except Exception，
+                           # SystemExit(0) 会穿过它把整个 batch worker 掀了
     else:
         print("请指定子命令：read、review 或 compare")
         sys.exit(1)
@@ -621,10 +931,20 @@ def add_track_parser(sub):
                     help="允许部分规则 0 命中。默认 fail-closed：任一规则 0 命中即报错退出，"
                          "防「静默 0 处替换」被当成执行成功")
 
-    tcp = tc_sub.add_parser("compare", help="对比生成修订 (v2)")
+    tcp = tc_sub.add_parser(
+        "compare", help="对比两份 docx，生成带 Word 修订标记的第三份（段落级粒度）",
+        description="原稿 vs 改稿 → 带 w:ins/w:del 的第三份，可在 Word 里逐条接受/拒绝。",
+        epilog=(
+            "粒度 = **段落级**：改过的段整段标删除 + 整段标新增，不做 run 级字符 diff。\n"
+            "范围 = body 顶层段落；表格内 / 页眉页脚 / 脚注 / 文本框的差异标不了，\n"
+            "  但会打到 stderr 并让退出码变 3（绝不静默吞掉）。\n"
+            "退出码：0 已产出修订件 · 1 段落级无差异(不产文件) · 2 输入不合法/空文档 ·\n"
+            "  3 已产出，但存在上述范围外差异。"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     tcp.add_argument("original", help="原始 .docx")
     tcp.add_argument("modified", help="修改后 .docx")
     tcp.add_argument("--output", "-o", required=True, help="输出 .docx")
+    tcp.add_argument("--author", "-a", default="CC对比", help="修订标记作者名")
 
     return tc
 

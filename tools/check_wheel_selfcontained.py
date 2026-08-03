@@ -38,14 +38,33 @@
 修复一路搬家（parallel_contract → yaml → lxml），把「依赖声明对不对」这个真问题
 挡在门外。现在按**真实分发姿势**装：`pip install <doctools.whl>`，依赖照解。
 
-`hq-devlib`（= 总部 `~/Dev/tools/dev/lib` 的 6 个平铺模块的可分发形态）尚未发到
-任何公开 index，所以这里先在本地把它构建成 wheel 丢进一个 `--find-links` 目录，
-等价于「它在某个 index 上可取」。**这不是把本机 `~/Dev` 喂给被测 wheel** ——
-两者的区别是：`--find-links` 只影响**装包**那一步，装完之后跑动词时 `HOME` 仍是
-空目录、`PYTHONPATH` 仍被清掉，`docx_cli.py` 的 `Path.home()/"Dev"/...` 兜底照样
-摸不到任何东西。要验的正是「离开这台机器的目录布局之后还跑不跑得动」。
+`hq-devlib`（= 总部 `~/Dev/tools/dev/lib` 的 6 个平铺模块的可分发形态）现在由
+pyproject 声明成 **git 直接引用**（`hq-devlib @ git+https://github.com/zengtianli/
+devtools.git`，2026-08-03 用户拍板：走 git URL，不发 PyPI），所以装包这一步会真的
+去 GitHub clone 它。**本门原来在本地把它构建成 wheel 丢进 `--find-links` 目录当
+「它在某个 index 上可取」的替身，那一段已经删掉** —— 不是因为嫌慢，是因为它从
+声明改成直接引用的那一刻起就**永远不会被用到**：PEP 508 直接引用的优先级高于任何
+index / find-links。实测证据（2026-08-03，`uv pip install --find-links <放着
+hq_devlib-0.1.0-py3-none-any.whl 的目录> doctools-0.1.0-*.whl`）：
 
-fail-closed：构建失败 / 装不上 / 枚举为空 / 找不到总部仓，一律非 0 退出。
+    Updating https://github.com/zengtianli/devtools.git (HEAD)
+    + hq-devlib==0.1.0 (from git+https://github.com/zengtianli/devtools.git@6431dfd…)
+
+—— 本地那个 wheel 一眼都没看。留着它只会让这门看起来在测「index 上取得到」，
+而它实际测的是「git URL clone 得动」，是一段会骗人的死代码。
+
+⚠ 由此本门多了两个前置条件，红了先看是不是它们：
+  · **要能上网**；
+  · **要有 zengtianli/devtools 的读权限**（该仓是 PRIVATE，`gh repo view … --json
+    visibility` 实测）。本机走 git 的常规凭证（credential helper）即可，装包这一步
+    用的是真实环境；**只有跑动词那一步才把 `HOME` 换成空目录**。
+两者缺一 → 装包失败 → SystemExit(2)，fail-closed，不会退化成假绿。
+
+**中和 `HOME` 这条没变**：装完之后跑动词时 `HOME` 是空目录、`PYTHONPATH` 被清掉，
+`docx_cli.py` 的 `Path.home()/"Dev"/...` 兜底照样摸不到任何东西。要验的正是
+「离开这台机器的目录布局之后还跑不跑得动」。
+
+fail-closed：构建失败 / 装不上（含 clone 不动）/ 枚举为空，一律非 0 退出。
 """
 from __future__ import annotations
 
@@ -71,10 +90,34 @@ ROOT = Path(__file__).resolve().parents[1]
 #
 # ⚠ 这个数只说明「动词起得来」（每条敲 `--help`，import 链全通），**不等于**
 # 每条动词的完整功能都在别的机器上验过。别把它当功能覆盖率读。
-# 47 而不是 49：`image-caption`（rc=1）与 `text-fmt`（rc=2）的 `--help` 本身就非 0，
-# 在本机工作树上同样非 0 —— 既有问题，不是分发引入的。判据同时看 returncode 之后
-# 它们如实落进 broken；修好那两条再把这个数改回 49。
-DECLARED_WORKING = 47
+# 2026-08-03 由 48 → 49：`text-fmt --help` 也修好了（`scripts/document/docx_fmt.py`
+# 的 text_main() 开头加 -h/--help 拦截 → 打 TEXT_USAGE 并 return 0；位置必须在
+# `--scope` 取值与未知 flag 判定之前，否则 `--scope --help` 会先被 next(_it) 吃掉）。
+# 至此 49 条顶层动词的 `--help` 全部 rc=0，不再有「既有非 0」的例外。
+#
+# 2026-08-03 由 47 → 48：`image-caption --help` 修好了。它原来 rc=1 的根因不是 import，
+# 是**没有 argparse 而 flag 会 fallthrough** —— main() 把 argv 直接丢给 get_input_files()，
+# 后者见「没有位置参数」就回落去读 Finder 选中项，于是 `--help` 去动用户此刻选中的文件
+# （同 CLAUDE.md「破坏性动作必须自己占一个动词」判过的那条死刑）。现在 sub/
+# docx_apply_image_caption.py 顶部有闸门，在任何 import / Finder 读之前拦下。
+#
+# ⚠ 本门的 wheel 是 `git archive HEAD` 构建的，**读的是 HEAD 不是工作树**：改完还没
+# commit 时它仍按老代码测出 47，与这里的 48 不符而报红，那是时序不是回归，commit 后即绿。
+# 改这个数当时的证据（工作树，中立 HOME + 清 PYTHONPATH，等价于本门判据 B 的环境）：
+#   HEAD 版  → rc=1  ModuleNotFoundError: No module named 'file_ops'
+#   工作树版 → rc=0  stderr 空，stdout 是用法
+# 并且用本门自己跑过：把 archive 的 ref 临时换成「HEAD + 只有这一个文件的改动」构出的
+# 树（git commit-tree 的悬空提交，没碰分支/index），本门实测 48/49、判据 B 绿。
+#
+# 2026-08-03 收口实测（本门自己跑的，不是推的）：把**整棵工作树**做成悬空提交
+# （`git commit-tree`，用临时 GIT_INDEX_FILE，没碰分支/真 index/工作树）再让本门
+# 按那个 ref 去 `git archive`：
+#   判据 A ✓ 构建成功 · 判据 B ✓ 装得上（pyproject 的 git URL 生效）
+#   「clean venv + 中立 HOME 下 49/49 个顶层动词可用」→ 与本声明相符
+# 同一时刻按字面 HEAD 跑则是 rc=2「hq-devlib was not found in the package registry」——
+# 因为 HEAD 的 pyproject 还是裸 `hq-devlib>=0.1`，而 git URL 那版还没 commit。
+# **两个红都是时序不是回归**：image-caption / text-fmt / pyproject 三处一起 commit 后即绿。
+DECLARED_WORKING = 49
 
 
 _ENUM_SNIPPET = """
@@ -131,45 +174,29 @@ def build_portable(workdir: Path) -> Path | None:
     return whls[0]
 
 
-def build_hq_devlib(workdir: Path) -> Path:
-    """把总部 `tools/dev` 打成 wheel 丢进本地 wheelhouse，供判据 B 的装包步解析。
-
-    总部仓 = 本仓的**兄弟目录**（`ROOT.parent / "dev"`），不写 `$HOME` 字面量。
-    hq-devlib 还没上任何公开 index，本地 wheelhouse 就是「它在 index 上可取」的替身；
-    发上去之后这一步删掉即可，判据不变。找不到总部仓 → 直接非 0 退出，不静默跳过
-    （静默跳过会让这门退化回 `--no-deps` 那种「测的是别的东西」）。
-    """
-    src = ROOT.parent / "dev"
-    if not (src / "pyproject.toml").is_file():
-        print(f"⛔ 找不到总部仓 {src} —— hq-devlib 造不出来，拒绝在测不了依赖时报绿",
-              file=sys.stderr)
-        raise SystemExit(2)
-    house = workdir / "wheelhouse"
-    house.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(house), str(src)],
-                       capture_output=True, text=True)
-    if r.returncode != 0 or not list(house.glob("hq_devlib-*.whl")):
-        tail = "\n".join(r.stdout.splitlines()[-6:] + r.stderr.splitlines()[-6:])
-        print(f"⛔ hq-devlib 构建失败（源 {src}）\n{tail}", file=sys.stderr)
-        raise SystemExit(2)
-    return house
-
-
 def probe_capability(whl: Path, workdir: Path) -> tuple[int, int, dict[str, str]]:
     """判据 B：clean venv + 中立 HOME，逐个敲顶层动词。→ (能跑, 总数, 挂掉的)"""
-    house = build_hq_devlib(workdir)
     venv = workdir / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True)
     py, exe = venv / "bin" / "python", venv / "bin" / "doctools"
     # **带依赖装**（别加回 --no-deps，理由见模块 docstring）。有 uv 就用 uv：同一套
     # 依赖 pip 要跑几分钟，uv 走本机缓存 ~26s；装出来的 site-packages 内容一致。
+    #
+    # ⚠ 这里**不许再加 `--find-links <本地 hq-devlib wheelhouse>`**（2026-08-03 删）：
+    # hq-devlib 已是 PEP 508 git 直接引用，直接引用优先级高于任何 index/find-links，
+    # 那个目录实测一眼都不会被看（见模块 docstring 里的实测输出）。加回去 = 一段
+    # 让这门看起来在测别的东西的死代码。本步骤走**真实环境**（真 HOME → 真 git 凭证），
+    # 中和 HOME 只发生在下面跑动词那一步。
     uv = shutil.which("uv")
-    cmd = ([uv, "pip", "install", "--python", str(py), "--find-links", str(house), str(whl)]
+    cmd = ([uv, "pip", "install", "--python", str(py), str(whl)]
            if uv else
-           [str(venv / "bin" / "pip"), "install", "-q", "--find-links", str(house), str(whl)])
+           [str(venv / "bin" / "pip"), "install", "-q", str(whl)])
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"⛔ 判据 B 失败：wheel 连同依赖装不上（installer={'uv' if uv else 'pip'}）\n"
+              f"   若报的是 `could not read Username for 'https://github.com'` / "
+              f"`Repository not found`：hq-devlib 是 git 直接引用，而 "
+              f"zengtianli/devtools 是 **私库** —— 这台机器要么没网，要么没有它的读权限。\n"
               f"{r.stdout[-500:]}\n{r.stderr[-500:]}", file=sys.stderr)
         raise SystemExit(2)
 

@@ -21,6 +21,69 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+# ── flag 闸门：必须在任何副作用之前 ───────────────────────────────────────────
+# 本脚本**没有 argparse**：main() 把 argv 直接丢给 get_input_files()，而后者对
+# 「参数里一个位置参数都没有（全被 startswith('-') 过滤掉）」的输入会**回落去读
+# Finder 当前选中项**，再按写模式逐个处理。于是 `--help` 会去动用户此刻选中的文件。
+# 2026-07-26 已对同款判过死刑（CLAUDE.md「破坏性动作必须自己占一个动词」一节：
+# 「--help 弹 Finder + 往选中文件写盘，曾写进 ~/Work 在跑的项目」，判据 =
+# 「未知 flag 一律 sys.exit(2)，禁 fallthrough」）—— 本条是漏网的同一个坑。
+#
+# 闸门放在模块顶部、在下面 `from docx import ...` 那堆重家伙**之前**，是因为
+# docx_cli 的 _exec_script 走 spec_from_file_location + exec_module 再调 main()：
+# 模块加载阶段就已经把重家伙拉进来了，只在 main() 里拦是拦不住 import 的。
+_USAGE = """用法: image-caption <input.docx> [样式名称]
+
+给文档里的图片段、以及它下一行的图名段套同一个段落样式（默认 "ZDWP图名"，
+走模糊匹配，"ZDWP 图名" 这类空格变体也命中），并在图名段后补一个空行。
+**就地写盘**，写前自动备份到 <name>.docx.backup。
+
+位置参数:
+  input.docx   要处理的 .docx，可给多个
+  样式名称     可选，默认 ZDWP图名；文档里找不到该样式 → rc=1，不改动
+
+说明:
+  不给任何参数 = 从 Finder 当前选中项里取 .docx。
+  除 -h/--help 外本脚本不接受任何选项，未知 flag 一律 rc=2（禁 fallthrough）。"""
+
+
+def _cli_guard(argv: list[str]) -> int | None:
+    """纯检查 argv，无任何副作用。返回 None = 放行，否则是退出码。"""
+    for a in argv:
+        if a in ("-h", "--help"):
+            print(_USAGE)
+            return 0
+        if len(a) > 1 and a.startswith("-"):
+            print(f"❌ 未知参数: {a}", file=sys.stderr)
+            print(_USAGE, file=sys.stderr)
+            return 2
+    return None
+
+
+def _invoked_as_cli() -> bool:
+    """本文件是被当 CLI 跑，还是被当库 import？
+
+    必须区分：typeset_apply 的 load_step 用 spec_from_file_location 载入本模块只为
+    拿 apply()，那一刻 sys.argv 是 **typeset 自己的**（带 --dry-run / --apply 等），
+    无条件跑闸门会让 typeset 一进这步就 exit(2)。
+    两条 CLI 入口都能识别：直接敲 → __name__ == "__main__"；docx_cli._exec_script →
+    它把 sys.argv[0] 设成本文件名（`sys.argv = [filename] + argv`）。
+    """
+    if __name__ == "__main__":
+        return True
+    try:
+        return Path(sys.argv[0]).name == Path(__file__).name
+    except Exception:
+        return False
+
+
+if _invoked_as_cli():
+    _guard_rc = _cli_guard(sys.argv[1:])
+    if _guard_rc is not None:
+        # _exec_script 在 load 阶段就 catch SystemExit 并原样返回 code，所以这里
+        # 退出既覆盖「直接敲」也覆盖「docx_cli 转发」。
+        sys.exit(_guard_rc)
+
 # ── surgical 收口：python-docx 存盘只重写点名的部件（炸开面 60→1）─────────────
 # 2026-07-31 从 scripts/document/ 平移进 sub/（typeset_apply ACTIONS 回默认 home="sub"），
 # 仓根层数 parents[2] → parents[3]（同 sub/docx_track.py 先例）。
@@ -338,14 +401,18 @@ def apply_image_caption_style(input_file, style_name="ZDWP图名"):
 
 
 def main():
+    # 第二道同款闸门：顶层那道只在**模块首次加载**时跑，而 _exec_script 会把模块留在
+    # sys.modules 里，同一进程内第二次转发就直接调 main() 而不再执行顶层。
+    # _cli_guard 是纯函数，跑两遍与跑一遍等价。
+    rc = _cli_guard(sys.argv[1:])
+    if rc is not None:
+        return rc
+
     # 获取输入文件（优先命令行参数，否则从 Finder 获取）
     files = get_input_files(sys.argv[1:], expected_ext="docx")
 
     if not files:
-        print("用法: python3 apply_image_caption_style.py <input.docx> [样式名称]")
-        print("      或在 Finder 中选择 .docx 文件后运行")
-        print("示例: python3 apply_image_caption_style.py document.docx")
-        print('      python3 apply_image_caption_style.py document.docx "ZDWP图名"')
+        print(_USAGE)
         sys.exit(1)
 
     # 样式名称从第一个非文件参数获取

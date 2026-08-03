@@ -7,7 +7,12 @@
   tabfig  <chapters.yaml|章节目录> [--apply|--check]  原 tabfig_align.py（md 侧 表/图 题注号对齐章号）
   figures <docx> [...]                             原 docx_renumber_figures.py（docx 侧图号重排+引用同步）
 
-exit 契约不变: chapter 0 · tabfig 0/1/2（--check 漂移=2）· figures 0/2。
+exit 契约: chapter 0/3 · tabfig 0/1/2/3（--check 漂移=2）· figures 0/2/3。
+**3 = 枚举为空**（2026-08-03 加，见下面 EMPTY_RC 一节）：一个对象都没枚举到时
+旧实现三条路径全打通过语 + exit 0，是铁律「拒绝在空集上报绿」的直接违例。
+2 的语义原样不动（真发现了问题），所以老的 `rc != 0 = 有问题` 判断不会被 3 骗到，
+但把 3 当失败的调用方要自己放行 —— 本仓两处已改（doc_dispatch.do_renum /
+typeset_pipeline 步骤③ 的 keep_rcs）。
 figures 的 WriteGate 并发门与 assert_parts_intact 部件完整性断言原样保留；
 _body_start_idx / serialize 惯用法 2026-07-31 起改用 lib/docx_surgical 的 SSOT 版
 （body_start_idx 抽取时即与本脚本逐字一致，见该文件自注）。
@@ -32,6 +37,37 @@ from chapter_numbering import ChapterNumbering  # noqa: E402
 from docx_parts import assert_parts_intact  # noqa: E402
 from docx_surgical import body_start_idx as _lib_body_start_idx  # noqa: E402
 from docx_surgical import serialize as _serialize  # noqa: E402
+
+# ════════════════════════════════════════════════════════════════════════════
+# 空集判据（2026-08-03 立 · 三个子命令共用）
+#
+# 铁律：**枚举扫描类检查,枚举为空一律 exit != 0,拒绝在空集上报绿**。本文件原来
+# 三条 figures 路径 + tabfig + chapter 全都在「一个对象都没枚举到」时打通过语并
+# exit 0 —— 因为连续性判据在空 list 上**恒真**：
+#     [] == list(range(1, 1))            → 默认(英文)模式打「✓ 连续 1..N」
+#     all(v == … for v in {}.values())   → --cn-section 打「✓ 每节连续 1..k」
+#     any(iss[k] for k in (...)) == False → --check 打「✓ 图序号与居中均合规」
+# 于是「什么都没量到」被自检当成「量过了,全合规」发合规证。指错目录 / 指错 --kind /
+# 判据字符类漏了一种短横,三种事故的表现全是这一句绿。
+#
+# ── 退出码为什么选 3 不选 2 ──
+# 本文件的 **2 已经被三种「真发现了问题」占着**：--check 报断号/重号/未居中 ·
+# 检测到重复图号 · 重编号后仍不连续。空集是**没能做出任何判定**,与之正交。
+# 混进 2 会让上游把「这份文档没有图题」误读成「图号有问题」,实测两处会坏：
+#   · doc_dispatch.do_renum  ——「图」那轮返 2 就 break,后面的「--kind 表」整轮不跑
+#   · typeset_pipeline 步骤③ —— rc!=0 即回滚,--fix-center 做的居中会被一起撤销
+# 3 同时对齐本仓既有先例：`para scan-ppr` 用 rc=3 表示「非错误、但需要人看」。
+EMPTY_RC = 3
+
+
+def _empty_set_exit(what: str, hint: str = ""):
+    """枚举为空 → 打非通过语 + EMPTY_RC 退出。**禁在这里 return 0**。"""
+    print(f"✗ 未发现任何{what} —— 枚举为空,未做任何判定"
+          f"(空集不报绿,exit {EMPTY_RC})", file=sys.stderr)
+    if hint:
+        print(f"  {hint}", file=sys.stderr)
+    sys.exit(EMPTY_RC)
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # chapter — 原 chapter_renumber.py：章号统一位移引擎(通用·config 驱动)
@@ -152,6 +188,11 @@ def chapter_main(argv):
     identity = all(k == v for k, v in imap.items())
     print(f"=== 章号位移引擎(通用) ({'APPLY' if apply else 'DRY-RUN'}) · {cfg_path} ===")
     print(f"number_base={cn.load()['number_base']} · 整数章号映射: {dict(sorted(imap.items()))}")
+    # 空集：sequence 为空 → imap={} → `all(())` 恒真 → 旧实现打「磁盘已与 config 一致」
+    # 报绿。(sequence 非空但磁盘缺章文件那条已由 chapter_numbering.integer_map
+    # SystemExit 挡住,是本仓少数原本就 fail-closed 的枚举点。)
+    if not imap:
+        _empty_set_exit("章", f"chapters.yaml 的 sequence 为空: {cfg_path}")
     if identity:
         print("磁盘已与 config 一致,无需位移 (no-op)。")
         return
@@ -274,12 +315,17 @@ def tabfig_main(argv):
     check = "--check" in argv
     src = Path(args[0]).expanduser().resolve()
 
-    total = 0
-    for f in chapter_files(src):
-        m = CH_RE.match(f.name)
-        if not m:
-            continue
-        new_text, changes = align_text(f.read_text(encoding="utf-8"), m.group(1))
+    # 空集①：一个 ch<N>-*.md 都没枚举到（指错目录 / 指错 chapters.yaml 的典型表现）。
+    # 旧实现直接落到 total==0 打「✅ 全部对齐」—— 对着零个文件发合规证。
+    scanned = [(f, m) for f in chapter_files(src) if (m := CH_RE.match(f.name))]
+    if not scanned:
+        _empty_set_exit("ch<N>-*.md 章节文件", f"扫描根: {src}")
+
+    total, tokens = 0, 0
+    for f, m in scanned:
+        text = f.read_text(encoding="utf-8")
+        tokens += len(TOKEN_RE.findall(text))
+        new_text, changes = align_text(text, m.group(1))
         if not changes:
             continue
         total += len(changes)
@@ -289,8 +335,14 @@ def tabfig_main(argv):
         if apply_:
             f.write_text(new_text, encoding="utf-8")
 
+    # 空集②：文件枚举到了,但一个 表/图 编号 token 都没有 → 同样没有对象可对齐。
+    if tokens == 0:
+        _empty_set_exit("表/图 编号 token",
+                        f"已扫 {len(scanned)} 个章节文件,判据 = lib/caption_re.md_token_pattern()")
+
     if total == 0:
-        print("✅ 表/图编号与章号全部对齐,无需改动")
+        print(f"✅ 表/图编号与章号全部对齐,无需改动"
+              f"（已扫 {len(scanned)} 个章节文件 · {tokens} 个编号 token）")
         return 0
     if apply_:
         print(f"✅ 已写回 {total} 处")
@@ -557,7 +609,12 @@ def _prepend_caption_number(p, text):
 
 def check_cn_section(docx_path, kind="图", check_center=True):
     """只读机检：返回 issues dict（全空=干净）。供 gate / report figs 调。
-    {unnumbered:[题注文本], gaps:{sec:[缺号]}, duplicates:{sec:[重号]}, uncentered:[题注/段号]}
+    {unnumbered:[题注文本], gaps:{sec:[缺号]}, duplicates:{sec:[重号]}, uncentered:[题注/段号],
+     n_captions:int}
+
+    ⚠ `n_captions`（= 已编号 + 无号题注的枚举总数）**不是 issue,是空集判据**：
+    四个 issue 桶全空有两种截然不同的成因 —— 「量过了,全合规」与「一个题注都没量到」。
+    调用方必须先看 n_captions 再看四个桶,否则就是在空集上报绿（本文件旧实现的原病）。
     """
     zin = zipfile.ZipFile(docx_path)
     root = etree.fromstring(zin.read("word/document.xml"))
@@ -595,6 +652,7 @@ def check_cn_section(docx_path, kind="图", check_center=True):
         "gaps": gaps,
         "duplicates": dups,
         "uncentered": uncentered,
+        "n_captions": len(numbered) + len(unnumbered),
     }
 
 
@@ -628,8 +686,13 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
     已编号题注推断，前优先后兜底；定位不到则记 warning 不补）。重复号有正文引用 → warning
     不动引用、caption 仍按物理位置改对。fix_center=True 同时把含图段落居中。
 
-    kind: '图' 或 '表'。返回 (root, plan, caps, ok, warnings)。
+    kind: '图' 或 '表'。返回 (root, plan, caps, ok, warnings, n_found)。
     plan: [(para_idx, typ, sec, old_n, new_n)]；typ='num' 改号 / 'new' 补号。dry_run 不改 root。
+
+    ⚠ `n_found` = `_collect_captions` 枚举到的题注总数（已编号 + 无号），2026-08-03 加。
+    **不能拿 `len(plan)` 当空集判据**：`--no-supplement` 时无号题注不进 plan、`supplement`
+    定位不到节号的也会被 skip 掉,于是「枚举到了但没排进计划」与「一个题注都没有」
+    在 plan 上长得一模一样。空集必须问枚举端,不能问计划端。
     """
     zin = zipfile.ZipFile(docx_path)
     root = etree.fromstring(zin.read("word/document.xml"))
@@ -669,9 +732,10 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
         remap.setdefault(k, new_n)
 
     caps_compat = list(numbered)  # 兼容旧返回签名（仅已编号题注）
+    n_found = len(numbered) + len(unnumbered)  # 空集判据,见 docstring
 
     if dry_run:
-        return root, plan, caps_compat, True, sorted(conflict)
+        return root, plan, caps_compat, True, sorted(conflict), n_found
 
     para_by_idx = dict(enumerate(paras))
     # 回写端与写入端（_collect_captions 的 cap_re）**同一个 spec 对象**，named group
@@ -721,7 +785,7 @@ def renumber_cn_section(docx_path, kind="图", dry_run=False, supplement=True, f
             warnings.append(f"已居中 {n_c} 个含图段落")
     if skipped:
         warnings.append(f"{len(skipped)} 个无号题注无法定位章节（无相邻已编号题注），未补号")
-    return root, plan, caps_compat, True, warnings
+    return root, plan, caps_compat, True, warnings, n_found
 
 
 def _verify_cn(out_path, kind):
@@ -765,7 +829,8 @@ def figures_main(argv):
     ap.add_argument("--kind", default="图", choices=["图", "表"],
                     help="--cn-section 模式下的题注类型，默认 图")
     ap.add_argument("--check", action="store_true",
-                    help="只读机检（配 --cn-section）：报无序号题注/断号/重复号/未居中，有问题 exit 2")
+                    help="只读机检（配 --cn-section）：报无序号题注/断号/重复号/未居中，"
+                         "有问题 exit 2；一个题注都没枚举到 exit 3（空集不报绿）")
     ap.add_argument("--no-supplement", action="store_true",
                     help="--cn-section 重排时不给无号题注补号（默认补号）")
     ap.add_argument("--fix-center", action="store_true",
@@ -783,11 +848,14 @@ def figures_main(argv):
         print(f"  节内断号  : {iss['gaps'] or '无'}")
         print(f"  重复号    : {iss['duplicates'] or '无'}")
         print(f"  未居中图片: {iss['uncentered'] or '无'}")
+        # 空集先判：四个桶全空 ≠ 合规,也可能是一个题注都没枚举到（bad 恒 False）。
+        if iss["n_captions"] == 0:
+            _empty_set_exit(f"{kind}题注", f"文档: {a.docx}（--kind 选错 / 文档确实无{kind}）")
         print("✗ 发现问题，需重排/补号/居中" if bad else "✓ 图序号与居中均合规")
         sys.exit(2 if bad else 0)
 
     if a.cn_section:
-        root, plan, caps, ok, warns = renumber_cn_section(
+        root, plan, caps, ok, warns, n_found = renumber_cn_section(
             a.docx, a.kind, dry_run=a.dry_run,
             supplement=not a.no_supplement, fix_center=a.fix_center)
         changes = [(f"{a.kind}{s}-{o or '—'}", f"{a.kind}{s}-{n}")
@@ -798,7 +866,14 @@ def figures_main(argv):
             print(f"⚠ 提示: {warns}")
         if a.dry_run:
             print("[dry-run] 未写文件")
+            if n_found == 0:
+                _empty_set_exit(f"{a.kind}题注", f"文档: {a.docx}")
             return
+        # 空集且没别的活可干 → 连输出文件都不产（产一份逐字节复制的 .renumbered.docx
+        # 只会让下游以为「重排过了」）。--fix-center 例外：居中与题注枚举正交,那是
+        # 真活,必须先写盘再报空集,否则 typeset 步骤③ 的居中成果会随非 0 rc 被回滚。
+        if n_found == 0 and not a.fix_center:
+            _empty_set_exit(f"{a.kind}题注", f"文档: {a.docx}（--kind 选错 / 文档确实无{a.kind}）")
         out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
         if a.inplace:
             write_gate.assert_unchanged()  # 源被 WPS/其他会话改过 → 拒写(逃生 DOCX_GATE_OK=1)
@@ -815,6 +890,10 @@ def figures_main(argv):
                   file=sys.stderr)
             for t in doubled[:5]:
                 print(f"    {t}", file=sys.stderr)
+        elif n_found == 0:
+            # 走到这里只可能是 --fix-center：盘已写（居中生效），但题注枚举是空的,
+            # 不许打「✓ 每节连续 1..k」——`{}` 上 all() 恒真,那句话什么都没证明。
+            _empty_set_exit(f"{a.kind}题注", f"已写 {out}（仅 --fix-center 的居中生效）")
         elif seq:
             print("✓ 每节连续 1..k")
         else:
@@ -832,7 +911,15 @@ def figures_main(argv):
 
     if a.dry_run:
         print("[dry-run] 未写文件")
+        if not order:
+            _empty_set_exit(f" {a.prefix} 题注", f"文档: {a.docx}")
         return
+
+    # 空集：`[] == list(range(1, 1))` 恒真 → 旧实现在零题注文档上打「✓ 连续 1..N」
+    # 并 exit 0。英文线没有 --fix-center 这类正交副作用,直接在写盘前退出。
+    if not order:
+        _empty_set_exit(f" {a.prefix} 题注",
+                        f"文档: {a.docx}（中文题注 图X.Y-N 走 --cn-section,不归本模式）")
 
     out = a.docx if a.inplace else (a.output or re.sub(r'\.docx$', '.renumbered.docx', a.docx))
     if a.inplace:

@@ -46,13 +46,37 @@ images` / `table extract` 都写盘，但写的是 `-o` / `--report` / `--out-di
 
 ### rc 不是 0 的那些（别顺手"修"成 0）
 
-    audit-styleset <3 条>   rc = severity（fail=1）
-    health diagnose/full    rc = 健康度（0 健康 / 1 警告 / 2 错误）
-    para scan-ppr           rc = 3 if suspects else 0
+    audit-styleset <3 条>       rc = severity（fail=1）
+    health diagnose/full/gate   rc = 健康度 / gate 结果（0 健康 / 1 警告 / 2 错误·FAIL）
+    para scan-ppr               rc = 3 if suspects else 0
+    para edit / para fix-ppr    rc = 4 —— 写盘**成功**后 `_finish_gate()` 复跑
+                                `health gate` 拿到 FAIL 才返的（见下）
+    renumber-fig（本表未覆盖）   rc = 3 = renum.EMPTY_RC「枚举为空，空集不报绿」
 
 这些 rc **与 fixture 内容绑定**：换 fixture 就要重新实测这一列，不能照抄。
-⚠ `health diagnose` 的 rc=2 与 docx_cli 的「参数错误 rc=2」撞码，
+⚠ `health diagnose` / `health gate` 的 rc=2 与 docx_cli 的「参数错误 rc=2」撞码，
 runner 不能把 rc=2 一律当失败。
+
+#### 三条 rc 编码的是**同一个 fixture 事实**（2026-08-03 实测）
+
+`health gate` = FAIL、`para edit` = 4、`para fix-ppr` = 4 —— 后两条的 4 完全来自
+`sub/docx_para.py::_finish_gate()`：编辑本身成功了（stdout 有
+`EDITED PARA 30 | …` / `FIXPPR PARA 12 …`，且 `mutates=True` 那条断言仍成立），
+只是写盘后复跑的 gate 报 FAIL。gate 报的是**真判定不是回归**：
+
+    caption-table-pairing     orphan_captions=1 · orphan_tbls=1
+    caption-count-consistency 图: 编号集 4 ≠ caption 段 7 · 表: 编号集 3 ≠ caption 段 4
+
+差额那几段正是 `caption number` 唯一的作业对象（无编号题注）+ 2 条英文题注。
+**要把这三条变回 0，就必须把那些无编号题注从 fixture 里删掉** —— 那等于把
+`caption number` 重新变成空跑。旧 fixture 的 PASS 是假绿：题注全 `Normal` 时
+两个 check 都有「零 style 题注 → SKIP」守卫，压根没跑。故选择保留作业对象、
+如实记 FAIL。
+
+这两条 `para` 行**没有**加 `--no-gate` 把 rc 抹平成 0（该 flag 存在且实测可用：
+`GATE SKIP (--no-gate)` + rc=0 + 源件仍变）。理由是加了就再没有任何一条 smoke
+覆盖 `_finish_gate` 的 FAIL 分支，而那是这两条动词写盘后唯一的安全网。
+代价是这三行会一起随 fixture 翻，翻了会响、不会静默 —— 这是可接受的耦合。
 
 ## 加一条子命令要改哪些地方
 
@@ -83,8 +107,11 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("style table", ("style", "table", "{DOCX}",), 0, True,
      "",
      ""),
-    ("style caption", ("style", "caption", "{DOCX}",), 0, False,
-     "三段式题注(图2.3-1)才有活干；本 fixture 是两段式 图1-1 → tables=0 figures=0，rc 仍 0",
+    ("style caption", ("style", "caption", "{DOCX}",), 0, True,
+     "2026-08-03 fixture 加强后实测 tables=1 figures=1 skip=0（旧 fixture 是 0/0 空跑）。"
+     "⚠ 图题/表题**故意用两个不同的样式名**（Image Caption / 表题）：styles._build_h4fig_plan "
+     "是 elif 链先判图后判表，同名会让表分支恒为 0；且题注不能直接叫内置 Caption，"
+     "否则 FIGURE_STYLE_PRIORITY 命中 no_change_skip、apply 分支一次都走不到",
      ""),
     ("fix clear-direct-format", ("fix", "clear-direct-format", "{DOCX}", "--inplace",), 0, True,
      "",
@@ -123,7 +150,8 @@ _ROWS: tuple[VerbSpec, ...] = (
      "--header 与 --footer-prefix 都是 required",
      ""),
     ("text-fmt", ("text-fmt", "{DOCX}", "--in-place", "--quotes", "--punct",), 0, True,
-     "不认 --help（打自己的「未知参数」清单）；--in-place 才写盘",
+     "--help/-h 走 docx_fmt.TEXT_USAGE → rc=0（2026-08-02 前是「未知参数」rc=2）；"
+     "未知 flag 仍 rc=2。--in-place 才写盘",
      ""),
     ("slim", ("slim", "{DOCX}", "-o", "{OUTDOCX}",), 0, False,
      "默认 safe 模式；给 -o 就不动源件",
@@ -131,17 +159,24 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("renumber headings", ("renumber", "headings", "{DOCX}", "--no-backup",), 0, True,
      "",
      ""),
-    ("renumber h4-figures", ("renumber", "h4-figures", "{DOCX}", "--no-backup",), 0, False,
-     "本 fixture 只有 1 个 H4 且其下无图表 → 规划为空，rc 仍 0",
+    ("renumber h4-figures", ("renumber", "h4-figures", "{DOCX}", "--no-backup",), 0, True,
+     "2026-08-03 fixture 加强后实测 H4=1 图=4 表=3（旧 fixture 是 图=0 表=0 空跑）",
      ""),
-    ("renumber-fig", ("renumber-fig", "{DOCX}", "--inplace",), 0, False,
-     "非 --cn-section 模式下本 fixture 图题数=0（它认的是另一种题注形态）",
+    ("renumber-fig", ("renumber-fig", "{DOCX}", "--inplace",), 0, True,
+     "非 --cn-section 走英文线。2026-08-03 fixture 加强后实测「图题数 2 · 现号 [3,1] → "
+     "remap {3:1,1:2} · ✓ 连续 1..N」，rc=0 且源件变。⚠ 英文图号**故意乱序**：顺序对了 "
+     "remap 退化成恒等映射、跑完源件一个字节不变，这条就假绿。"
+     "⚠ 本表**没有覆盖** renum.EMPTY_RC=3 那条空集分支 —— 现 fixture 连 "
+     "`--cn-section --kind 表 --check` 都非空（实测 rc=2「重复号 {'1':[1]}」）。"
+     "要覆盖 3 得另造一份零题注 fixture，不能给本动词加第二行（_build() 会判重复动词）",
      ""),
-    ("caption number", ("caption", "number", "{DOCX}", "--no-backup",), 0, False,
-     "",
+    ("caption number", ("caption", "number", "{DOCX}", "--no-backup",), 0, True,
+     "2026-08-03 fixture 加强后实测 tables_numbered=1 figures_numbered=1 chapters_detected=[4]。"
+     "另有 3 条 manual_review 落 no-chapter-context（1 条中文 + 2 条英文题注）—— "
+     "根因在实现侧：caption.is_h1_chapter() 只认 `一、` 不认 `第N章`，fixture 补不了",
      ""),
-    ("caption number-by-style", ("caption", "number-by-style", "{DOCX}", "--no-backup",), 0, False,
-     "",
+    ("caption number-by-style", ("caption", "number-by-style", "{DOCX}", "--no-backup",), 0, True,
+     "2026-08-03 fixture 加强后实测 tables=1 figures=1 manual=0 chapters=[1,2,3,4]",
      ""),
     ("caption pair", ("caption", "pair", "{DOCX}", "--decision", "{DECISION}", "--no-backup",), 0, True,
      "--decision 是 required，且过 v1 schema 校验",
@@ -152,8 +187,11 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("outline demote-h2", ("outline", "demote-h2", "{DOCX}", "--no-backup",), 0, False,
      "同上：candidates=0",
      ""),
-    ("outline normalize-arabic", ("outline", "normalize-arabic", "{DOCX}", "--no-backup",), 0, False,
-     "同上：change_count=0",
+    ("outline normalize-arabic", ("outline", "normalize-arabic", "{DOCX}", "--no-backup",), 0, True,
+     "2026-08-03 fixture 加强后实测 change_count=1（`四、补充图件与指标` → `1 补充图件与指标`）。"
+     "⚠ 顺带暴露一处实现侧不一致（不是本表的问题，不许在这里改期望值绕过）："
+     "本动词把 `四、` 转成阿拉伯之后，`caption number` 的 caption.is_h1_chapter() 就再也认不出这一章 —— "
+     "两条动词在 typeset_apply.py 步骤表里是先后关系",
      ""),
     ("freeze headings", ("freeze", "headings", "{DOCX}", "--no-backup",), 0, True,
      "",
@@ -165,7 +203,9 @@ _ROWS: tuple[VerbSpec, ...] = (
      "",
      ""),
     ("image-caption", ("image-caption", "{DOCX}", "Caption",), 0, True,
-     "第二个位置参数是样式名；不给就默认找 'ZDWP图名'，普通 docx 直接 rc=1。它把样式名也当文件扫一遍、打一行「⚠️ 文件不存在: Caption」，但成功计数仍是 1/1",
+     "第二个位置参数是样式名；不给就默认找 'ZDWP图名'，普通 docx 直接 rc=1。它把样式名也当文件扫一遍、打一行「⚠️ 文件不存在: Caption」，但成功计数仍是 1/1。"
+     "⚠ 本行 argv 里没有任何 `-` 开头的 token，所以不受 2026-08-02 那道「未知 flag 一律 rc=2、禁 fallthrough」闸门影响；"
+     "实测 `image-caption <docx> --dry-run` 现在是 rc=2（旧行为是静默忽略该 flag 照常写盘）",
      ""),
     ("fix-ref", ("fix-ref", "{DOCX}", "-o", "{OUTDOCX}",), 0, False,
      "fixture 里引用已是上标 → 「无需修改」，rc 0",
@@ -173,8 +213,9 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("legacy fix-heading-disorder", ("legacy", "fix-heading-disorder", "{DOCX}", "--no-backup",), 0, False,
      "DEPRECATED，会往 stderr 打 WARNING，但能跑",
      ""),
-    ("strip outlinelvl", ("strip", "outlinelvl", "{DOCX}", "--no-backup",), 0, False,
-     "",
+    ("strip outlinelvl", ("strip", "outlinelvl", "{DOCX}", "--no-backup",), 0, True,
+     "2026-08-03 fixture 加强后实测 captions_processed=2 outlinelvl_removed=2（旧 fixture 是 0/0）。"
+     "这条正是 caption_re 短横字符类的哨兵：把 DASH_CHARS 改回只认 ASCII，processed 立刻掉到 1",
      ""),
     ("strip style-outlinelvl", ("strip", "style-outlinelvl", "{DOCX}", "--no-backup",), 0, False,
      "",
@@ -191,8 +232,10 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("health full", ("health", "full", "{DOCX}", "--dry-run",), 2, False,
      "rc = 健康度(0 健康/1 警告/2 错误)，与 fixture 内容绑定，**不是**参数错误",
      ""),
-    ("para fix-ppr", ("para", "fix-ppr", "{DOCX}", "--para", "12", "--clone-from", "13", "--no-backup",), 0, True,
-     "--para/--clone-from 用的是**含表格单元格**的段索引空间（与 doc.paragraphs 不同）",
+    ("para fix-ppr", ("para", "fix-ppr", "{DOCX}", "--para", "12", "--clone-from", "13", "--no-backup",), 4, True,
+     "--para/--clone-from 用的是**含表格单元格**的段索引空间（与 doc.paragraphs 不同）。"
+     "⚠ rc=4 **不是失败**：stdout 有 `FIXPPR PARA 12 (克隆源 PARA 13)` + before/after，"
+     "改是改成了；4 来自写盘后 `_finish_gate()` 复跑 health gate 拿到 FAIL（详见本文件顶部那节）",
      ""),
     ("table borders", ("table", "borders", "{DOCX}", "--no-backup",), 0, True,
      "fixture 需含 ≥1 张表",
@@ -243,15 +286,21 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("md-merge", ("md-merge", "{MD}", "{DOCX}", "--start-anchor", "第2章 水文分析", "--end-anchor", "第3章 结论与建议", "--no-backup",), 0, False,
      "位置参数是 <md> <docx>；不给 start/end 索引就必须给 --start-anchor/--end-anchor，否则 rc=2",
      ""),
-    ("para edit", ("para", "edit", "{DOCX}", "--para", "30", "--replace", "50 年一遇", "100 年一遇", "--no-backup",), 0, True,
-     "同上索引空间：'按照规范要求' 在 doc.paragraphs 里是 18，在这里是 30 —— 索引拿错会 rc=2 且报「未在段 N 找到」",
+    ("para edit", ("para", "edit", "{DOCX}", "--para", "30", "--replace", "50 年一遇", "100 年一遇", "--no-backup",), 4, True,
+     "同上索引空间：'按照规范要求' 在 doc.paragraphs 里是 18，在这里是 30 —— 索引拿错会 rc=2 且报「未在段 N 找到」。"
+     "⚠ rc=4 **不是失败**：stdout 有 `EDITED PARA 30 | -\"50 年一遇\" +\"100 年一遇\"`，"
+     "4 来自写盘后 `_finish_gate()` 的 health gate FAIL（详见本文件顶部那节）",
      ""),
     # ── review —— 审阅修订 ────────────────────────────────────────────────
     ("strip revisions", ("strip", "revisions", "{DOCX}", "--no-backup",), 0, False,
      "",
      ""),
     ("track", ("track", "read", "{DOCX}",), 0, False,
-     "只跑 read 分支。`track compare` 是**未实现的存根**：rc=1 + 唯一一行「compare 功能将在 v2 实现。」",
+     "只跑 read 分支。`track compare` 2026-08-03 已落地（段落级 diff → w:ins/w:del，实现在 sub/docx_track.py），"
+     "不进本表也不加行：`track` 是 CMD_TABLE fast-path，`docx_cli.py verbs` 里只有 `track` 一个动词路径，"
+     "read/review/compare 都不是动词 —— 加一行 `track compare` 会让 check_smoke_coverage 判「表里有 CLI 没有的动词」转红。"
+     "且 compare 要两份 docx + 一个输出路径、rc 有 0/1/2/3 四种含义，一行一 argv 装不下。"
+     "它的门是 scripts/document/tests/test_track_compare.py（13 条）",
      ""),
     ("md-merge-track", ("md-merge-track", "--src", "{DOCX}", "--md", "{MD}", "--anchor", "第1章 概述", "--out", "{OUTDOCX}",), 0, False,
      "--src/--md/--anchor 三个 required；--anchor 与 fixture 标题绑定",
@@ -329,8 +378,11 @@ _ROWS: tuple[VerbSpec, ...] = (
     ("health diagnose", ("health", "diagnose", "{DOCX}", "--report", "{OUT}",), 2, False,
      "同上 rc=健康度；⚠ 与 docx_cli 的「参数错误 rc=2」撞码。另外它会往 /tmp/docx_health_<stem>/ 落分项 JSON，不受 --report 控制",
      ""),
-    ("health gate", ("health", "gate", "{DOCX}",), 0, False,
-     "rc 由 gate 结果定(PASS=0)；不给 --report 也会往 /tmp/docx_health_<stem>/ 落盘",
+    ("health gate", ("health", "gate", "{DOCX}",), 2, False,
+     "rc 由 gate 结果定（PASS=0 / FAIL=2）；不给 --report 也会往 /tmp/docx_health_<stem>/ 落盘。"
+     "2026-08-03 fixture 加强后是 FAIL=2，failed=['caption-table-pairing','caption-count-consistency'] —— "
+     "**真判定不是回归**（旧 fixture 的 PASS 是假的：题注全 Normal 时两个 check 都走「零 style 题注 → SKIP」）。"
+     "⚠ 与 docx_cli 的「参数错误 rc=2」撞码；也是 para edit / para fix-ppr 那两条 rc=4 的来源",
      ""),
     ("health-split", ("health-split", "{DOCX}", "--out-dir", "{DIR}", "--no-backup", "--no-fix",), 0, False,
      "⚠ 必须 --no-backup，默认备份目标是 ~/Archives/docx-backups/<today>/（sandbox 外）；--no-fix 也几乎必须：不带它会触发 styleset restore，非院模板 docx 直接 rc=1",

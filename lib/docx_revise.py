@@ -210,16 +210,34 @@ def tracked_replace(p, op: dict, ids, meta: dict) -> None:
         f"改用更长的唯一锚文本，或先人工合并该段 runs")
 
 
-def tracked_delete_runs(p, ids, meta: dict) -> None:
-    """整段旧内容标删除：w:t→w:delText 包进 w:del，段落标记标 w:del(replace_para tracked 用)。"""
+_DEL_ANCESTORS = (q('del'), q('moveFrom'))
+
+
+def _already_deleted(r) -> bool:
+    """run 已在删除态里（w:del / w:moveFrom）—— 再包一层 w:del 会套娃并二次改 tag。"""
+    return any(a.tag in _DEL_ANCESTORS for a in r.iterancestors())
+
+
+def tracked_delete_runs(p, ids, meta: dict, include_nontext: bool = False) -> None:
+    """整段旧内容标删除：w:t→w:delText 包进 w:del，段落标记标 w:del(replace_para tracked 用)。
+
+    include_nontext=False（默认，= 2026-07-31 以来 replace_para 的历史行为，一个字节不变）：
+      只标带 w:t 的 run；图片/公式/域这类没有 w:t 的 run 原样留下。
+    include_nontext=True（`track compare` 整段删除用）：无 w:t 的 run 也包进 w:del。
+      整段删除时不标它们 = 接受修订后「段落没了图还在」，rc 照样 0，属静默的错。
+      w:del 里放 drawing 是 OOXML 的标准表示（CT_RunTrackChange 收 EG_ContentRunContent）。
+    """
     for r in list(p.iter(q('r'))):
+        if _already_deleted(r):
+            continue
         t = r.find(q('t'))
-        if t is None:
+        if t is None and not include_nontext:
             continue
         parent, pos = r.getparent(), list(r.getparent()).index(r)
         d = mk('del', id=next(ids), author=meta['author'], date=meta['date'])
         parent.remove(r)
-        t.tag = q('delText')
+        if t is not None:
+            t.tag = q('delText')
         d.append(r)
         parent.insert(pos, d)
     ppr = p.find(q('pPr'))
@@ -230,7 +248,8 @@ def tracked_delete_runs(p, ids, meta: dict) -> None:
     if rpr is None:
         rpr = mk('rPr')
         ppr.append(rpr)
-    rpr.insert(0, mk('del', id=next(ids), author=meta['author'], date=meta['date']))
+    if rpr.find(q('del')) is None:   # 幂等：源件段落标记本就是删除态时不再叠一个
+        rpr.insert(0, mk('del', id=next(ids), author=meta['author'], date=meta['date']))
 
 
 def attach_comment(p, cid: int) -> None:

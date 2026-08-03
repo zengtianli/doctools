@@ -92,6 +92,7 @@ _tc_extract_text = _track_impl._tc_extract_text
 _tc_extract_del_text = _track_impl._tc_extract_del_text
 DocxReviewer = _track_impl.DocxReviewer
 review_docx = _track_impl.review_docx
+compare_docx = _track_impl.compare_docx      # 2026-08-03：compare 落地（原 v2 空桩）
 cmd_track_changes = _track_impl.cmd_track_changes
 
 
@@ -199,6 +200,9 @@ def _run_one(row: dict) -> dict:
                     output=options.get("output"),
                     rules=options.get("rules"),
                     author=options.get("author", "CC审阅"),
+                    # compare 用（2026-08-03）：不传这两个，compare 分支只能报「缺参数」
+                    original=options.get("original", file_path),
+                    modified=options.get("modified"),
                 )
                 cmd_track_changes(args)
             else:

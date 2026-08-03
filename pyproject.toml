@@ -21,7 +21,35 @@ dependencies = [
     # 分发名是 hq-devlib 不是 devtools：PyPI 上 devtools 已被别人占用，写错名会
     # 静默装回一个完全无关的调试打印库。工作区内它由 [tool.uv.sources] 指回
     # workspace member `tools/dev`，不走网络。
-    "hq-devlib>=0.1",
+    #
+    # ⚠ 写成 **git URL 直接引用**，不是 `hq-devlib>=0.1`（2026-08-03 改）。
+    # 用户已拍板不发 PyPI，而 `hq-devlib>=0.1` 这种普通 specifier 在**离开本
+    # workspace 的任何环境**里都解析不到 —— 不是「装上后几条动词不能用」，是
+    # 依赖解析这一步就死：
+    #   × No solution found … Because hq-devlib was not found in the package
+    #     registry and your project depends on hq-devlib>=0.1 …
+    # （2026-08-03 实测：`git archive HEAD` 到中立目录后 `uv lock` rc=1。CI 的
+    #  装依赖步 `uv sync` 与它同一条路径，所以 CI 从声明这条依赖起就是红的。）
+    #
+    # URL 里**没有 `#subdirectory=`**：zengtianli/devtools 这个仓的**根就是**
+    # ~/Dev/tools/dev，hq-devlib 的 pyproject.toml 在仓根（gh api
+    # repos/zengtianli/devtools/contents/pyproject.toml 实取，name = "hq-devlib"）。
+    # 写成 `#subdirectory=tools/dev` 会当场 clone 完找不到该子目录而失败。
+    #
+    # ⚠ 直接引用**不能带版本 specifier**（PEP 508：`name @ url` 与 `>=x` 互斥），
+    # 所以 `>=0.1` 这层保护没有了。取而代之的保护是 URL 本身钉死了来源仓。
+    #
+    # ⚠ zengtianli/devtools 是 **PRIVATE**（`gh repo view … --json visibility`
+    # 实测 PRIVATE）。所以这条 URL 只有在**带 GitHub 凭证**的环境里才 clone 得动：
+    # 本机（git credential helper 有 token）✓；CI 需要 secrets.HQ_DEVTOOLS_TOKEN
+    # 配 `url.insteadOf` 重写（gates.yml 已为 sparse-checkout 用同一个 secret）；
+    # 完全没有凭证的第三方 ✗ —— 那不是本行能解决的，要么把仓 public，要么给 PAT。
+    #
+    # 本机行为一个字节不变：workspace 根 ~/Dev/pyproject.toml 的
+    # `[tool.uv.sources] hq-devlib = { workspace = true }` 覆盖掉这条 URL，
+    # `uv sync --all-packages` 后 uv.lock 里仍是 `source = { virtual = "tools/dev" }`
+    # （2026-08-03 改前改后对拍，该行逐字节相同，不走网络）。
+    "hq-devlib @ git+https://github.com/zengtianli/devtools.git",
     "lxml>=6.0.3",
     "matplotlib>=3.10.8",
     "numpy>=2.4.4",
@@ -53,6 +81,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "src/doctools/__init__.py"
+
+# `hq-devlib @ git+https://…` 是 PEP 508 的**直接引用**，hatchling 默认把它判成
+# 硬错误并让构建整个失败（2026-08-03 实测，连 `uv sync` 都过不去）：
+#   ValueError: Dependency #3 of field `project.dependencies` cannot be a direct
+#   reference unless field `tool.hatch.metadata.allow-direct-references` is set to `true`
+# 它默认关着是因为**带直接引用的包传不上 PyPI**（PyPI 拒收 Requires-Dist 里的 URL）。
+# 本仓明确不发 PyPI（用户 2026-08-03 拍板走 git URL），所以这条限制对本仓无意义，
+# 打开它。⚠ 反过来说：打开之后 `uv publish` / `twine upload` 会在服务端被拒 ——
+# 哪天真要发 index，第一件事是把这行连同上面那条 URL 一起改回普通 specifier。
+[tool.hatch.metadata]
+allow-direct-references = true
 
 # 只打 doctools/ 这一个包（仓根是 scripts/ lib/ tools/ 这种平铺目录，没有可打的
 # 包树）。member 在 uv workspace 里按 editable 装，壳里的相对定位指回真实工作树。

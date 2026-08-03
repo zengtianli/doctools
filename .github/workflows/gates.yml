@@ -40,6 +40,17 @@
 #
 # 本仓在本机是 ~/Dev 的 uv workspace member，CI 上只有这一个仓、没有 workspace root。
 # 实测（2026-08-02，干净 clone + ubuntu:24.04 容器）：`uv sync` rc=0，66 个包装齐。
+#
+# ⚠ 2026-08-03 复盘：上面那句在 `hq-devlib` 依赖落地之后**有一段时间是假的**。
+# 声明成普通 specifier（`hq-devlib>=0.1`）时，离开 ~/Dev workspace 就没有任何
+# index 提供它，`uv sync` 死在**解析**这一步（不是装完不能用）：
+#   × No solution found … Because hq-devlib was not found in the package registry
+#     and your project depends on hq-devlib>=0.1 …
+# （2026-08-03 实测：`git archive HEAD` 到中立目录后 `uv lock` rc=1。）
+# 修法是把它改成 **git 直接引用**（用户拍板：走 git URL，不发 PyPI）；代价是
+# CI 要有该私库的读权限 —— 见下面「给 git 配 devtools 私库读权限」那一步，
+# 复用已有的 `HQ_DEVTOOLS_TOKEN`，没有新增 secret。
+#
 # **但不能加 `--locked` / `--frozen`**：仓里 track 的 uv.lock 是 workspace 味的旧锁，
 # 里面有 `source = { editable = "../../stations/dockit" }` 这种指向兄弟仓的条目，
 # 那个路径在 CI 上不存在。`uv sync` 会就地重解析（实测把 dockit 那 32 行删掉、rc=0），
@@ -147,10 +158,37 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # `pyproject.toml` 里 hq-devlib 是 **git 直接引用**
+      # （`hq-devlib @ git+https://github.com/zengtianli/devtools.git`，2026-08-03 起）。
+      # 上面那步的 `actions/checkout` 用的是 action 内部的鉴权、且 persist-credentials: false，
+      # **不会**给 runner 上的 git 留下任何凭证 —— 于是 `uv sync` 的 clone 会死在
+      #   fatal: could not read Username for 'https://github.com': terminal prompts disabled
+      # （zengtianli/devtools 是 PRIVATE，`gh repo view … --json visibility` 实测）。
+      # 所以这里给 git 配一次 URL 重写，复用**同一个** secret，不需要新建 secret、
+      # 也不需要 deploy key。runner 是一次性机器，写进它的 ~/.gitconfig 无残留风险。
+      - name: 给 git 配 devtools 私库读权限（uv sync 要 clone hq-devlib）
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.HQ_DEVTOOLS_TOKEN }}" ]; then
+            echo "⛔ 没配 HQ_DEVTOOLS_TOKEN —— hq-devlib 是 git 直接引用，指向私库"
+            echo "   zengtianli/devtools，下一步 uv sync 必然 clone 失败。"
+            echo "   修法：仓库 Settings → Secrets → Actions 配 HQ_DEVTOOLS_TOKEN"
+            echo "         （对 zengtianli/devtools 有 Contents: Read 的 fine-grained PAT）。"
+            exit 1
+          fi
+          git config --global \
+            url."https://x-access-token:${{ secrets.HQ_DEVTOOLS_TOKEN }}@github.com/".insteadOf \
+            "https://github.com/"
+          echo "✓ git URL 重写已就位"
+
       - name: 装依赖（uv sync · 不加 --locked，理由见文件头 §二）
         run: |
           set -euo pipefail
           uv sync --python "${{ matrix.python-version }}"
+          # hq-devlib 到底解析成功没有 —— 当场对一次。没有这条，装依赖失败会以
+          # 「后面某道闸门 FATAL exit 2」的形式现形，那是最会骗人的一种红。
+          uv pip show hq-devlib > /dev/null || {
+            echo "⛔ hq-devlib 没装上 —— git 直接引用没解析成功（私库凭证？网络？）"; exit 1; }
           # 矩阵这条腿到底跑的是不是它自称的那个 Python —— 当场对一次，别信它。
           # （见上面 UV_PYTHON 那段注释：这条断言就是那个坑的反向验证。）
           uv run python -c "
