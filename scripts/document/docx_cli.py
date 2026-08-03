@@ -69,8 +69,9 @@ try:
 except ImportError as e:  # pragma: no cover
     # 缺它是 **fail-closed exit 2 不是降级** —— 没有 parallel_contract 就没有
     # --batch/--phases/--defer，同一版 CLI 在两台机器上 flag 面不一样是最难查的漂移。
+    _seen = lambda p, tag: f"{p}（{tag}{'' if p.is_dir() else '，不存在'}）"  # noqa: E731
     print(f"[docx_cli.py] FATAL: cannot import parallel_contract: {e}\n"
-          f"  找过：{_LIB}（总部工作树）· {_BUNDLED_LIB}（包内镜像）· 已装的包\n"
+          f"  找过：{_seen(_LIB, '总部工作树')} · {_seen(_BUNDLED_LIB, '包内镜像')} · 已装的包\n"
           f"  修法：pip install hq-devlib   （= 总部 ~/Dev/tools/dev/lib 的 6 个平铺模块，\n"
           f"        本仓 pyproject 已声明为依赖；正常 `pip install doctools` 会自动带上它）",
           file=sys.stderr)
