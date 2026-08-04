@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """allowed_deltas_ab.py — W3 的等价对拍：全零 allowed_deltas 是不是真 no-op。
 
-    python3 handoffs/_loc_plan_harness/allowed_deltas_ab.py    # rc=0 即全部等价
+    python3 tools/allowed_deltas_ab.py    # rc=0 即全部等价
 
 判据：对随机快照对 (before, after)，`diff_structure(b, a)` 与
 `diff_structure(b, a, allowed_deltas=<fix_styleset 里那 8 个真实形状>)` 必须逐条相同。
@@ -30,7 +30,7 @@ import random
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 SUB = ROOT / "scripts" / "document" / "sub"
 ROUNDS = 4000
 

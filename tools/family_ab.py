@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """family_ab.py — 12 个 sub/ 家族 main() 分发器的 CLI 行为快照（W1 的唯一验收门）。
 
-    python3 handoffs/_loc_plan_harness/family_ab.py <仓库根绝对路径> <输出 json>
+    python3 tools/family_ab.py <仓库根绝对路径> <输出 json>
 
 为什么必须有它：`cli_surface` 只管接口形状，`cli_forward_probe` 把 `exec_script`
 换成录音机、**根本进不到家族 main()**。W1 动的恰恰是家族 main()，那两道门在这层是瞎的。

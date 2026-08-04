@@ -71,7 +71,7 @@ def family_main(subcommands, argv=None, *, file, usage_args="<args…>") -> int:
     `"<docx> [flags…]"`, 其余 9 个用默认 `"<args…>"`。**弄反了 `--help` 输出就变,
     而 cli_surface / cli_forward_probe / collar / axis 全部照样绿**
     (那几道门看 argv 与接口形状, 进不到家族 main), 只有
-    `handoffs/_loc_plan_harness/family_ab.py` 的 144 例对拍抓得住。
+    `tools/family_ab.py` 的 144 例对拍抓得住。
     """
     fam = Path(file).stem
     args = list(sys.argv[1:] if argv is None else argv)

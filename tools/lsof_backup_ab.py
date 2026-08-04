@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lsof_backup_ab.py — 收敛后的一致性门：10 处 lsof + 备份路径是否真是同一份实现。
 
-    python3 handoffs/_loc_plan_harness/lsof_backup_ab.py     # rc=0 即四项全过
+    python3 tools/lsof_backup_ab.py     # rc=0 即四项全过
 
 ## 判据换过一次（2026-08-02），别按旧的读
 
@@ -39,7 +39,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 SUB = ROOT / "scripts" / "document" / "sub"
 
 # str|None 外壳：8 处
