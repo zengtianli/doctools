@@ -48,18 +48,23 @@ _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
 if _LIB.is_dir() and str(_LIB) not in sys.path:   # 别的机器上没有 ~/Dev，不塞死路径
     sys.path.insert(0, str(_LIB))
 # 同 docx_cli.py：三条来源 = 总部工作树 / `<根>/lib` 镜像 / 装出来的 hq-devlib 包。
-# 这里尤其要接上 ——
-# 下面那个 except 分支是**静默降级**（只留 --workers，丢掉 --batch/--phases/--defer/
-# --fanout-evidence），真走到就等于「同一版 pdf_cli 在两台机器上 flag 面不一样」，
-# 是最难查的一类漂移。append 理由同 docx_cli.py（不改本机解析优先级）。
+# append 理由同 docx_cli.py（不改本机解析优先级）。
 _BUNDLED_LIB = Path(__file__).resolve().parents[2] / "lib"
 if str(_BUNDLED_LIB) not in sys.path:
     sys.path.append(str(_BUNDLED_LIB))
 try:
     from parallel_contract import add_parallel_args  # type: ignore
-except ImportError:
-    def add_parallel_args(p):  # type: ignore  # noqa
-        p.add_argument("--workers", type=int, default=None)
+except ImportError as e:  # pragma: no cover
+    # 缺它是 **fail-closed exit 2 不是降级**（2026-08-04 改，对齐 docx_cli.py）——
+    # 旧 except 分支静默只留 --workers、丢 --batch/--phases/--defer/--fanout-evidence，
+    # 同一版 CLI 在两台机器上 flag 面不一样是最难查的漂移。
+    _seen = lambda p, tag: f"{p}（{tag}{'' if p.is_dir() else '，不存在'}）"  # noqa: E731
+    print(f"[pdf_cli.py] FATAL: cannot import parallel_contract: {e}\n"
+          f"  找过：{_seen(_LIB, '总部工作树')} · {_seen(_BUNDLED_LIB, '包内镜像')} · 已装的包\n"
+          f"  修法：pip install hq-devlib   （= 总部 ~/Dev/tools/dev/lib 的 6 个平铺模块，\n"
+          f"        本仓 pyproject 已声明为依赖；正常 `pip install doctools` 会自动带上它）",
+          file=sys.stderr)
+    sys.exit(2)
 
 # Lazy imports of pdfplumber / pypdf — heavy deps; only some subcommands need
 try:
