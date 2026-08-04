@@ -76,9 +76,17 @@ pytest: 336 passed, 2 skipped
 
 三仓已推：`devtools b81bc49` · `doctools 7a20879` · `reclaim 948038f`
 
-## 四、唯一未闭合项（属用户专属操作）
+## 四、唯一未闭合项（属用户专属操作）——已闭合（2026-08-04）
 
-**CI 仍红**，卡在 `Input required and not supplied: token` —— `gh secret list -R zengtianli/doctools`
+用户已建细粒度 PAT 并 `gh secret set HQ_DEVTOOLS_TOKEN`。第一次 rerun 仍红：checkout 对
+`zengtianli/devtools` 返 **404**（不是 401）—— token 合法但看不见私库，根因是新建页
+Repository access 停在默认的 **Public repositories**。改成 Only select repositories 圈进
+devtools（原地改，token 值不变，secret 不用重配）后 rerun：
+**run 30804868071 两个矩阵 job（py3.12/3.13）全绿 + artifacts 上传成功 —— 该 workflow 首次全绿。**
+
+以下为闭合前的记录，留作凭证：
+
+**CI 曾红**，卡在 `Input required and not supplied: token` —— `gh secret list -R zengtianli/doctools`
 为空，`HQ_DEVTOOLS_TOKEN` 没配。`zengtianli/devtools` 是 **PRIVATE**，两处需要它：
 ① `actions/checkout` 取总部件 ② `uv sync` clone git URL 依赖（workflow 里已用同一个 secret
 配 `url.insteadOf`，不需要第二个 secret，也不需要 deploy key）。
