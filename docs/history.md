@@ -13,6 +13,9 @@
   docx_apply_image_caption 平移进 `sub/`。
 - **同日再折**：pptx 4→1（`pptx_cli`）· pdf 3→1（`pdf_cli`）· md_docx_template 并入
   `md_tools`（子命令 `md2docx`）。
+- **`md_tools to-docx`（pandoc 版）2026-08-04 用户拍板退役**：绕开 docx-gen-guard 字面
+  匹配（守卫旁路，路线图 P11 挂账项）+ 实测全生态零消费者；md→docx 统一走 `md2docx`。
+  docx_cli 的 `md-to-docx` 动词本来就转发 `md2docx`，不受影响。
 - `_groups.py` 之前是 20 个只做「argparse 声明 + `exec_script` 转发」的 group 模块
   （2265 行），2026-07-30 折成一张表。
 

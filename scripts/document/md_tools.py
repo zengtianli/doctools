@@ -9,7 +9,6 @@ md_tools.py - Markdown 工具集
     merge       合并多个 Markdown 文件为一个
     split       按一级标题拆分 Markdown 文件
     strip       删除 Markdown 文件中所有 blockquote
-    to-docx     Markdown 转 Docx（Pandoc 版）
     to-html     Markdown 渲染为 HTML 并在浏览器中打开
     frontmatter 批量生成 YAML frontmatter（LLM）
     md2docx     Markdown 转 Docx（样式复刻版，原 md_docx_template.py）
@@ -20,7 +19,6 @@ md_tools.py - Markdown 工具集
     python3 md_tools.py merge a.md b.md
     python3 md_tools.py split input.md
     python3 md_tools.py strip md_final/ --fix
-    python3 md_tools.py to-docx input.md -o output.docx
     python3 md_tools.py to-html file.md
     python3 md_tools.py frontmatter docs/ --dry-run
     python3 md_tools.py md2docx input.md -t 模板.docx -o output.docx
@@ -452,10 +450,10 @@ def cmd_strip(args):
 
 
 # ════════════════════════════════════════════════════════════════════
-#  to-docx - Markdown 转 Docx（Pandoc 版）
+#  md2docx 共用件（to-docx pandoc 版 2026-08-04 用户拍板退役：守卫旁路 + 零消费者）
 # ════════════════════════════════════════════════════════════════════
 
-# 默认模板路径（doctools SoT；pandoc 版与样式复刻版 md2docx 共用同一常量）
+# 默认模板路径（doctools SoT）
 DEFAULT_TEMPLATE = str(Path(__file__).parent.parent.parent / "templates" / "template.docx")
 
 
@@ -471,65 +469,6 @@ def get_finder_selection():
     """
     result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     return result.stdout.strip()
-
-
-def docx_convert(md_path, output_path=None, template_path=None):
-    """用 Pandoc 将 Markdown 转换为 Docx"""
-    md_path = Path(md_path).resolve()
-    if not md_path.exists():
-        show_error(f"文件不存在: {md_path}")
-        sys.exit(1)
-
-    if output_path is None:
-        output_path = md_path.with_suffix(".docx")
-    else:
-        output_path = Path(output_path).resolve()
-
-    # 构建 Pandoc 命令
-    cmd = [
-        "pandoc",
-        str(md_path),
-        "-o",
-        str(output_path),
-        "--from",
-        "markdown",
-        "--to",
-        "docx",
-    ]
-
-    # 使用模板（reference-doc）— 不存在则降级裸 pandoc
-    tpl = template_path or DEFAULT_TEMPLATE
-    if tpl and Path(tpl).exists():
-        cmd += ["--reference-doc", str(tpl)]
-        show_info(f"模板: {Path(tpl).name}")
-    else:
-        show_info(f"模板不存在，降级裸 pandoc: {tpl}")
-
-    show_processing(f"输入: {md_path.name}")
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        show_error(f"Pandoc 转换失败:\n{result.stderr}")
-        sys.exit(1)
-
-    show_success(f"输出: {output_path}")
-    return str(output_path)
-
-
-def cmd_to_docx(args):
-    """to-docx 子命令入口"""
-    md_path = args.input
-    if not md_path:
-        finder_file = get_finder_selection()
-        if finder_file and finder_file.endswith(".md"):
-            md_path = finder_file
-            show_info(f"从 Finder 获取: {os.path.basename(finder_file)}")
-        else:
-            show_error("请在 Finder 中选择一个 .md 文件")
-            sys.exit(1)
-
-    docx_convert(md_path, args.output, args.template)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1758,8 +1697,6 @@ def build_parser():
   %(prog)s split input.md                        按一级标题拆分
   %(prog)s strip md_final/                       检查 blockquote（只统计）
   %(prog)s strip md_final/ --fix                 删除 blockquote
-  %(prog)s to-docx input.md                      转换为 docx
-  %(prog)s to-docx input.md -t template.docx     用模板转换
   %(prog)s to-html file.md                       渲染为 HTML
   %(prog)s to-html dir/                          目录批量渲染
   %(prog)s frontmatter docs/                     批量生成 frontmatter
@@ -1819,16 +1756,6 @@ def build_parser():
     p_strip.add_argument("input", help="MD 文件或目录路径")
     p_strip.add_argument("--fix", action="store_true", help="执行删除")
     p_strip.add_argument("--output-dir", help="输出目录（默认覆盖原文件）")
-
-    # ── to-docx ──
-    p_docx = subparsers.add_parser(
-        "to-docx",
-        help="Markdown 转 Docx（Pandoc 版）",
-        description="使用 Pandoc 将 Markdown 文件转换为 Docx 格式",
-    )
-    p_docx.add_argument("input", nargs="?", help="Markdown 文件路径")
-    p_docx.add_argument("-o", "--output", help="输出 docx 文件路径")
-    p_docx.add_argument("-t", "--template", help="参考模板 docx（Pandoc --reference-doc）")
 
     # ── to-html ──
     p_html = subparsers.add_parser(
@@ -1893,7 +1820,6 @@ def main():
         "merge": cmd_merge,
         "split": cmd_split,
         "strip": cmd_strip,
-        "to-docx": cmd_to_docx,
         "to-html": cmd_to_html,
         "frontmatter": cmd_frontmatter,
         "md2docx": cmd_md2docx,
