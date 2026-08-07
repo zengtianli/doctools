@@ -557,6 +557,180 @@ class DocxReviewer:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  accept —— 接受全部修订 / 清空批注，出干净成稿
+# ══════════════════════════════════════════════════════════════════════
+
+# 接受修订后应当整体消失的「格式修订」记录元素
+_CHANGE_TAGS = ("pPrChange", "rPrChange", "tblPrChange", "tcPrChange",
+                "trPrChange", "sectPrChange", "tblGridChange")
+# 范围标记（移动 / customXml 插删），接受后一律清掉
+_RANGE_TAGS = ("moveFromRangeStart", "moveFromRangeEnd",
+               "moveToRangeStart", "moveToRangeEnd",
+               "customXmlInsRangeStart", "customXmlInsRangeEnd",
+               "customXmlDelRangeStart", "customXmlDelRangeEnd",
+               "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
+               "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd")
+
+
+def _unwrap(el):
+    """把元素的子节点提升到它的位置，然后删掉它自己（保留 tail 文本）。"""
+    parent = el.getparent()
+    if parent is None:
+        return
+    idx = list(parent).index(el)
+    for i, child in enumerate(list(el)):
+        parent.insert(idx + i, child)
+    parent.remove(el)
+
+
+def _drop(el):
+    parent = el.getparent()
+    if parent is not None:
+        parent.remove(el)
+
+
+class DocxAccepter:
+    """接受全部修订 + 清空批注，产出干净成稿。
+
+    为什么不删 comments.xml 而是清空它：删部件会让 `assert_parts_intact` 报缺失，
+    那道 fail-closed 门是防「162→74 部件」类事故的主力，不能为了这个功能把它关掉。
+    清空后 Word 里批注面板为空，效果等同。
+    """
+
+    def __init__(self, docx_path: str):
+        self.docx_path = docx_path
+        self.tmpdir = tempfile.mkdtemp(prefix="docx_accept_")
+        with zipfile.ZipFile(docx_path, "r") as zf:
+            zf.extractall(self.tmpdir)
+        self.doc_tree = etree.parse(os.path.join(self.tmpdir, "word", "document.xml"))
+        self.doc_root = self.doc_tree.getroot()
+        self.stats = dict(ins=0, dele=0, fmt_change=0, para_merged=0, comments=0, refs=0)
+
+    def accept_all(self) -> dict:
+        root = self.doc_root
+        # ① 先记下「段落标记被删」的段落——它们要与下一段合并。
+        #    必须在删 w:del 之前记，否则标记本身先被删掉就看不出来了。
+        mark_deleted = []
+        for p in root.iter(qn("w:p")):
+            ppr = p.find(qn("w:pPr"))
+            if ppr is None:
+                continue
+            rpr = ppr.find(qn("w:rPr"))
+            if rpr is not None and rpr.find(qn("w:del")) is not None:
+                mark_deleted.append(p)
+
+        # ② 删除态一律移除（含 pPr/rPr 里的段落标记删除标记）
+        for el in list(root.iter(qn("w:del"))):
+            self.stats["dele"] += 1
+            _drop(el)
+        for el in list(root.iter(qn("w:moveFrom"))):
+            _drop(el)
+
+        # ③ 插入态解包（pPr/rPr 里的插入标记只需删掉，它没有正文子节点）
+        for el in list(root.iter(qn("w:ins"))):
+            self.stats["ins"] += 1
+            parent = el.getparent()
+            if parent is not None and parent.tag == qn("w:rPr"):
+                _drop(el)
+            else:
+                _unwrap(el)
+        for el in list(root.iter(qn("w:moveTo"))):
+            _unwrap(el)
+
+        # ④ 格式修订记录与范围标记
+        for tag in _CHANGE_TAGS:
+            for el in list(root.iter(qn("w:" + tag))):
+                self.stats["fmt_change"] += 1
+                _drop(el)
+        for tag in _RANGE_TAGS:
+            for el in list(root.iter(qn("w:" + tag))):
+                _drop(el)
+
+        # ⑤ 批注锚点：范围标记 + 含 commentReference 的 run
+        for tag in ("commentRangeStart", "commentRangeEnd"):
+            for el in list(root.iter(qn("w:" + tag))):
+                _drop(el)
+        for ref in list(root.iter(qn("w:commentReference"))):
+            run = ref.getparent()
+            while run is not None and run.tag != qn("w:r"):
+                run = run.getparent()
+            self.stats["refs"] += 1
+            _drop(run if run is not None else ref)
+
+        # ⑥ 段落标记被删 → 与下一段合并（倒序处理，避免链式合并时索引失效）
+        for p in reversed(mark_deleted):
+            parent = p.getparent()
+            if parent is None:
+                continue
+            sibs = list(parent)
+            try:
+                i = sibs.index(p)
+            except ValueError:
+                continue
+            nxt = sibs[i + 1] if i + 1 < len(sibs) else None
+            if nxt is None or nxt.tag != qn("w:p"):
+                continue  # 后面不是段落（如表格/节尾），保持原样别乱动
+            content = [c for c in list(p) if c.tag != qn("w:pPr")]
+            nxt_ppr = nxt.find(qn("w:pPr"))
+            at = list(nxt).index(nxt_ppr) + 1 if nxt_ppr is not None else 0
+            for k, c in enumerate(content):
+                nxt.insert(at + k, c)
+            _drop(p)
+            self.stats["para_merged"] += 1
+        return self.stats
+
+    def clear_comments(self):
+        """清空 comments.xml / commentsExtended.xml / commentsIds.xml（保留部件本身）。"""
+        W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
+        for fn, root_tag, ns in (
+            ("comments.xml", "comments", W),
+            ("commentsExtended.xml", "commentsEx", W15),
+            ("commentsIds.xml", "commentsIds", W15),
+        ):
+            path = os.path.join(self.tmpdir, "word", fn)
+            if not os.path.exists(path):
+                continue
+            if fn == "comments.xml":
+                tree = etree.parse(path)
+                self.stats["comments"] = len(list(tree.getroot().iter(qn("w:comment"))))
+            with open(path, "wb") as f:
+                f.write(
+                    f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                    f'<w:{root_tag} xmlns:w="{ns if ns != W15 else W}" '
+                    f'xmlns:w15="{W15}"/>'.encode()
+                )
+
+    def save(self, output_path: str):
+        with open(os.path.join(self.tmpdir, "word", "document.xml"), "wb") as f:
+            f.write(etree.tostring(self.doc_tree, xml_declaration=True,
+                                   encoding="UTF-8", standalone=True))
+        output_path = os.path.abspath(output_path)
+        if output_path == os.path.abspath(self.docx_path):
+            raise ValueError("accept 拒绝原地覆写基线——成稿必须另存新文件，"
+                             "否则带修订的中间稿就没了（三稿制要求两者并存）")
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root_dir, _dirs, files in os.walk(self.tmpdir):
+                for fn in files:
+                    abs_path = os.path.join(root_dir, fn)
+                    zf.write(abs_path, os.path.relpath(abs_path, self.tmpdir))
+        clear_quarantine(output_path)
+        # 部件零丢失 fail-closed：accept 只改 XML 内容，不该增减任何部件
+        assert_parts_intact(self.docx_path, output_path, verbose=False)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+
+def accept_docx(input_path: str, output_path: str, keep_comments: bool = False) -> dict:
+    """接受全部修订（并默认清空批注），输出干净成稿。返回统计。"""
+    acc = DocxAccepter(input_path)
+    stats = acc.accept_all()
+    if not keep_comments:
+        acc.clear_comments()
+    acc.save(output_path)
+    return stats
+
+
 def review_docx(
     input_path: str,
     output_path: str,
@@ -924,6 +1098,12 @@ def cmd_track_changes(args):
             )
             sys.exit(1)
         print(f"完成：{count} 处替换已写入 {args.output}")
+    elif args.tc_command == "accept":
+        stats = accept_docx(args.input, args.output,
+                            keep_comments=bool(getattr(args, "keep_comments", False)))
+        print(f"完成：接受 {stats['ins']} 处插入 / {stats['dele']} 处删除 / "
+              f"{stats['fmt_change']} 处格式修订，合并 {stats['para_merged']} 个段落，"
+              f"清空 {stats['comments']} 条批注（{stats['refs']} 个锚点）→ {args.output}")
     elif args.tc_command == "compare":
         rc = cmd_track_compare(args)
         if rc:
@@ -957,6 +1137,19 @@ def add_track_parser(sub):
                     default=True,
                     help="允许部分规则 0 命中。默认 fail-closed：任一规则 0 命中即报错退出，"
                          "防「静默 0 处替换」被当成执行成功")
+
+    ap = tc_sub.add_parser(
+        "accept", help="接受全部修订 + 清空批注，出干净成稿",
+        description="中间稿（带修订标记与批注）→ 成稿（干净）。三稿制的最后一道。",
+        epilog=("接受 w:ins（解包保留）/ w:del（整块移除）/ moveFrom·moveTo / 各类 *PrChange；\n"
+                "段落标记被删的段落与下一段合并；批注锚点清除、comments*.xml 清空但**保留部件**\n"
+                "（删部件会让 assert_parts_intact 报缺失，那道门不能为这个功能关掉）。\n"
+                "拒绝原地覆写：成稿必须另存，中间稿要与它并存。"),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", help="输入 .docx（中间稿）")
+    ap.add_argument("--output", "-o", required=True, help="输出 .docx（成稿）")
+    ap.add_argument("--keep-comments", action="store_true",
+                    help="只接受修订、保留批注（默认连批注一起清——成稿不该带我方批注）")
 
     tcp = tc_sub.add_parser(
         "compare", help="对比两份 docx，生成带 Word 修订标记的第三份（段落级粒度）",

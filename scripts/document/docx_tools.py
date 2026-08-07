@@ -93,6 +93,8 @@ _tc_extract_del_text = _track_impl._tc_extract_del_text
 DocxReviewer = _track_impl.DocxReviewer
 review_docx = _track_impl.review_docx
 compare_docx = _track_impl.compare_docx      # 2026-08-03：compare 落地（原 v2 空桩）
+DocxAccepter = _track_impl.DocxAccepter      # 2026-08-07：accept 落地（中间稿→成稿）
+accept_docx = _track_impl.accept_docx
 cmd_track_changes = _track_impl.cmd_track_changes
 
 
