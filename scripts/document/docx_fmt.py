@@ -942,15 +942,102 @@ def fix(path: Path, font: str, ascii_font: str) -> list[str]:
     return changed
 
 
+def effective_eastasia(path: Path) -> "list[tuple[str, int]]":
+    """按 run 数加权统计这份 docx 的有效中文字体，[(字体, run数), ...] 由多到少。
+
+    解析顺序（OOXML 继承链的实用近似）：run 的 w:rFonts/@w:eastAsia →
+    该段 pStyle 的 eastAsia（含 basedOn 链）→ 默认段落样式 → docDefaults。
+    等线/DengXian 与空值不计入（它们是"没设"或"要被清掉的"，不是目标字体）。
+    """
+    import collections
+    from xml.etree import ElementTree as ET
+    NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def ea(rpr):
+        if rpr is None:
+            return ""
+        rf = rpr.find(NS + "rFonts")
+        return (rf.get(NS + "eastAsia") or "") if rf is not None else ""
+
+    with zipfile.ZipFile(path) as z:
+        try:
+            doc = ET.fromstring(z.read("word/document.xml"))
+        except KeyError:
+            return []
+        style_ea, based, default_ea = {}, {}, ""
+        try:
+            st = ET.fromstring(z.read("word/styles.xml"))
+        except KeyError:
+            st = None
+        if st is not None:
+            dd = st.find(NS + "docDefaults")
+            if dd is not None:
+                default_ea = ea(dd.find(f"{NS}rPrDefault/{NS}rPr"))
+            for s in st.iter(NS + "style"):
+                sid = s.get(NS + "styleId")
+                if not sid:
+                    continue
+                style_ea[sid] = ea(s.find(NS + "rPr"))
+                b = s.find(NS + "basedOn")
+                if b is not None:
+                    based[sid] = b.get(NS + "val")
+                if s.get(NS + "default") == "1" and s.get(NS + "type") == "paragraph":
+                    default_ea = style_ea[sid] or default_ea
+
+    def resolve_style(sid, depth=0):
+        while sid and depth < 12:
+            if style_ea.get(sid):
+                return style_ea[sid]
+            sid = based.get(sid)
+            depth += 1
+        return ""
+
+    cnt = collections.Counter()
+    for p in doc.iter(NS + "p"):
+        ppr = p.find(NS + "pPr")
+        sid = None
+        if ppr is not None:
+            ps = ppr.find(NS + "pStyle")
+            sid = ps.get(NS + "val") if ps is not None else None
+        p_ea = resolve_style(sid) or default_ea
+        for r in p.iter(NS + "r"):
+            if not any((t.text or "").strip() for t in r.iter(NS + "t")):
+                continue
+            f = ea(r.find(NS + "rPr")) or p_ea
+            if f and not DENGXIAN.search(f):
+                cnt[f] += 1
+    return cnt.most_common()
+
+
 def fonts_main(argv) -> int:
     ap = argparse.ArgumentParser(prog="docx_font_normalize.py",
-                                 description="docx 去等线（中文字体归一到 宋体/仿宋）")
+                                 description="docx 去等线（中文字体归一到该文档/范式件已在用的中文字体）")
     ap.add_argument("docx", nargs="+")
     ap.add_argument("--check", action="store_true", help="只报告不改（默认）")
     ap.add_argument("--apply", action="store_true", help="原地修复 + .bak-时间戳")
-    ap.add_argument("--font", default="仿宋_GB2312", help="中文字体（默认 仿宋_GB2312）")
+    ap.add_argument("--font", default=None,
+                    help="目标中文字体。不给则从 --from-ref 或本文档自身推断；"
+                         "推断不出即拒跑（无默认值——2026-08-07 前的默认 仿宋_GB2312 曾把"
+                         "金华宋体 golden 外壳整层改成仿宋，见 §复刻 golden）")
+    ap.add_argument("--from-ref", dest="from_ref", metavar="REF.docx",
+                    help="从范式件(golden)推断目标中文字体：取其有效中文字体众数。"
+                         "复刻 golden 时必用这个，别用 --font 拍脑袋")
     ap.add_argument("--ascii", dest="ascii_font", default="Times New Roman")
     args = ap.parse_args(argv)
+
+    ref_font = None
+    if args.from_ref:
+        rp = Path(args.from_ref)
+        if not rp.exists():
+            print(f"❌ --from-ref 不存在: {rp}", file=sys.stderr)
+            return 2
+        mc = effective_eastasia(rp)
+        if not mc:
+            print(f"❌ 从 {rp.name} 解析不出中文字体，请显式 --font", file=sys.stderr)
+            return 2
+        ref_font = mc[0][0]
+        print(f"[--from-ref] {rp.name} 有效中文字体众数 = {ref_font}"
+              f"（{mc[0][1]} run{'，其余 ' + str(mc[1:]) if len(mc) > 1 else ''}）")
 
     rc = 0
     for p in args.docx:
@@ -969,7 +1056,24 @@ def fonts_main(argv) -> int:
         for i in issues:
             print(f"    · {i}")
         if args.apply:
-            for c in fix(path, args.font, args.ascii_font):
+            # 目标字体 fail-closed：显式 --font > --from-ref 众数 > 本文档自身众数；
+            # 三者都得不出 → 拒跑，不再拿一个写死的默认值去覆盖别人的版式。
+            target = args.font or ref_font
+            src = "--font" if args.font else ("--from-ref" if ref_font else "")
+            if not target:
+                own = effective_eastasia(path)
+                if own:
+                    target, src = own[0][0], "本文档自身众数"
+                    print(f"    ↳ 目标字体 = {target}（{src}，{own[0][1]} run）")
+                else:
+                    print(f"    ❌ 判不出目标中文字体（本文档非等线中文字体为空）。"
+                          f"请显式 --font <字体>，或复刻 golden 时用 --from-ref <范式件>。"
+                          f"拒绝用写死的默认值覆盖版式。", file=sys.stderr)
+                    rc = 2
+                    continue
+            else:
+                print(f"    ↳ 目标字体 = {target}（{src}）")
+            for c in fix(path, target, args.ascii_font):
                 print(f"    ✔ {c}")
             left = scan(path)
             print("    ✅ 复检干净" if not left else f"    ❌ 仍有: {left}")
