@@ -42,7 +42,10 @@ _sys.path.append(str(_Path(__file__).resolve().parents[1]))
 
 from lxml import etree  # noqa: E402
 
-from docx_parts import assert_parts_intact  # noqa: E402  surgical 部件完整性断言
+from docx_parts import (  # noqa: E402  surgical 部件完整性断言
+    DEFAULT_ALLOW_CHANGED,
+    assert_parts_intact,
+)
 from docx_xml import R_NS, REL_COMMENTS, W, qn  # noqa: E402
 from file_ops import clear_quarantine  # noqa: E402
 
@@ -716,8 +719,16 @@ class DocxAccepter:
                     abs_path = os.path.join(root_dir, fn)
                     zf.write(abs_path, os.path.relpath(abs_path, self.tmpdir))
         clear_quarantine(output_path)
-        # 部件零丢失 fail-closed：accept 只改 XML 内容，不该增减任何部件
-        assert_parts_intact(self.docx_path, output_path, verbose=False)
+        # 部件零丢失 fail-closed：accept 只改 XML 内容，不该增减任何部件。
+        # 批注三件套是本操作**有意**清空的，必须显式报备——DEFAULT_ALLOW_CHANGED 只含
+        # comments.xml，另两个（w15 扩展批注与批注 id 表）不报备就会被这道门拦下（实证）。
+        assert_parts_intact(
+            self.docx_path, output_path, verbose=False,
+            allow_changed=set(DEFAULT_ALLOW_CHANGED) | {
+                "word/commentsExtended.xml", "word/commentsIds.xml",
+                "word/commentsExtensible.xml",
+            },
+        )
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
