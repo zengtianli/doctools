@@ -172,6 +172,7 @@ class DocxReviewer:
 
     def apply_rules(self, rules: list[dict]) -> int:
         """应用替换规则列表。返回成功替换的数量。"""
+        self._reject_self_containing(rules)
         count = 0
         for rule in rules:
             replace = rule.get("replace", rule["find"])
@@ -184,6 +185,32 @@ class DocxReviewer:
             )
             count += n
         return count
+
+    @staticmethod
+    def _reject_self_containing(rules: list[dict]) -> None:
+        """fail-closed：replace 原样包含 find ⇒ _apply_one_rule 的 while 会永远重新命中
+        自己写进去的那段文字，进程 100% CPU 挂死、无任何报错（2026-08-06 缙云典型案例
+        实测，一条 append 式规则空转 3 分钟才被发现）。这类规则没有任何合法用途，
+        直接在入口拒绝，并给出可照做的改法。"""
+        bad = []
+        for i, rule in enumerate(rules, 1):
+            replace = rule.get("replace", rule["find"])
+            comment_only = rule.get("comment_only", replace == rule["find"])
+            if not comment_only and rule["find"] in replace:
+                bad.append((i, rule["find"], replace))
+        if not bad:
+            return
+        lines = [
+            "规则自包含：replace 里原样含有 find，替换后会再次命中自己 → 死循环挂死。",
+        ]
+        for i, find, replace in bad:
+            lines.append(f"  规则 #{i}: find={find[:40]!r} 被完整包含在 replace={replace[:60]!r} 中")
+        lines.append(
+            "改法：让 replace 不再原样包含 find（改一两个字即可，如"
+            "「…奠定坚实基础」→「…奠定了坚实基础。<后接新增内容>」）；"
+            "只想挂批注不改字则显式写 \"comment_only\": true。"
+        )
+        raise ValueError("\n".join(lines))
 
     def _apply_one_rule(
         self,
