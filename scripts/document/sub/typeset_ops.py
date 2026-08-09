@@ -1211,6 +1211,240 @@ def main_line_spacing(argv=None):
     return cmd_fix(a.docx, a.ref, a.no_backup)
 
 
+# ══════════ justify（正文两端对齐 · 2026-08-08 立，绝对标准无需 --ref）══════════
+#
+# 与 line-spacing 的差别：行距值只能从 golden 抄，两端对齐是**绝对标准**（Work
+# CLAUDE.md §1.5.2/§1.5.4 · 用户 2026-08-08 钦定「所有 docx 正文都要两端对齐」），
+# 所以本子命令不收 --ref，机检判据就是「正文段有效 jc == both」。
+#
+# 「有效 jc」= direct pPr/jc > pStyle 链(含 basedOn) > docDefaults > Word 默认(left)。
+# 只看 direct 会漏掉最常见的病灶：Normal 样式压根没设 jc（Word 静默按 left 渲染，
+# 段落上一个 jc 都看不见）——吴兴验收包 00 自评说明就是这一型。
+#
+# 只碰**表外正文段**：表格单元格惯常居中/短文本，强制 both 无意义；标题/题注/图片段
+# 按样式名(w:name)+outlineLvl 排除 —— 判 styleId 会漏，中文模板的 heading 1 常写作
+# styleId="1"，_SKIP_STYLE_KEYS 的 "heading" 一个字都匹配不上。
+# 已显式 center/right/distribute 的段视为刻意版式，check 只报数不判违规、fix 不动。
+
+_JUSTIFY_SKIP_NAME_KEYS = ("heading", "title", "subtitle", "toc", "caption",
+                           "标题", "题注", "图", "表", "目录")
+
+
+def _jc_style_maps(sroot):
+    """styles.xml → (styleId→{jc,basedOn,name,type}, 默认段落样式id, docDefaults jc)"""
+    smap, default_sid = {}, None
+    for st in sroot.iter(q("style")):
+        sid = st.get(q("styleId"))
+        ppr = st.find(q("pPr"))
+        jc = ppr.find(q("jc")) if ppr is not None else None
+        based = st.find(q("basedOn"))
+        name = st.find(q("name"))
+        smap[sid] = {
+            "jc": jc.get(q("val")) if jc is not None else None,
+            "basedOn": based.get(q("val")) if based is not None else None,
+            "name": name.get(q("val")) if name is not None else "",
+            "type": st.get(q("type")),
+            "outlineLvl": (ppr.find(q("outlineLvl")) is not None) if ppr is not None else False,
+        }
+        if st.get(q("type")) == "paragraph" and st.get(q("default")) in ("1", "true", "on"):
+            default_sid = sid
+    dd_jc = None
+    dd = sroot.find(q("docDefaults"))
+    if dd is not None:
+        ppr = dd.find(f'{q("pPrDefault")}/{q("pPr")}')
+        if ppr is not None:
+            j = ppr.find(q("jc"))
+            if j is not None:
+                dd_jc = j.get(q("val"))
+    return smap, default_sid, dd_jc
+
+
+def _style_chain_jc(sid, smap, dd_jc):
+    """沿 basedOn 链找第一个设了 jc 的样式。返回 (值, 来源)。"""
+    seen = set()
+    while sid and sid in smap and sid not in seen:
+        seen.add(sid)
+        if smap[sid]["jc"]:
+            return smap[sid]["jc"], f"style:{sid}"
+        sid = smap[sid]["basedOn"]
+    return (dd_jc, "docDefaults") if dd_jc else (None, "Word默认(left)")
+
+
+def _direct_jc(p):
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        return None
+    jc = pPr.find(q("jc"))
+    return jc.get(q("val")) if jc is not None else None
+
+
+def _pstyle_id(p):
+    pPr = p.find(q("pPr"))
+    if pPr is None:
+        return None
+    st = pPr.find(q("pStyle"))
+    return st.get(q("val")) if st is not None else None
+
+
+def _effective_jc(p, smap, default_sid, dd_jc):
+    d = _direct_jc(p)
+    if d:
+        return d, "direct"
+    return _style_chain_jc(_pstyle_id(p) or default_sid, smap, dd_jc)
+
+
+def _in_table(p) -> bool:
+    anc = p.getparent()
+    while anc is not None:
+        if anc.tag == q("tbl"):
+            return True
+        anc = anc.getparent()
+    return False
+
+
+def _is_justify_target(p, smap, default_sid) -> bool:
+    """表外、有 CJK 文字、非标题/题注、非图片段。"""
+    if _in_table(p) or _has_image(p):
+        return False
+    txt = _para_text(p).strip()
+    if not txt or not any("一" <= c <= "鿿" for c in txt):
+        return False
+    pPr = p.find(q("pPr"))
+    if pPr is not None and pPr.find(q("outlineLvl")) is not None:
+        return False  # 段落级大纲层 = 标题
+    sid = _pstyle_id(p) or default_sid
+    info = smap.get(sid or "", {})
+    if info.get("outlineLvl"):
+        return False  # 样式级大纲层 = 标题样式
+    hay = f"{sid or ''} {info.get('name', '')}".lower()
+    return not any(k in hay for k in _JUSTIFY_SKIP_NAME_KEYS)
+
+
+def _scan_justify(docx_path: Path):
+    """→ (待办列表, 刻意版式段数, smap, default_sid, dd_jc, droot, sroot)
+    待办项 = (段元素, 文本, 有效jc, 来源, styleId)"""
+    with zipfile.ZipFile(docx_path) as z:
+        droot = etree.fromstring(z.read("word/document.xml"))
+        sroot = etree.fromstring(z.read("word/styles.xml")) if "word/styles.xml" in z.namelist() else None
+    smap, default_sid, dd_jc = _jc_style_maps(sroot) if sroot is not None else ({}, None, None)
+    body = droot.find(q("body"))
+    todo, deliberate = [], 0
+    for p in body.iter(q("p")):
+        if not _is_justify_target(p, smap, default_sid):
+            continue
+        eff, src = _effective_jc(p, smap, default_sid, dd_jc)
+        if eff in ("center", "right", "distribute"):
+            deliberate += 1
+            continue
+        if eff != "both":
+            todo.append((p, _para_text(p).strip(), eff or "left(隐式)", src, _pstyle_id(p) or default_sid))
+    return todo, deliberate, smap, default_sid, dd_jc, droot, sroot
+
+
+def cmd_check_justify(docx_path: Path) -> int:
+    todo, deliberate, smap, default_sid, dd_jc, droot, _ = _scan_justify(docx_path)
+    body = droot.find(q("body"))
+    total = sum(1 for p in body.iter(q("p")) if _is_justify_target(p, smap, default_sid))
+    print(f"[两端对齐机检] {docx_path.name}")
+    print(f"  正文段(表外·非标题题注): {total}   其中刻意居中/右对齐: {deliberate}")
+    print(f"  未两端对齐            : {len(todo)}")
+    if todo:
+        for _, tx, eff, src, sid in todo[:8]:
+            print(f"    · [{eff} via {src} style={sid}] {tx[:34]}")
+        if len(todo) > 8:
+            print(f"    …共 {len(todo)} 段")
+        print("✗ 有正文段未两端对齐")
+        return 2
+    print("✓ 正文段全部两端对齐(jc=both)")
+    return 0
+
+
+def _fix_justify(docx_path: Path, *, no_backup: bool, dry: bool = False) -> dict:
+    """两步：① 删正文段上 left/start 的 direct jc（回落样式）② 段落仍非 both 时，
+    给它依赖的那个段落样式补 jc=both（无 pStyle 则补默认段落样式）。
+    修样式层而非逐段插 direct jc —— 后者会往每个正文段撒直排版，与 doctools
+    clear-direct-format 的方向相反，且 Word 里再改样式就改不动了。"""
+    todo, _, smap, default_sid, dd_jc, droot, sroot = _scan_justify(docx_path)
+    if not todo:
+        return {"changed": 0, "note": "正文段已全部两端对齐"}
+
+    cleared, need_styles = 0, {}
+    for p, _tx, _eff, src, sid in todo:
+        if src == "direct":
+            pPr = p.find(q("pPr"))
+            jc = pPr.find(q("jc")) if pPr is not None else None
+            if jc is not None:
+                pPr.remove(jc)
+                cleared += 1
+            eff, _src2 = _style_chain_jc(sid, smap, dd_jc)
+            if eff == "both":
+                continue
+        need_styles[sid] = need_styles.get(sid, 0) + 1
+
+    styled = []
+    if need_styles:
+        if sroot is None:
+            return {"changed": 0, "skipped": "无 word/styles.xml，样式层无处可修"}
+        by_id = {st.get(q("styleId")): st for st in sroot.iter(q("style"))}
+        for sid, n in need_styles.items():
+            st = by_id.get(sid)
+            if st is None:
+                return {"changed": 0, "skipped": f"样式 {sid} 在 styles.xml 里找不到"}
+            ppr = st.find(q("pPr"))
+            if ppr is None:
+                ppr = etree.Element(q("pPr"))
+                st.insert(len(st), ppr)
+            _ensure_in_order(ppr, "jc").set(q("val"), "both")
+            styled.append(f"{sid}({smap.get(sid, {}).get('name', '') or '?'})×{n}段")
+
+    changed = cleared + sum(need_styles.values())
+    if dry:
+        return {"changed": 0, "would_change": changed, "cleared": cleared, "styles": styled}
+    if not no_backup:
+        bak = make_backup(docx_path)
+        print(f"  备份 → {bak.name}")
+    parts = {"word/document.xml": serialize(droot)}
+    if styled:
+        parts["word/styles.xml"] = serialize(sroot)
+    surgical_rewrite_parts(docx_path, parts, backup=False)
+    return {"changed": changed, "cleared": cleared, "styles": styled}
+
+
+def cmd_fix_justify(docx_path: Path, no_backup: bool) -> int:
+    r = _fix_justify(docx_path, no_backup=no_backup)
+    if r.get("skipped"):
+        print(f"[两端对齐修复] {docx_path.name}: 跳过 — {r['skipped']}", file=sys.stderr)
+        return 1
+    if r["changed"] == 0:
+        print(f"[两端对齐修复] {docx_path.name}: 无需修改（正文段已全 both）")
+        return 0
+    print(f"[两端对齐修复] {docx_path.name}: 清直接左对齐 {r['cleared']} 段"
+          + (f"；样式补 jc=both → {', '.join(r['styles'])}" if r["styles"] else ""))
+    rc = cmd_check_justify(docx_path)
+    return 0 if rc == 0 else rc
+
+
+def apply_path_justify(docx_path, args=None) -> dict:
+    """pipeline: 正文段两端对齐（无参数）。spec 里给 `justify: {}` 即可。"""
+    return _fix_justify(Path(docx_path), no_backup=True,
+                        dry=bool(getattr(args, "dry_run", False)) if args else False)
+
+
+def main_justify(argv=None):
+    ap = argparse.ArgumentParser(description="正文段两端对齐 jc=both（surgical，改样式层不撒直排版）")
+    ap.add_argument("docx", type=Path)
+    ap.add_argument("--check", action="store_true", help="只读机检, exit2=有未两端对齐的正文段")
+    ap.add_argument("--fix", "--apply", dest="fix", action="store_true", help="修到 both")
+    ap.add_argument("--no-backup", action="store_true")
+    a = ap.parse_args(argv)
+    if not a.docx.exists():
+        print(f"找不到: {a.docx}", file=sys.stderr)
+        return 1
+    if a.check or not a.fix:
+        return cmd_check_justify(a.docx)
+    return cmd_fix_justify(a.docx, a.no_backup)
+
+
 # ──────────────────────────── 家族入口（子命令分发）────────────────────────────
 
 SUBCOMMANDS = {
@@ -1219,6 +1453,7 @@ SUBCOMMANDS = {
     "port-sections": main_port_sections,
     "center-images": main_center_images,
     "line-spacing": main_line_spacing,
+    "justify": main_justify,
 }
 
 

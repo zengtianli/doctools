@@ -9,6 +9,7 @@
   ⓪ restyle    重套院样式（对同源 golden，整段克隆 pPr+runs）   sub/typeset_ops.py restyle --apply
   ① styleset   样式池清理（去 TOC10 等重复后缀）             docx_cli styleset restore
   ② spacing    正文固定行距（对参照, best-effort）            typeset_ops line-spacing --fix --ref
+  ②.5 justify  正文两端对齐 jc=both（绝对标准, 不需参照）      sub/typeset_ops.py justify --fix
   ③ figs       图号节内重排+补号+居中                       renumber-fig --cn-section --fix-center
   ③.5 center   图片显式居中+零缩进（不赌样式）               sub/typeset_ops.py center-images --apply
   ④ port_sect  节结构移植（对同源 golden 1:1：分节/横竖/页眉脚水印） sub/typeset_ops.py port-sections
@@ -98,6 +99,10 @@ def main(argv=None):
         steps.append(("② spacing 固定行距(对参照)",
                       [sys.executable, str(TYPESET_OPS), "line-spacing", str(work),
                        "--fix", "--ref", str(a.ref), "--no-backup"], ()))
+    # ②.5 justify：不需要 --ref（两端对齐是绝对标准，不是从 golden 抄的值），所以无条件跑
+    steps.append(("②.5 justify 正文两端对齐",
+                  [sys.executable, str(TYPESET_OPS), "justify", str(work),
+                   "--fix", "--no-backup"], ()))
     steps.append(("③ figs 图号节内重排+补无号题注",
                   [sys.executable, str(DC), "renumber-fig", "--cn-section",
                    "--fix-center", "--inplace", str(work)], (3,)))

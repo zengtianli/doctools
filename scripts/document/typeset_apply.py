@@ -455,6 +455,18 @@ ACTIONS: list[Action] = [
         opt_docs={"line_spacing_ref": "同源 golden docx 路径（行距值取其众数）；null = 本动作跳过"},
         script="typeset_ops", entry="apply_path_line_spacing",
     ),
+    Action(
+        "justify", "path", "path",
+        "正文段两端对齐（jc=both，改样式层不逐段撒直排版）",
+        "紧跟 line_spacing。和 center_images 的方向相反：那个必须写段级直接格式（图要"
+        "居中，赌样式继承会漏），这个反过来只改**样式层** —— 正文段成百上千，逐段插 jc "
+        "等于把整篇变成直接格式，后面任何改样式的动作都再也压不动它。它判的是「**有效** "
+        "jc」（direct > pStyle 链 > docDefaults > Word 默认 left），所以最常见的那型"
+        "（Normal 压根没设 jc、文档里一个 jc 都看不见、Word 静默左对齐）也抓得到。"
+        "已 center/right 的段视为刻意版式不动，标题/题注按样式名+outlineLvl 排除。",
+        opts={},
+        script="typeset_ops", entry="apply_path_justify",
+    ),
 
     # ── 三 · doc-post：path 段改完重开一次 doc，跑「必须看见冻结结果」的动作 ────
     Action(
