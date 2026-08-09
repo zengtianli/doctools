@@ -144,6 +144,9 @@ class DocxReviewer:
         self.date = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.comment_id_counter = 0
         self.comments = []
+        # 命中区间里保留下来的载荷（脚注引用/图片/域…），每项一个标签名列表。
+        # 用于收尾提醒操作者：这些东西留在删除支内，新文字要不要重挂由人判断。
+        self.preserved_payload = []
         self.revision_id_counter = 100
 
         self.tmpdir = tempfile.mkdtemp(prefix="docx_review_")
@@ -359,7 +362,9 @@ class DocxReviewer:
 
         if comment_only:
             # 只挂批注：原文原样放回，不产生任何修订标记
-            nodes.append(self._make_run(find_text, rpr_template))
+            nodes.extend(
+                self._rebuild_span(runs, start_offset, end_offset, del_mode=False)
+            )
         else:
             # <w:del>
             rid = self._next_rid()
@@ -367,7 +372,10 @@ class DocxReviewer:
             del_node.set(qn("w:id"), rid)
             del_node.set(qn("w:author"), self.author)
             del_node.set(qn("w:date"), self.date)
-            del_node.append(self._make_del_run(find_text, rpr_template))
+            for node in self._rebuild_span(
+                runs, start_offset, end_offset, del_mode=True
+            ):
+                del_node.append(node)
             nodes.append(del_node)
 
             # <w:ins>
@@ -419,6 +427,63 @@ class DocxReviewer:
         else:
             for i, node in enumerate(nodes):
                 parent.insert(insert_pos + i, node)
+
+    # run 里除 rPr/w:t 之外的载荷子元素 —— 脚注/尾注引用、图片、域、制表换行等。
+    # 按纯文本重建命中区间会把它们静默销毁（2026-08-09 实证：一篇博士论文因此
+    # 丢了 8 条脚注引注，改写区间恰好跨过脚注锚点）。
+    _PAYLOAD_TAGS = {
+        qn("w:footnoteReference"),
+        qn("w:endnoteReference"),
+        qn("w:commentReference"),
+        qn("w:drawing"),
+        qn("w:pict"),
+        qn("w:object"),
+        qn("w:fldChar"),
+        qn("w:instrText"),
+        qn("w:br"),
+        qn("w:tab"),
+        qn("w:sym"),
+        qn("w:noBreakHyphen"),
+        "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent",
+    }
+
+    def _rebuild_span(self, runs, start_offset, end_offset, del_mode: bool):
+        """按 run 逐个重建命中区间，**原位保留载荷子元素**。
+
+        del_mode=True 时文字用 <w:delText>（调用方会把结果塞进 <w:del>），
+        载荷 run 也一并留在删除支内 —— 这正是 Word 自己的表示法：
+        接受删除则连同脚注一起消失，拒绝则原样还原，两条路都不丢东西。
+        新插入的文字是否需要重新挂上该脚注，属编辑判断，由操作者据警告决定。
+        """
+        nodes = []
+        last = len(runs) - 1
+        for i, r in enumerate(runs):
+            t_elem = r.find(qn("w:t"))
+            text = t_elem.text if t_elem is not None and t_elem.text else ""
+            if i == 0 and i == last:
+                text = text[start_offset:end_offset]
+            elif i == 0:
+                text = text[start_offset:]
+            elif i == last:
+                text = text[:end_offset]
+            own_rpr = r.find(qn("w:rPr"))
+            if text:
+                nodes.append(
+                    self._make_del_run(text, own_rpr)
+                    if del_mode
+                    else self._make_run(text, own_rpr)
+                )
+            payload = [c for c in r if c.tag in self._PAYLOAD_TAGS]
+            if payload:
+                keep = copy.deepcopy(r)
+                for c in list(keep):
+                    if c.tag == qn("w:t"):
+                        keep.remove(c)
+                nodes.append(keep)
+                self.preserved_payload.append(
+                    [etree.QName(c).localname for c in payload]
+                )
+        return nodes
 
     def _make_run(self, text: str, rpr=None) -> etree._Element:
         """创建 <w:r>，继承原有 rPr 格式"""
@@ -773,6 +838,18 @@ def review_docx(
         else:
             count = reviewer.apply_rules(rules)
         reviewer.save(output_path)
+        if reviewer.preserved_payload:
+            kinds = {}
+            for tags in reviewer.preserved_payload:
+                for t in tags:
+                    kinds[t] = kinds.get(t, 0) + 1
+            print(
+                "⚠ 命中区间跨过了 "
+                + "、".join(f"{k}×{v}" for k, v in sorted(kinds.items()))
+                + "：已原位保留在删除支内（拒绝修订可完整还原）。"
+                "\n  新插入的文字是否需要重新挂上这些脚注/图片/域，请人工判断。",
+                file=sys.stderr,
+            )
         return count
     except Exception:
         reviewer.cleanup()
