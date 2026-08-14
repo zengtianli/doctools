@@ -42,12 +42,17 @@ import io
 import json
 import math
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
 import pypdf
+from pypdf import Transformation
+from pypdf.generic import NameObject, NumberObject, RectangleObject
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
@@ -102,6 +107,10 @@ class _Entry:
 @dataclass
 class Style:
     page_size: tuple[float, float] = A4
+    #: 归一到 page_size 时，内容在竖直方向怎么放。'top' = 顶对齐（横向宽表落在
+    #: 上半页、下方留白），'center' = 居中。默认 top —— 2026-08-14 量了 2024 年度
+    #: 已交付实物：横表页墨迹只落在页高 10%–50% 带，下半页全空，即顶对齐。
+    valign: str = "top"
     part_font_size: float = 24
     chapter_font_size: float = 22
     toc_title_size: float = 18
@@ -252,11 +261,110 @@ def _number_overlay_doc(specs: Sequence[tuple[float, float, float, float, int, i
 # ---------------------------------------------------------------------------
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif"}
 
+#: 会画出可见内容的注释类型。它们**不是**装饰：水源地材料里有一份文件名就叫
+#: 「…藻类（框选）.pdf」，那些红框正是这份材料的全部意义。
+#: 内容变换（add_transformation）只动内容流、**不动注释**，所以归一前必须先把
+#: 注释压进内容流，否则这 100 来个标记会整体错位。
+VISIBLE_ANNOT_SUBTYPES = {
+    "/Square", "/Circle", "/Highlight", "/FreeText", "/Line", "/Ink",
+    "/Polygon", "/PolyLine", "/Stamp", "/StrikeOut", "/Underline", "/Squiggly",
+}
 
-def _reader_for(path: Path, st: Style) -> pypdf.PdfReader:
+
+def has_visible_annots(reader: pypdf.PdfReader) -> bool:
+    for page in reader.pages:
+        for a in (page.get("/Annots") or []):
+            try:
+                if a.get_object().get("/Subtype") in VISIBLE_ANNOT_SUBTYPES:
+                    return True
+            except Exception:  # noqa: BLE001 —— 坏注释按「有」处理，宁可多拍平一次
+                return True
+    return False
+
+
+def _flatten_annots(path: Path) -> bytes | None:
+    """qpdf 把注释压进内容流。qpdf 缺失或失败 → 返回 None（调用方 fail-closed）。
+
+    实测（2026-08-14，`14-4 …藻类（框选）.pdf` 首页）：flatten 前后渲染
+    **0 差异像素**，红框像素 992 → 992，保真。
+    """
+    exe = shutil.which("qpdf")
+    if not exe:
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "flat.pdf"
+        r = subprocess.run(
+            [exe, "--flatten-annotations=all", str(path), str(out)],
+            capture_output=True,
+        )
+        # qpdf 的 exit 3 = warning（照样出文件），只有 >3 才是真失败
+        if r.returncode > 3 or not out.exists():
+            return None
+        return out.read_bytes()
+
+
+def _reader_for(path: Path, st: Style, *, flatten: bool = True) -> pypdf.PdfReader:
     if path.suffix.lower() in IMAGE_SUFFIXES:
         return pypdf.PdfReader(io.BytesIO(_image_to_pdf(path, st)))
-    return pypdf.PdfReader(str(path))
+    reader = pypdf.PdfReader(str(path))
+    if flatten and has_visible_annots(reader):
+        blob = _flatten_annots(path)
+        if blob is None:
+            raise RuntimeError(
+                f"{path.name} 带可见注释（框选/高亮/批注），归一前必须先拍平，"
+                f"但 qpdf 不可用或执行失败 —— 拒绝在注释会错位的前提下出册。"
+                f"修复：brew install qpdf；或 normalize=False 关掉尺寸归一"
+            )
+        reader = pypdf.PdfReader(io.BytesIO(blob))
+    return reader
+
+
+def normalize_to(page, target: tuple[float, float], valign: str = "top") -> bool:
+    """把一页归一到 target 纸张：烘焙旋转 + 等比缩放适配 + 对齐。返回是否真的改了。
+
+    **按 cropbox 而不是 mediabox 算**，两个理由：
+    ① cropbox 才是「显示出来的那块」。实测某页 mediabox 1191×842（A3 拼版）而
+       cropbox 只露右半张 594×841 —— 按 mediabox 归一会把整张拼版塞进 A4，
+       与它现在显示的样子完全不同。
+    ② 顺带白拿裁剪：把 cropbox 区域映射到整张 A4 后，原本在 cropbox 之外的内容
+       自然落到 mediabox 之外，被阅读器裁掉，不必再往内容流里插 `re W n`。
+
+    旋转烘焙：`/Rotate` 是「显示时顺时针转 N 度」。这里自己把内容转好并把
+    `/Rotate` 归零，后续叠页码就不必再按旋转反推位置 —— 一次做对，别处不用再操心。
+    """
+    cb = page.cropbox
+    x0, y0 = float(cb.left), float(cb.bottom)
+    w, h = float(cb.width), float(cb.height)
+    rot = page.rotation % 360
+    dw, dh = (h, w) if rot in (90, 270) else (w, h)
+    tw, th = target
+    if dw <= 0 or dh <= 0:
+        return False
+    s = min(tw / dw, th / dh)
+
+    already = (rot == 0 and abs(w - tw) < 0.5 and abs(h - th) < 0.5
+               and abs(x0) < 0.5 and abs(y0) < 0.5)
+    if already:
+        return False
+
+    t = Transformation().translate(-x0, -y0)
+    if rot == 90:
+        t = t.rotate(-90).translate(0, w)
+    elif rot == 180:
+        t = t.rotate(180).translate(w, h)
+    elif rot == 270:
+        t = t.rotate(90).translate(h, 0)
+    t = t.scale(s, s)
+    tx = (tw - dw * s) / 2
+    ty = (th - dh * s) if valign == "top" else (th - dh * s) / 2
+    t = t.translate(tx, ty)
+
+    page.add_transformation(t)
+    box = RectangleObject((0, 0, tw, th))
+    page.mediabox = box
+    page.cropbox = box
+    page[NameObject("/Rotate")] = NumberObject(0)
+    return True
 
 
 def natural_key(p: Path):
@@ -281,6 +389,7 @@ def bind(
     toc_title: str = "目录",
     with_toc: bool = True,
     style: Style | None = None,
+    normalize: bool = True,
     verbose: bool = True,
 ) -> dict:
     """装订并落盘，返回统计字典。"""
@@ -384,6 +493,18 @@ def bind(
             r = _reader_for(payload, st)  # type: ignore[arg-type]
         for p in r.pages:
             writer.add_page(p)
+
+    # --- 4.5 尺寸归一（默认开）------------------------------------------------
+    # 顺序要紧：**先归一再叠页码**。归一会把 /Rotate 烘平、把纸张统一成 A4，
+    # 于是页码是印在最终纸面上的 —— 反过来先叠页码再归一，页码会跟着内容一起
+    # 被缩放，页面之间大小不一。
+    if normalize:
+        changed = 0
+        for p in writer.pages:
+            if normalize_to(p, st.page_size, st.valign):
+                changed += 1
+        log(f"[bind] 尺寸归一 {changed}/{len(writer.pages)} 页 → "
+            f"{st.page_size[0]:.0f}×{st.page_size[1]:.0f}（{st.valign} 对齐）")
 
     # --- 5. 叠页码 ----------------------------------------------------------
     for i in range(numbered_start_index, len(writer.pages)):
