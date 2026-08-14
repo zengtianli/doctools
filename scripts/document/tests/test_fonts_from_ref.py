@@ -7,6 +7,21 @@
 import shutil, subprocess, sys, tempfile, os
 from pathlib import Path
 
+# 本文件是**脚本形态**的验证器：整个文件在模块层直接执行，末尾裸 sys.exit()。
+# pytest 收集时会 import 它 → SystemExit 打到 collection 阶段 → INTERNALERROR，
+# **整仓 pytest 一条测试都跑不起来**（2026-08-14 实测 rc=3）。CLAUDE.md 把
+# `python3 -m pytest -q` 列为闸门，而这个闸门当时是哑的。
+# 直接跑（python3 本文件）行为不变；被 import 时干净跳过，跳过理由可见不静默。
+if __name__ != "__main__":
+    import pytest as _pytest
+
+    _pytest.skip(
+        "脚本形态验证器：模块层直接执行 + 裸 sys.exit()，且依赖 ~/Work 下的真实"
+        "docx（金华 golden / 吴兴 broken），不是确定性单测。直接跑："
+        "python3 scripts/document/tests/test_fonts_from_ref.py",
+        allow_module_level=True,
+    )
+
 FMT = "/Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py"
 GOLDEN = ("/Users/tianli/Work/projects/reclaim/01-源/参考资料/"
           "金华江流域生态流量分类管控保障项目-水利厅验收0805/"

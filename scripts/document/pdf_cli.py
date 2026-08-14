@@ -9,6 +9,7 @@
   split  by-bookmark      pypdf outline 切分
   split  by-page-range    pypdf 范围切分 (--ranges "1-10,11-20")
   merge                   pypdf PdfWriter 拼接
+  slim                    体积诊断(孤儿/增量层/超规格图) + qpdf 无损回收 [+ --dpi 降采样]
   decrypt                 qpdf 直解 (--password) / 无密走 cc-home pdf-decrypt skill
   convert to-docx         PDF → 可编辑 Word (结构提取: 段落重组 + 真表格)
   pipeline run            <glob> --steps <names> [--parallel ...]
@@ -1802,6 +1803,335 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 11. slim — 体积诊断 + 回收
+#
+# 2026-08-14 立。起因：一本 2228 页汇编在 UPDF 里删到 1126 页，文件从
+# 664,012,314 B 变成 664,023,365 B —— **删掉 1102 页，长大了 11,051 字节**。
+#
+# 根因不是"图太大"，是 **PDF 增量保存**：编辑器不重写原文件，只在末尾追加
+# 「改动对象 + 新 xref」。删页 = 追加一张新页树说"只显示这些页"，正文一页没撕。
+# 实证：上册前 664,012,314 字节与整本 md5 完全相同(86cca865…)，即上册物理上
+# 就是"整本 + 11KB 新目录"。38,959 个对象里只有 21,994 个从 /Root 走得到，
+# 其余 16,965 个(305 MB)是谁都指不到的死肉。
+#
+# 所以本动词的第一产出是**诊断**（大在哪 / 谁写的 / 几层增量），不是闷头压缩：
+#   · 孤儿多  → qpdf 全量重写即可，**无损**，别急着降采样牺牲画质
+#   · 孤儿少  → 图本身就大，才轮到 --dpi
+# 两种病因的处方相反，先分诊再下药。
+#
+# ⚠ `/Producer` 字段在增量保存下**不可信**：它继承自最初那次全量写入，
+#   跟最后一次保存是谁毫无关系（实证：UPDF 存的文件 Producer 写着 pypdf，
+#   害我把责任判给了 pypdf）。故本动词另扫二进制 marker 交叉验证。
+# ═══════════════════════════════════════════════════════════════════════
+
+# 已知编辑器/生成器的二进制 marker（大小写敏感，扫原始字节）
+_SLIM_WRITER_MARKERS = (
+    b"UPDF", b"ComPDFKit", b"Acrobat", b"Foxit", b"WPS ",
+    b"pypdf", b"PyPDF", b"iText", b"Ghostscript", b"Skia", b"Quartz",
+    b"Microsoft", b"LibreOffice", b"TCPDF", b"ReportLab",
+)
+
+# A4 英寸尺寸 —— 判"这张图的像素数超没超过目标 dpi 下印出来用得到的量"
+_A4_IN_W, _A4_IN_H = 8.27, 11.69
+
+
+def _slim_scan_bytes(path: Path, chunk: int = 8 << 20) -> dict:
+    """分块扫原始字节：数 %%EOF(增量层) + 命中的写入者 marker。
+
+    分块是因为这类文件动辄几百 MB，一次 read() 进内存不合适；
+    块间保留 overlap 防止标记正好跨在边界上被切断。
+    """
+    markers: dict[str, int] = {}
+    eof = 0
+    overlap = max(len(m) for m in _SLIM_WRITER_MARKERS) + len(b"%%EOF")
+    tail = b""
+    with path.open("rb") as fh:
+        while True:
+            buf = fh.read(chunk)
+            if not buf:
+                break
+            seg = tail + buf
+            eof += seg.count(b"%%EOF")
+            for m in _SLIM_WRITER_MARKERS:
+                c = seg.count(m)
+                if c:
+                    markers[m.decode()] = markers.get(m.decode(), 0) + c
+            # 重叠区已被本轮统计过一次，下轮要扣掉，故只把尾巴留给下轮拼接
+            tail = seg[-overlap:] if len(seg) > overlap else seg
+            if tail:
+                eof -= tail.count(b"%%EOF")
+                for m in _SLIM_WRITER_MARKERS:
+                    c = tail.count(m)
+                    if c:
+                        markers[m.decode()] -= c
+                        if markers[m.decode()] <= 0:
+                            markers.pop(m.decode(), None)
+    # 收尾：最后一段 tail 从未被计入
+    if tail:
+        eof += tail.count(b"%%EOF")
+        for m in _SLIM_WRITER_MARKERS:
+            c = tail.count(m)
+            if c:
+                markers[m.decode()] = markers.get(m.decode(), 0) + c
+    return {"eof_layers": eof, "writer_markers": markers}
+
+
+def _slim_probe(path: Path) -> dict:
+    """对象级体检：可达性 / 孤儿字节 / 活图字节 / 超规格图清单。
+
+    返回 dict；无法枚举对象（xref 读不出）时 raise RuntimeError —— 空集不报绿。
+    """
+    from pypdf.generic import (ArrayObject, DictionaryObject,  # noqa: PLC0415
+                               IndirectObject, StreamObject)
+
+    reader = PdfReader(str(path))
+    n_pages = len(reader.pages)
+
+    ids: set[int] = set()
+    for gen in getattr(reader, "xref", {}) or {}:
+        ids |= set(reader.xref[gen].keys())
+    ids |= set((getattr(reader, "xref_objStm", {}) or {}).keys())
+    if not ids:
+        raise RuntimeError(
+            "xref 里枚举到 0 个对象 —— 文件可能损坏或用了本解析器不认的交叉引用形式。"
+            "拒绝在空集上给结论；先跑 `qpdf --check <file>` 看结构。")
+
+    # 从 /Root(+/Info) 出发走引用图 —— 走得到的才是"这份文档真正需要的"
+    reach: set[int] = set()
+    # ⚠ 必须 raw_get：DictionaryObject.__getitem__ 会自动解引用，拿到的是
+    #   Catalog 字典本身而不是 IndirectObject，于是 /Root 自己的对象号永远
+    #   进不了 reach，被误判成孤儿（2026-08-14 由 test_pdf_slim 抓出）。
+    stack: list[Any] = [reader.trailer.raw_get("/Root")]
+    if "/Info" in reader.trailer:
+        stack.append(reader.trailer.raw_get("/Info"))
+    while stack:
+        obj = stack.pop()
+        if isinstance(obj, IndirectObject):
+            if obj.idnum in reach:
+                continue
+            reach.add(obj.idnum)
+            try:
+                obj = obj.get_object()
+            except Exception:
+                continue
+        if isinstance(obj, (StreamObject, DictionaryObject)):
+            for key in list(obj.keys()):
+                try:
+                    stack.append(obj.raw_get(key))
+                except Exception:
+                    pass
+        elif isinstance(obj, ArrayObject):
+            stack.extend(obj)
+
+    orphan_ids = ids - reach
+    stats = {"live_stream": 0, "live_img": 0, "dead_stream": 0, "dead_img": 0,
+             "n_live_img": 0, "n_dead_img": 0}
+    big_imgs: list[tuple[int, int, int, str]] = []
+    for oid in ids:
+        try:
+            obj = IndirectObject(oid, 0, reader).get_object()
+        except Exception:
+            continue
+        if not isinstance(obj, StreamObject):
+            continue
+        nbytes = len(getattr(obj, "_data", b""))
+        alive = oid in reach
+        stats["live_stream" if alive else "dead_stream"] += nbytes
+        if obj.get("/Subtype") == "/Image":
+            stats["live_img" if alive else "dead_img"] += nbytes
+            stats["n_live_img" if alive else "n_dead_img"] += 1
+            if alive:
+                big_imgs.append((nbytes, int(obj.get("/Width", 0) or 0),
+                                 int(obj.get("/Height", 0) or 0),
+                                 str(obj.get("/Filter"))))
+    big_imgs.sort(reverse=True)
+    return {
+        "pages": n_pages, "n_objects": len(ids), "n_reachable": len(reach),
+        "n_orphan": len(orphan_ids), "top_images": big_imgs[:8], **stats,
+        "all_live_images": [(w, h, n) for n, w, h, _f in big_imgs],
+    }
+
+
+def _slim_oversize(live_imgs: list[tuple[int, int, int]], dpi: int) -> tuple[int, int]:
+    """活图里像素数超过 A4@dpi 所需的有几张 / 占多少字节（可测事实，非预测）。"""
+    budget = (_A4_IN_W * dpi) * (_A4_IN_H * dpi)
+    n = sum(1 for w, h, _b in live_imgs if w * h > budget)
+    b = sum(_b for w, h, _b in live_imgs if w * h > budget)
+    return n, b
+
+
+def _mb(n: int) -> str:
+    return f"{n / 1e6:.1f} MB"
+
+
+def _slim_pagecount(path: Path) -> int:
+    return len(PdfReader(str(path)).pages)
+
+
+def _cmd_slim(args: argparse.Namespace) -> int:
+    src = Path(args.pdf).expanduser().resolve()
+    if not src.is_file():
+        print(f"ERROR: 文件不存在: {src}", file=sys.stderr)
+        return 2
+    if PdfReader is None:
+        print("ERROR: pypdf 未安装", file=sys.stderr)
+        return 2
+    if not Path(_QPDF).exists() and not shutil.which("qpdf"):
+        print(f"ERROR: 找不到 qpdf（{_QPDF}）—— 无损回收这一步靠它，"
+              "装：brew install qpdf", file=sys.stderr)
+        return 2
+
+    src_size = src.stat().st_size
+    scan = _slim_scan_bytes(src)
+    try:
+        pr = _slim_probe(src)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 3
+    if pr["pages"] == 0:
+        print("ERROR: 0 页 —— 拒绝在空集上给结论", file=sys.stderr)
+        return 3
+
+    producer = str((PdfReader(str(src)).metadata or {}).get("/Producer", "?"))
+    dead_total = pr["dead_stream"]
+    over_n, over_b = _slim_oversize(pr["all_live_images"], args.dpi or 200)
+
+    # ── 诊断 ──────────────────────────────────────────────────────────
+    print(f"[slim] {src.name}")
+    print(f"  大小 {_mb(src_size)} · {pr['pages']} 页 · 对象 {pr['n_objects']}")
+    print(f"  增量保存层数 %%EOF = {scan['eof_layers']}"
+          + ("（1 = 单次全量写入，干净）" if scan["eof_layers"] <= 1 else
+             f"（>1 = 被增量保存过 {scan['eof_layers'] - 1} 次，"
+             "历史版本原样留在文件里）"))
+    if scan["writer_markers"]:
+        hits = " ".join(f"{k}×{v}" for k, v in
+                        sorted(scan["writer_markers"].items(), key=lambda kv: -kv[1]))
+        print(f"  写入者线索(二进制扫描) {hits}")
+    print(f"  /Producer = {producer}"
+          + ("   ⚠ 增量保存下此字段继承自最初那次全量写入，不代表最后是谁存的"
+             if scan["eof_layers"] > 1 else ""))
+    print(f"  可达 {pr['n_reachable']} / 孤儿 {pr['n_orphan']} 个对象")
+    print(f"  孤儿流 {_mb(dead_total)}（其中图 {pr['n_dead_img']} 张 "
+          f"{_mb(pr['dead_img'])}）← 无损可回收")
+    print(f"  活图 {pr['n_live_img']} 张 {_mb(pr['live_img'])}；其中像素数超过 "
+          f"A4@{args.dpi or 200}dpi 所需的 {over_n} 张 {_mb(over_b)}")
+    if pr["top_images"]:
+        print("  最大的活图：")
+        for nb, w, h, filt in pr["top_images"][:5]:
+            print(f"    {_mb(nb):>10}  {w}x{h}  {filt}")
+
+    # 病因分诊 —— 两种病处方相反，明说走哪条
+    ratio = dead_total / src_size if src_size else 0
+    if ratio >= 0.15:
+        print(f"  → 诊断：**死肉型**（{ratio:.0%} 是走不到的对象）。"
+              "qpdf 全量重写即可，无损。")
+    elif over_b > 0.3 * src_size:
+        print("  → 诊断：**图超规格型**（孤儿少，图本身就大）。"
+              f"无损回收省不了多少，要小得加 --dpi。")
+    else:
+        print("  → 诊断：**已经挺紧凑**。别指望压出奇迹。")
+
+    print(f"  [GATE SCOPE] 本诊断覆盖：对象可达性 / 增量层数 / 图片流字节。"
+          f"不覆盖：字体子集冗余、重复图去重、扫描件是否该 OCR 重排。")
+
+    if args.diag_only:
+        return 0
+
+    # ── 第 1 刀：qpdf 全量重写（无损）────────────────────────────────
+    out_dir = Path(args.output).expanduser().resolve().parent if args.output \
+        else src.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gc_out = Path(args.output).expanduser().resolve() if args.output \
+        else src.with_name(f"{src.stem}-slim.pdf")
+    if gc_out.resolve() == src.resolve():
+        print("ERROR: 输出路径与源件相同 —— 本动词只读输入、只写 --output；"
+              "要替换源件用 --in-place", file=sys.stderr)
+        return 2
+
+    tmp_gc = gc_out.with_name(gc_out.stem + ".gc-tmp.pdf") if args.dpi else gc_out
+    cmd = [_QPDF, "--object-streams=generate", "--compress-streams=y",
+           "--recompress-flate", "--compression-level=9", str(src), str(tmp_gc)]
+    cp = subprocess.run(cmd, capture_output=True, text=True)
+    # qpdf rc=3 = warnings-only（结构小瑕疵已修复），产物可用；rc>=2 才是真失败
+    if cp.returncode not in (0, 3) or not tmp_gc.is_file():
+        print(f"ERROR: qpdf rc={cp.returncode}: {cp.stderr.strip()[:500]}",
+              file=sys.stderr)
+        return 1
+    if cp.returncode == 3:
+        print(f"  (qpdf warnings: {cp.stderr.strip().splitlines()[0][:160]})")
+    gc_size = tmp_gc.stat().st_size
+
+    # 页数守卫 —— 回收不该动页数，动了就是出事了
+    got = _slim_pagecount(tmp_gc)
+    if got != pr["pages"]:
+        print(f"ERROR: qpdf 后页数 {got} ≠ 源件 {pr['pages']} —— 中止，"
+              f"中间产物保留在 {tmp_gc}", file=sys.stderr)
+        return 1
+    print(f"  [1/2] qpdf 无损回收 {_mb(src_size)} → {_mb(gc_size)}"
+          f"（省 {_mb(src_size - gc_size)}，{1 - gc_size / src_size:.0%}）")
+
+    final, final_size = tmp_gc, gc_size
+
+    # ── 第 2 刀：ghostscript 降采样（有损，opt-in）──────────────────
+    if args.dpi:
+        gs_bin = shutil.which("gs") or "/opt/homebrew/bin/gs"
+        if not Path(gs_bin).exists():
+            print("ERROR: 找不到 ghostscript（--dpi 需要它）：brew install ghostscript",
+                  file=sys.stderr)
+            return 2
+        dpi = int(args.dpi)
+        mono = max(dpi, 300)   # 黑白线稿/文字扫描降到 200 会糊，单独给更高档
+        gs_cmd = [
+            gs_bin, "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.7",
+            "-dNOPAUSE", "-dBATCH", "-dQUIET", "-dDetectDuplicateImages=true",
+            "-dDownsampleColorImages=true", f"-dColorImageResolution={dpi}",
+            "-dColorImageDownsampleThreshold=1.2",
+            "-dDownsampleGrayImages=true", f"-dGrayImageResolution={dpi}",
+            "-dGrayImageDownsampleThreshold=1.2",
+            "-dDownsampleMonoImages=true", f"-dMonoImageResolution={mono}",
+            "-dAutoFilterColorImages=false", "-dColorImageFilter=/DCTEncode",
+            f"-dJPEGQ={args.jpeg_quality}",
+            f"-sOutputFile={gc_out}", str(tmp_gc),
+        ]
+        cp = subprocess.run(gs_cmd, capture_output=True, text=True)
+        if cp.returncode != 0 or not gc_out.is_file():
+            print(f"ERROR: ghostscript rc={cp.returncode}: "
+                  f"{cp.stderr.strip()[:500]}", file=sys.stderr)
+            return 1
+        got = _slim_pagecount(gc_out)
+        if got != pr["pages"]:
+            print(f"ERROR: 降采样后页数 {got} ≠ 源件 {pr['pages']} —— 中止",
+                  file=sys.stderr)
+            return 1
+        final, final_size = gc_out, gc_out.stat().st_size
+        tmp_gc.unlink(missing_ok=True)
+        print(f"  [2/2] {dpi}dpi 降采样 {_mb(gc_size)} → {_mb(final_size)}"
+              f"（累计省 {1 - final_size / src_size:.0%}）")
+        print("  ⚠ 降采样有损。交付前自己抽查几页：一张照片页、一张图表页、"
+              "一张文字扫描页，跟源件对渲看清楚了再发。")
+
+    # ── in-place：源件备份到 Trash，禁真删 ────────────────────────────
+    if args.in_place:
+        import datetime as _dt  # noqa: PLC0415
+        stamp = _dt.date.today().isoformat()
+        bak_dir = Path.home() / ".Trash" / f"pdf-slim-{stamp}"
+        bak_dir.mkdir(parents=True, exist_ok=True)
+        bak = bak_dir / src.name
+        i = 1
+        while bak.exists():
+            bak = bak_dir / f"{src.stem}-{i}{src.suffix}"
+            i += 1
+        shutil.move(str(src), str(bak))
+        shutil.move(str(final), str(src))
+        final = src
+        print(f"  [in-place] 源件已备份 → {bak}")
+
+    print(f"[slim] {_mb(src_size)} → {_mb(final_size)} "
+          f"（{1 - final_size / src_size:.0%}）  {final}")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Argparse wiring
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1877,6 +2207,22 @@ def _build_parser() -> argparse.ArgumentParser:
     sbpr.set_defaults(func=_cmd_split_by_page_range)
 
     # merge
+    # slim — 体积诊断 + 回收
+    slp = sub.add_parser(
+        "slim", help="diagnose why a PDF is huge + reclaim (lossless by default)")
+    slp.add_argument("pdf")
+    slp.add_argument("-o", "--output",
+                     help="输出路径（默认 <名>-slim.pdf；绝不原地改，除非 --in-place）")
+    slp.add_argument("--diag-only", action="store_true",
+                     help="只诊断不写文件")
+    slp.add_argument("--dpi", type=int, default=None,
+                     help="追加有损降采样到 N dpi（不给 = 只做无损回收）")
+    slp.add_argument("--jpeg-quality", type=int, default=80,
+                     help="--dpi 时的 JPEG 质量（默认 80）")
+    slp.add_argument("--in-place", action="store_true",
+                     help="替换源件；源件 mv 进 ~/.Trash/pdf-slim-<date>/，不真删")
+    slp.set_defaults(func=_cmd_slim)
+
     mp = sub.add_parser("merge", help="concatenate multiple PDFs")
     mp.add_argument("pdfs", nargs="+", help="input PDFs in order")
     mp.add_argument("--out", required=True, help="output combined PDF")
