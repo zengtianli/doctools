@@ -806,7 +806,9 @@ def parse_list_item(line):
     ):
         content = stripped[2:]
     elif re.match(r"^\d+\.\s", stripped):
-        content = re.sub(r"^\d+\.\s", "", stripped)
+        # 有序列表：编号是作者信息（书状「请求 1-5」「附件 1-5」），保留字面编号，只规范空格。
+        # 2026-08-20 前此处剥掉编号 → 递交件里五条请求全无序号（ip-legal 实测），故改为保留。
+        content = re.sub(r"^(\d+)\.\s+", r"\1. ", stripped)
     else:
         content = stripped
 
