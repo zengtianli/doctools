@@ -187,20 +187,39 @@ def _toc_pages(entries: Sequence[_Entry], st: Style, title: str = "目录") -> b
     return buf.getvalue()
 
 
+def load_image_upright(img_path: Path):
+    """按 EXIF 摆正 + 透明压白底，返回 RGB 的 PIL Image。
+
+    ⚠ 手机/扫描 App 出的 jpg 常带 EXIF Orientation（本例结业证书 = 6，
+    真实是横的、像素却按竖的存）。reportlab 的 `drawImage(路径)` 会认 EXIF 转图，
+    而 `im.size` 不认 —— 两边不一致就会「按竖的算版面、画出横的图」，整张躺倒。
+    所以一律先在 PIL 里摆正，再把**摆正后的对象**交给 reportlab，两边同源。
+    """
+    from PIL import Image, ImageOps
+
+    im = ImageOps.exif_transpose(Image.open(img_path))
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGBA")
+        bg = Image.new("RGB", im.size, "white")
+        bg.paste(im, mask=im.split()[-1])
+        return bg
+    return im.convert("RGB")
+
+
 def _image_to_pdf(img_path: Path, st: Style) -> bytes:
     """图片 → 单页 PDF（等比缩放居中留白）。不转就会在汇编里整份丢失。"""
-    from PIL import Image
+    from reportlab.lib.utils import ImageReader
 
     ensure_font()
     buf = io.BytesIO()
     pw, ph = st.page_size
-    with Image.open(img_path) as im:
-        iw, ih = im.size
+    im = load_image_upright(img_path)
+    iw, ih = im.size
     margin = 36
     scale = min((pw - 2 * margin) / iw, (ph - 2 * margin) / ih)
     dw, dh = iw * scale, ih * scale
     c = rl_canvas.Canvas(buf, pagesize=st.page_size)
-    c.drawImage(str(img_path), (pw - dw) / 2, (ph - dh) / 2, width=dw, height=dh,
+    c.drawImage(ImageReader(im), (pw - dw) / 2, (ph - dh) / 2, width=dw, height=dh,
                 preserveAspectRatio=True, anchor="c")
     c.showPage()
     c.save()
@@ -254,6 +273,111 @@ def _number_overlay_doc(specs: Sequence[tuple[float, float, float, float, int, i
     c.save()
     buf.seek(0)
     return pypdf.PdfReader(buf)
+
+
+# ---------------------------------------------------------------------------
+# 角标叠印（旋转感知）—— 「首页左上角印 附件N」这类盖章式标号
+# ---------------------------------------------------------------------------
+CORNERS = ("tl", "tr", "bl", "br")
+
+
+def corner_overlay_page(mediabox, rot: int, label: str, *, corner: str = "tl",
+                        size: float = 13.0, mx: float = 28.0, my: float = 18.8,
+                        knockout: bool = True) -> bytes:
+    """生成一页角标叠印层（与被叠页同 mediabox），返回单页 PDF 字节。
+
+    旋转的处理同 `_number_overlay_doc`：叠印层与被叠页在**同一个未旋转坐标系**
+    里合并，显示时一起被 /Rotate 转，所以要反推「视觉某角」在未旋转空间里
+    落在哪、文字该转多少度。以视觉左上角(tl)为例：
+
+        rot   视觉左上 = 未旋转空间的哪个点              文字转角
+        0     (x0+mx, y0+h-my)                          0
+        90    (x0+my, y0+mx)          ← 未旋转的左下      90
+        180   (x0+w-mx, y0+my)        ← 未旋转的右下      180
+        270   (x0+w-my, y0+h-mx)      ← 未旋转的右上      270
+
+    knockout=True 时先垫一块白底 —— 扫描件的深色抬头上黑字读不出；白底垫在
+    白纸上不可见，故不影响其余页的观感。
+    """
+    if corner not in CORNERS:
+        raise ValueError(f"corner 只能是 {CORNERS} 之一，收到 {corner!r}")
+    ensure_font()
+    x0, y0 = float(mediabox.left), float(mediabox.bottom)
+    w, h = float(mediabox.width), float(mediabox.height)
+    rot = int(rot or 0) % 360
+    if rot not in (0, 90, 180, 270):
+        rot = 0
+
+    # 先在「视觉坐标」里定位：dx = 距视觉左边，dy = 距视觉顶边（基线）
+    vw, vh = (h, w) if rot in (90, 270) else (w, h)
+    base = my + size * 0.86                     # 字顶 → 基线
+    dx = mx if corner in ("tl", "bl") else vw - mx
+    dy = base if corner in ("tl", "tr") else vh - my
+    anchor_right = corner in ("tr", "br")
+
+    # 再把视觉坐标折回未旋转空间
+    if rot == 0:
+        px, py, ang = x0 + dx, y0 + vh - dy, 0
+    elif rot == 90:
+        px, py, ang = x0 + dy, y0 + dx, 90
+    elif rot == 180:
+        px, py, ang = x0 + vw - dx, y0 + dy, 180
+    else:
+        px, py, ang = x0 + w - dy, y0 + h - dx, 270
+
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=(w, h))
+    c.setFont(CJK_FONT, size)
+    tw = c.stringWidth(label, CJK_FONT, size)
+    c.saveState()
+    c.translate(px, py)
+    c.rotate(ang)
+    lx = -tw if anchor_right else 0.0
+    if knockout:
+        c.setFillColorRGB(1, 1, 1)
+        c.rect(lx - 3, -0.28 * size - 2, tw + 6, size + 4, stroke=0, fill=1)
+    c.setFillColorRGB(0, 0, 0)
+    c.drawString(lx, 0, label)
+    c.restoreState()
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def stamp_corner(src: Path, dst: Path, label: str, *, corner: str = "tl",
+                 pages: str = "first", size: float = 13.0,
+                 mx: float = 28.0, my: float = 18.8,
+                 knockout: bool = True, page_size=A4) -> int:
+    """给 PDF（或图片）盖角标并写到 dst，返回页数。
+
+    图片输入先按 `_image_to_pdf` 整页嵌入（横宽比 >1.2 自动横排），
+    这样「图片形态的附件」不必先手工转 PDF。
+    """
+    src, dst = Path(src), Path(dst)
+    if src.suffix.lower() in IMAGE_SUFFIXES:
+        iw, ih = load_image_upright(src).size        # 摆正后再判横竖
+        st = Style(page_size=(page_size[1], page_size[0])
+                   if iw / ih > 1.2 else page_size)
+        blob = _image_to_pdf(src, st)
+    else:
+        blob = src.read_bytes()
+
+    reader = pypdf.PdfReader(io.BytesIO(blob))
+    targets = range(len(reader.pages)) if pages == "all" else [0]
+    for i in targets:
+        pg = reader.pages[i]
+        ov = corner_overlay_page(pg.mediabox, pg.get("/Rotate", 0), label,
+                                 corner=corner, size=size, mx=mx, my=my,
+                                 knockout=knockout)
+        pg.merge_page(pypdf.PdfReader(io.BytesIO(ov)).pages[0])
+
+    writer = pypdf.PdfWriter()
+    for pg in reader.pages:
+        writer.add_page(pg)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with dst.open("wb") as fh:
+        writer.write(fh)
+    return len(reader.pages)
 
 
 # ---------------------------------------------------------------------------

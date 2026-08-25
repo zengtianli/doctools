@@ -2135,6 +2135,67 @@ def _cmd_slim(args: argparse.Namespace) -> int:
 # Argparse wiring
 # ═══════════════════════════════════════════════════════════════════════
 
+def _cmd_stamp(args) -> int:
+    """给一批 PDF / 图片盖角标（默认首页左上角），如「附件1」「附件2」。
+
+    标号来源三选一，优先级 labels > label-re > label 模板：
+      --labels 附件1,附件2,...   逐件显式给
+      --label-re '附件(\\d+)_'   从文件名正则取第 1 组（纯数字组自动去前导零）
+      --label '附件{n}'          模板，{n}=序号（--start 起算）、{stem}=文件名主干
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import pdf_bind
+
+    files: list[Path] = []
+    for pat in args.inputs:
+        hits = sorted(Path(x) for x in _glob.glob(pat)) if any(
+            ch in pat for ch in "*?[") else [Path(pat)]
+        files.extend(hits)
+    files = [f for f in files if f.is_file()]
+    if not files:
+        print("[stamp] no input files", file=sys.stderr)
+        return 2
+
+    labels: list[str] = []
+    if args.labels:
+        labels = [x.strip() for x in args.labels.split(",")]
+        if len(labels) != len(files):
+            print(f"[stamp] --labels 给了 {len(labels)} 个，输入 {len(files)} 件，"
+                  "数量必须一致", file=sys.stderr)
+            return 2
+    else:
+        rx = re.compile(args.label_re) if args.label_re else None
+        for i, f in enumerate(files):
+            if rx:
+                m = rx.search(f.name)
+                if not m:
+                    print(f"[stamp] --label-re 匹配不到：{f.name}", file=sys.stderr)
+                    return 2
+                g = m.group(1)
+                # 数字组去前导零：文件名用 `附件01_` 排序，标号要印「附件1」
+                n = str(int(g)) if g.isdigit() else g
+            else:
+                n = str(args.start + i)
+            labels.append(args.label.format(n=n, stem=f.stem))
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    total = 0
+    for f, lab in zip(files, labels):
+        dst = out_dir / (f.stem + ".pdf")
+        if dst.resolve() == f.resolve():
+            print(f"[stamp] 拒绝原地覆盖：{f}", file=sys.stderr)
+            return 2
+        n = pdf_bind.stamp_corner(f, dst, lab, corner=args.corner,
+                                  pages=args.pages, size=args.size,
+                                  mx=args.margin_x, my=args.margin_y,
+                                  knockout=not args.no_knockout)
+        total += n
+        print(f"  ✅ {lab:<8} {n:>4} 页  {dst.name}")
+    print(f"\n共 {len(files)} 件 / {total} 页 → {out_dir}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="pdf_cli",
@@ -2287,6 +2348,27 @@ def _build_parser() -> argparse.ArgumentParser:
     pprun.add_argument("--image-extract-out-dir", default=None)
     pprun.add_argument("--text-extract-out-dir", default=None)
     pprun.add_argument("--table-extract-out-dir", default=None)
+    # stamp
+    stp = sub.add_parser("stamp",
+                         help="盖角标（默认首页左上角印「附件N」，旋转页也落对角）")
+    stp.add_argument("inputs", nargs="+", help="PDF 或图片（支持 glob）")
+    stp.add_argument("--out", required=True, help="产物目录（禁原地覆盖）")
+    stp.add_argument("--label", default="附件{n}",
+                     help="标号模板，{n}=序号 {stem}=文件名主干（默认 附件{n}）")
+    stp.add_argument("--labels", default=None,
+                     help="逐件显式标号，逗号分隔，数量须与输入一致")
+    stp.add_argument("--label-re", default=None,
+                     help="从文件名正则取第 1 组作 {n}（纯数字去前导零），如 '附件(\\d+)_'")
+    stp.add_argument("--start", type=int, default=1, help="{n} 起算值")
+    stp.add_argument("--corner", default="tl", choices=["tl", "tr", "bl", "br"])
+    stp.add_argument("--pages", default="first", choices=["first", "all"])
+    stp.add_argument("--size", type=float, default=13.0)
+    stp.add_argument("--margin-x", type=float, default=28.0)
+    stp.add_argument("--margin-y", type=float, default=18.8)
+    stp.add_argument("--no-knockout", action="store_true",
+                     help="不垫白底（默认垫，扫描件深色抬头上才读得出）")
+    stp.set_defaults(func=_cmd_stamp)
+
     # step-shared page selection
     pprun.add_argument("--pages", default=None,
                        help="page spec applied to all pdf-based steps "
