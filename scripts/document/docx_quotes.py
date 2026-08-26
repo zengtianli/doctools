@@ -11,6 +11,12 @@
 fail-closed：文件不存在 / 读不了 → exit 2。
 """
 import io, os, re, shutil, sys, time, zipfile
+from pathlib import Path
+
+# 手工 zipfile 重打包 docx —— docx_safe_save 只 patch python-docx 的存盘路径，管不到这里，
+# 所以按第二判据（2026-07-31 立）挂部件完整性断言：丢部件 / 改了没报备的部件即抛，不静默。
+sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
+from docx_parts import assert_parts_intact  # noqa: E402
 
 CORNER = str.maketrans({"「": "“", "」": "”", "『": "‘", "』": "’"})
 PAT = re.compile(r"[「」『』]")
@@ -32,16 +38,22 @@ def check_docx(path):
 
 def fix_docx(path):
     ts = time.strftime("%Y%m%d-%H%M%S")
-    shutil.copy2(path, f"{path}.bak-{ts}")
+    bak = f"{path}.bak-{ts}"
+    shutil.copy2(path, bak)
     tmp = path + ".tmp"
+    touched = set()          # 本次真改了引号的部件 —— 只有这些准变，其余一个字节都不许动
     with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename in docx_parts(zin):
                 s = data.decode("utf-8")
-                s = WT.sub(lambda m: m.group(1) + m.group(2).translate(CORNER) + m.group(3), s)
-                data = s.encode("utf-8")
+                fixed = WT.sub(lambda m: m.group(1) + m.group(2).translate(CORNER) + m.group(3), s)
+                if fixed != s:
+                    touched.add(item.filename)
+                data = fixed.encode("utf-8")
             zout.writestr(item, data)
+    # 拿备份当 src 比对：改的必须**正好**是 touched 这些，多一个少一个都抛
+    assert_parts_intact(bak, tmp, allow_changed=touched, verbose=False)
     os.replace(tmp, path)
 
 

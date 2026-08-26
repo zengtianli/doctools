@@ -145,6 +145,61 @@ def _repo_files(roots: list[Path]) -> list[Path]:
     return out
 
 
+# ── 判据 3 的接收者溯源（2026-08-26 加）────────────────────────────────
+# 为什么需要：判据 3 靠「有 .save( 且被 docx 使用方传递地 import」抓人，这对
+# 「helper 收个 doc 参数、自己不提 docx 却存了 docx」是对的，但会误伤纯 PDF/图片
+# 工具 —— pdf_bind.py 全文 docx 出现 0 次，5 处 .save() 全是 reportlab canvas，
+# 只因被 pdf_cli.py import、而 pdf_cli 那条链上有人 import docx 就被判红。
+#
+# 判别点是**接收者是谁**，不是文件里提没提 docx。用 ast 溯源每个 .save() 的接收
+# 变量：**全部**能追到已知非-docx 构造器才放行；有一个追不到就仍然拦
+# （fail-closed —— 宁可误报也不许把真的 docx 存盘放过去）。
+NON_DOCX_CTORS = (
+    'canvas.Canvas', 'rl_canvas.Canvas', 'Canvas',        # reportlab
+    'PdfWriter', 'PdfMerger', 'pypdf.PdfWriter',          # pypdf
+    'Workbook', 'openpyxl.Workbook',                      # openpyxl
+    'Image.new', 'Image.open',                            # PIL
+    'Presentation',                                       # python-pptx
+)
+
+
+def _ctor_name(node) -> str:
+    """Call 节点 → 'a.b.C' 形式的构造器名（取不出返回 ''）。"""
+    f = getattr(node, 'func', None)
+    parts = []
+    while isinstance(f, ast.Attribute):
+        parts.append(f.attr); f = f.value
+    if isinstance(f, ast.Name):
+        parts.append(f.id)
+    return '.'.join(reversed(parts))
+
+
+def saves_only_non_docx(src: str) -> bool:
+    """文件里每一处 `<x>.save(` 的 <x> 都能追到已知非-docx 构造器 → True。"""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False                       # 解析不了就别放行
+    assigned = {}                          # 变量名 → 构造器名
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            name = _ctor_name(n.value)
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    assigned[t.id] = name
+    recvs = []
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == 'save'):
+            v = n.func.value
+            recvs.append(v.id if isinstance(v, ast.Name) else None)
+    if not recvs:
+        return False
+    return all(r is not None and any(assigned.get(r, '').endswith(c) or assigned.get(r, '') == c
+                                     for c in NON_DOCX_CTORS)
+               for r in recvs)
+
+
 def chain_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
     """第三判据：会 `.save(` 且被 python-docx 使用方（传递地）import 的文件，必须挂收口。
 
@@ -191,6 +246,8 @@ def chain_offenders(roots: list[Path]) -> tuple[list[Path], list[Path]]:
             continue                      # 已由第一判据管着（判据 1 现在也扫 lib/）
         if not reached_by_docx(p):
             continue                      # 存的不是 docx（xlsx/图片/json…），不管
+        if not TOUCHES_DOCX.search(src) and saves_only_non_docx(src):
+            continue                      # 全文不提 docx，且每处 .save() 都追到非-docx 构造器
         need.append(p)
         if not COLLAR.search(src):
             bad.append(p)
