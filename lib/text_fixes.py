@@ -91,11 +91,23 @@ _UNIT_RULES = [
 
 # -- Quote pattern -------------------------------------------------------------
 
-QUOTE_PATTERN = '[""\u201c\u201d\u300c\u300d]'
+# \u65b9\u5411\u4e0d\u660e\u3001\u53ea\u80fd\u9760\u5947\u5076\u914d\u5bf9\u5b9a\u5f00\u95ed\u7684\u5f15\u53f7\uff1a\u76f4\u7acb " \u4e0e\u4e24\u4e2a\u5f2f\u5f15\u53f7\uff08\u53ef\u80fd\u672c\u6765\u5c31\u88c5\u53cd\u4e86\uff09
+QUOTE_PATTERN = '["\u201c\u201d]'
+
+# \u76f4\u89d2\u5f15\u53f7\uff08corner brackets\uff09\u300c\u300d\u300e\u300f\u2014\u2014\u65b9\u5411\u81ea\u5e26\uff0c\u786e\u5b9a\u6027\u6620\u5c04\uff0c\u4e0d\u8fdb counter\u3002
+# \u8d70 counter \u4f1a\u88ab\u5947\u5076\u7b97\u9519\uff1a\u6587\u4e2d\u51fa\u73b0\u5b64\u7acb " \u65f6\u6574\u4e32\u5f00\u95ed\u7ffb\u8f6c\uff082026-08-25 \u6850\u4e61\u5b9e\u6d4b\uff09\u3002
+CORNER_QUOTES = str.maketrans({
+    "\u300c": "\u201c", "\u300d": "\u201d",   # \u300c\u300d\u2192 \u201c\u201d
+    "\u300e": "\u2018", "\u300f": "\u2019",   # \u300e\u300f\u2192 \u2018\u2019\uff08\u5185\u5c42\u5f15\u53f7\uff09
+})
+CORNER_QUOTE_PATTERN = re.compile("[\u300c\u300d\u300e\u300f]")
 
 
 def fix_quotes(text: str, counter: int = 0) -> tuple[str, int, int]:
     """Replace all double quotes with paired Chinese quotes (\u201c \u201d).
+
+    \u76f4\u89d2\u5f15\u53f7\u300c\u300d\u300e\u300f\u4e00\u5e76\u5f52\u4e00\u4e3a\u4e2d\u6587\u5f2f\u5f15\u53f7\uff08\u7528\u6237 2026-08-22 /govern \u94a6\u5b9a\uff1a
+    \u5916\u53d1\u4e2d\u6587\u4ef6\u7981\u76f4\u89d2\u5f15\u53f7\uff09\uff0c\u4f46**\u4e0d**\u53c2\u4e0e counter \u5947\u5076\u914d\u5bf9\u2014\u2014\u5b83\u81ea\u5e26\u65b9\u5411\u3002
 
     Args:
         text: Input text.
@@ -115,6 +127,10 @@ def fix_quotes(text: str, counter: int = 0) -> tuple[str, int, int]:
         return new
 
     result = re.sub(QUOTE_PATTERN, _replace, text)
+    n_corner = len(CORNER_QUOTE_PATTERN.findall(result))
+    if n_corner:
+        result = result.translate(CORNER_QUOTES)
+        count += n_corner
     return result, count, counter
 
 
