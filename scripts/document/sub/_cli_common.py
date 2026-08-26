@@ -36,6 +36,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path.home() / "Dev/tools/dev/scripts"))
+from tools.systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
 
 
 # ---------------- 家族 main() 分发器 ----------------
@@ -126,7 +130,7 @@ def lsof_check(p: Path) -> str | None:
 
 def find_next_backup(p: Path) -> Path:
     """<stem>.bak-N-YYYY-MM-DD<suffix>, N 自增。只算路径不 copy。"""
-    today = datetime.date.today().isoformat()
+    today = _systz_now().date().isoformat()
     n = 1
     while True:
         cand = p.with_name(f"{p.stem}.bak-{n}-{today}{p.suffix}")

@@ -35,6 +35,10 @@ import time
 from pathlib import Path
 
 from .pipeline_lib import run_pipeline
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path.home() / "Dev/tools/dev/scripts"))
+from tools.systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
 
 
 def _judge_healthy(report: dict) -> tuple[bool, dict]:
@@ -98,7 +102,7 @@ def _run(args) -> int:
         bdir = (
             Path(args.backup_dir).expanduser()
             if args.backup_dir
-            else Path.home() / "Archives" / "docx-backups" / _dt.date.today().isoformat()
+            else Path.home() / "Archives" / "docx-backups" / _systz_now().date().isoformat()
         )
         bdir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, bdir / src.name)
@@ -144,7 +148,7 @@ def _run(args) -> int:
         # 丢弃 speculative split 产物, 用 restored docx 重切
         for f in out_dir.glob("*.docx"):
             f.unlink()
-        new_name = f"{src.stem}-health-v3-{_dt.date.today().isoformat()}.docx"
+        new_name = f"{src.stem}-health-v3-{_systz_now().date().isoformat()}.docx"
         target = src.parent / new_name
         restore_ns = argparse.Namespace(
             docx_path=src,

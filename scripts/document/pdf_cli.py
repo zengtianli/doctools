@@ -43,6 +43,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path.home() / "Dev/tools/dev/scripts"))
+from tools.systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
 
 # ─── parallel_contract for --workers/--max-workers cohesion ────────────
 _LIB = Path.home() / "Dev" / "tools" / "dev" / "lib"
@@ -2113,7 +2117,7 @@ def _cmd_slim(args: argparse.Namespace) -> int:
     # ── in-place：源件备份到 Trash，禁真删 ────────────────────────────
     if args.in_place:
         import datetime as _dt  # noqa: PLC0415
-        stamp = _dt.date.today().isoformat()
+        stamp = _systz_now().date().isoformat()
         bak_dir = Path.home() / ".Trash" / f"pdf-slim-{stamp}"
         bak_dir.mkdir(parents=True, exist_ok=True)
         bak = bak_dir / src.name

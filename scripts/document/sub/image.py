@@ -41,6 +41,10 @@ import caption_re  # noqa: E402  题注判据 SSOT
 from docx_parts import assert_parts_intact  # noqa: E402
 
 from docx import Document  # noqa: E402
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path.home() / "Dev/tools/dev/scripts"))
+from tools.systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
 
 
 # ══════════ dedup ← image_dedup.py ══════════
@@ -891,7 +895,7 @@ def apply_patch(target_path: Path, patch: dict, backup: bool = True) -> dict:
         n = 1
         while True:
             bak = target_path.with_name(
-                f'{target_path.stem}.bak-{n}-{date.today().isoformat()}{target_path.suffix}'
+                f'{target_path.stem}.bak-{n}-{_systz_now().date().isoformat()}{target_path.suffix}'
             )
             if not bak.exists():
                 break
