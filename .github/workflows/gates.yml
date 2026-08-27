@@ -106,6 +106,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: 装 qpdf（pdf_cli slim 的无损回收靠它，ubuntu-latest 不预装）
+        run: sudo apt-get update -qq && sudo apt-get install -y qpdf
+
       - name: 取总部件（zengtianli/devtools · 私库 · 只取 lib/ 与 scripts/tools/）
         uses: actions/checkout@v7
         with:
