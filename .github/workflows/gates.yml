@@ -87,7 +87,15 @@ jobs:
 
     env:
       # 总部 lib 注入点，见文件头 §一。所有 step（含 docx_cli 拉起来的子进程）都吃这个。
-      PYTHONPATH: ${{ github.workspace }}/.hq-devtools/lib
+      # ⚠ 2026-08-26 追加 `.hq-devtools/scripts`：`_cli_common.py` 等 4 处新增
+      # `from tools.systime import now`，`tools` 是无 __init__.py 的 namespace package
+      # （本仓自己也有一个同名顶层 `tools/`，装闸门脚本）。`scripts/tools/systime.py`
+      # 已由下面的 sparse-checkout 拉进 `.hq-devtools/scripts/tools/`，但只要
+      # PYTHONPATH 没指到它的**父目录**（`.hq-devtools/scripts`），import 就只会
+      # 落到本仓自己那个不含 systime.py 的 `tools/` 上 —— 报错正是
+      # `ModuleNotFoundError: No module named 'tools.systime'`（2026-08-26 gates 连续两轮实红）。
+      # 两个 `tools/` 都无 __init__.py，会按 namespace package 规则合并，不冲突。
+      PYTHONPATH: ${{ github.workspace }}/.hq-devtools/lib:${{ github.workspace }}/.hq-devtools/scripts
       # ⚠ 仓根有 `.python-version`（= 3.13）。只给 `uv sync` 传 --python 是**不够的**：
       # 后面每一条 `uv run` 都会回头读 .python-version，发现 venv 是 3.12 → 当场把
       # venv 删掉重建成 3.13。实测（2026-08-02 容器）：3.12 那条腿装完 66 个包之后，
