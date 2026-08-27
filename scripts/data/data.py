@@ -8,6 +8,7 @@
   xlsx-lower   Excel/Word 文本小写化
   xlsx-merge   多表合并（AI 智能匹配）
   xlsx-split   工作表分离为独立文件
+  xlsx-pdf     XLSX → 可交付 PDF（打印排版件，Excel 真版面）
 
 convert 子-子命令（2 层 sub-sub）:
   csv-from-txt / csv-to-txt / csv-merge-txt /
@@ -18,7 +19,8 @@ convert 子-子命令（2 层 sub-sub）:
   --workers N --batch FILE.jsonl --phases ... --fanout-evidence PATH
 
 引用总部: parallel_contract（lib/parallel_contract.py · distill 上提）
-被合脚本: convert.py / xlsx_lowercase.py / xlsx_merge_tables.py / xlsx_splitsheets.py
+被合脚本: convert.py / xlsx_lowercase.py / xlsx_merge_tables.py / xlsx_splitsheets.py /
+          xlsx_pdf.py（2026-08-27 新增，出 PDF 走 document/sub/excel_render.py）
 范本: cf_api.py（2 层 sub-sub）· menus.py（add_parallel_args 双层声明）
 """
 from __future__ import annotations
@@ -114,6 +116,11 @@ def cmd_xlsx_split(args: argparse.Namespace, rest: list[str]) -> int:
     return _dispatch("xlsx_splitsheets", rest)
 
 
+def cmd_xlsx_pdf(args: argparse.Namespace, rest: list[str]) -> int:
+    """xlsx-pdf 转发到 xlsx_pdf.py (打印排版 + Excel 导出 PDF)。"""
+    return _dispatch("xlsx_pdf", rest)
+
+
 # --- parser 构建 --------------------------------------------------
 
 # 8 个 convert 子-子命令名 (与 convert.py CONVERTERS 一致)
@@ -141,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  data convert --batch tasks.jsonl --workers 8\n"
             "  data xlsx-lower file.xlsx\n"
             "  data xlsx-split book.xlsx -j 4\n"
+            "  data xlsx-pdf 汇总表.xlsx --title '2026 年度' --keep-xlsx 打印版.xlsx\n"
             "  data xlsx-merge --master m.xlsx --master-key 名称 \\\n"
             "                   --aux a.xlsx --aux-key 工程 -o out.xlsx\n"
         ),
@@ -191,6 +199,14 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
     p_split.set_defaults(func=cmd_xlsx_split)
+
+    # xlsx-pdf
+    p_pdf = sub.add_parser(
+        "xlsx-pdf",
+        help="XLSX → 可交付 PDF（CJK 列宽/重复表头/A4 一页宽，Excel 真版面）",
+        add_help=False,
+    )
+    p_pdf.set_defaults(func=cmd_xlsx_pdf)
 
     return parser
 
