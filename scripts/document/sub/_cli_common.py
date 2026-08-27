@@ -38,8 +38,12 @@ import sys
 from pathlib import Path
 import sys as _sys
 from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path.home() / "Dev/tools/dev/scripts"))
-from tools.systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
+# 本机源码树优先，别的机器上没有 ~/Dev，不塞死路径（同 pdf_cli.py _LIB 那条判据）；
+# hq-devlib 已把 systime.py 打进 wheel 顶层作兜底，flat import 与 llm_client 同款。
+_SYSTIME_DIR = _Path.home() / "Dev/tools/dev/scripts/tools"
+if _SYSTIME_DIR.is_dir() and str(_SYSTIME_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_SYSTIME_DIR))
+from systime import now as _systz_now  # 时间口径走系统时区，不读 $TZ（全局 CLAUDE.md）
 
 
 # ---------------- 家族 main() 分发器 ----------------
