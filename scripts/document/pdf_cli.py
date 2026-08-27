@@ -85,16 +85,19 @@ except ImportError:
     PdfReader = PdfWriter = None  # type: ignore
 
 
-# Canonical binary paths
-_PDFINFO = "/opt/homebrew/bin/pdfinfo"
-_PDFIMAGES = "/opt/homebrew/bin/pdfimages"
-_PDFTOTEXT = "/opt/homebrew/bin/pdftotext"
-_QPDF = "/opt/homebrew/bin/qpdf"
+# Canonical binary paths —— 本机 homebrew 布局是兜底，不是唯一真相：PATH 上真找得到
+# 就用 PATH 那份（CI/Linux 走 apt 装的 /usr/bin/qpdf，本机 PATH 里没有时落回硬编码
+# 兜底）。别只加在个别 call site（曾经 1157 行有、1659/2056 行没有，同一文件两种
+# 行为 = 硬编码路径在 CI 上直接 FileNotFoundError，PATH 上明明装着 qpdf 也用不上）。
+_PDFINFO = shutil.which("pdfinfo") or "/opt/homebrew/bin/pdfinfo"
+_PDFIMAGES = shutil.which("pdfimages") or "/opt/homebrew/bin/pdfimages"
+_PDFTOTEXT = shutil.which("pdftotext") or "/opt/homebrew/bin/pdftotext"
+_QPDF = shutil.which("qpdf") or "/opt/homebrew/bin/qpdf"
 _DECRYPT_SKILL = (
     Path.home() / "Dev" / "tools" / "cc-home"
     / "skills" / "pdf-decrypt" / "scripts" / "decrypt.py"
 )
-_PYTHON3 = "/opt/homebrew/bin/python3"
+_PYTHON3 = shutil.which("python3") or "/opt/homebrew/bin/python3"
 
 
 def _run_pdfimages(pdf_path: Path, dest_prefix: Path, page: int | None = None,
