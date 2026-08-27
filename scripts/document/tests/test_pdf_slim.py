@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 
 _CLI = Path(__file__).resolve().parents[1] / "pdf_cli.py"
-_PY = "/opt/homebrew/bin/python3"
+_PY = sys.executable
 
 
 # ──────────────────────────────────────────────────────────────────────
