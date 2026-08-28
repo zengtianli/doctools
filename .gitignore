@@ -24,3 +24,8 @@ build/
 
 # script_graph 派生产物（可随时用 tools/script_graph.py 重生成）
 reports/*.html
+
+# vendor/ofdrw 的 maven 依赖与编译产物（24 MB jar，可由 README 一条命令重建）
+vendor/ofdrw/lib/
+vendor/ofdrw/classes/
+vendor/ofdrw/srcjar/

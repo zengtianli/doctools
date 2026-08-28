@@ -6,7 +6,7 @@
   read    <f.ofd> [--out FILE] [--pages 1-5]   抽正文文本（默认 stdout）
   info    <f.ofd>                              页数 / 签章 / 内嵌资源 / 元数据
   extract image <f.ofd> --out DIR              抽内嵌图（噪音过滤 + 页归属命名）
-  to-pdf  <f.ofd>                              版面转换（本机不可用时 fail-closed 说清替代路径）
+  to-pdf  <f.ofd> [--out F] [--ppm 8]          版面转换 → 图片 PDF（需 java + vendor/ofdrw）
   batch   <dir> [--out-suffix .正文摘录.txt]    递归批量 read 落盘
 
 OFD = zip + XML。正文在 Doc_0/Pages/Page_N/Content.xml 的 <ofd:TextCode>，图在 Doc_0/Res/。
@@ -196,21 +196,111 @@ def cmd_extract_image(args) -> int:
     return 0 if kept else 2
 
 
+
+def _page_has_content(z: zipfile.ZipFile, page_xml: str) -> bool:
+    """这一页在原件里到底有没有东西（文本 / 图 / 路径）。
+
+    用于把「原件就是空白页」与「渲染丢了内容」分开 —— 只有后者才该 fail-closed。
+    """
+    try:
+        raw = z.read(page_xml).decode("utf-8", "ignore")
+    except KeyError:
+        return False
+    if _page_text(z, page_xml).strip():
+        return True
+    return any(tag in raw for tag in ("ImageObject", "PathObject", "TextObject", "CompositeObject"))
+
 def cmd_to_pdf(args) -> int:
-    """版面转换。本机没有可信渲染器时**明确失败**，不产出空壳 PDF。"""
+    """OFD → PDF。走 **图片路线**（ofdrw ImageMaker 逐页自绘 → PIL 合成 PDF）。
+
+    为什么不用 ofdrw 的 ConvertHelper.toPdf（PDF 直转）：
+        2026-08-27 磐安花溪取水许可证实测 —— 直转出来的 PDF 有 11 页、抽得到 1938 字符、
+        国徽红章边框二维码都在，**但字段值在视觉上是散的**：「单位名称 磐 …… 安 …… 自」，
+        中间的字被 DeltaX 推到页外（页面右缘挂着一串孤字）。文本层完整所以任何自动检查都报绿，
+        只有把页面渲染成图看一眼才发现证件是残的。根因是 macOS 无 simsun/simhei，
+        ofdrw 退到 fallback 字体后字宽与原内嵌字体不符，偏移逐字累积。
+        同一份走 ImageMaker 逐页渲染则**完全正确**（字段、印章、二维码齐全）。
+    代价：产物是图片 PDF，**没有可选中的文字层**。需要检索时用 `ofd_ops.py read` 的
+        `.正文摘录.txt`；需要验签时必须回 OFD 原件（转换后签章只剩图像）。
+
+    依赖：java + `~/Dev/tools/doctools/vendor/ofdrw/`（classes + lib，见该目录 README）。
+    """
     import shutil
-    have_mvn = shutil.which("mvn")
-    have_java = shutil.which("java")
-    print("[ofd_ops] OFD → PDF 版面转换在本机不可用。", file=sys.stderr)
-    print(f"          java={'有' if have_java else '无'}  maven={'有' if have_mvn else '无'}"
-          "（ofdrw-converter 需要两者齐备）", file=sys.stderr)
-    print("", file=sys.stderr)
-    print("  只要正文文字（多数情况够用）：", file=sys.stderr)
-    print(f"      python3 {Path(__file__).name} read '{args.file}'", file=sys.stderr)
-    print("  要带签章的真版面件：请出件方用 OFD 阅读器（数科/福昕/WPS）另存 PDF，", file=sys.stderr)
-    print("      或本机 `brew install maven` 后接 ofdrw-converter。", file=sys.stderr)
-    print("  ⚠ 别退而求其次用 easyofd —— 它在本机产出的是没有文字的空壳（见本文件抬头）。", file=sys.stderr)
-    return 1
+    import subprocess
+    import tempfile
+
+    src = Path(args.file)
+    if not src.is_file():
+        print(f"[ofd_ops] 文件不存在: {src}", file=sys.stderr)
+        return 1
+
+    z = _open(src)
+    pages_xml = [name for _, name in _pages(z)]
+    n_expect = len(pages_xml)
+    if n_expect == 0:
+        print("[ofd_ops] 这份 OFD 解析出 0 页 —— 拒绝在空集上产出 PDF", file=sys.stderr)
+        return 2
+
+    vendor = Path.home() / "Dev/tools/doctools/vendor/ofdrw"
+    classes, libs = vendor / "classes", vendor / "lib"
+    java = shutil.which("java")
+    if not java or not (classes / "OfdToImages.class").is_file() or not libs.is_dir():
+        print("[ofd_ops] OFD → PDF 需要 java + ofdrw vendor 目录，本机不齐：", file=sys.stderr)
+        print(f"          java={'有' if java else '无'}  {vendor}={'有' if classes.is_dir() else '无'}", file=sys.stderr)
+        print(f"          建法见 {vendor}/README.md（brew install maven 后一条命令）", file=sys.stderr)
+        print("  只要正文文字：python3 ofd_ops.py read '<f.ofd>'", file=sys.stderr)
+        print("  ⚠ 别退而求其次用 easyofd —— 本机产出的是没有文字的空壳（见本文件抬头）。", file=sys.stderr)
+        return 1
+
+    try:
+        from PIL import Image
+    except ImportError:
+        print("[ofd_ops] 需要 Pillow 合成 PDF：/opt/homebrew/bin/python3 -m pip install pillow", file=sys.stderr)
+        return 1
+
+    out = Path(args.out) if getattr(args, "out", None) else src.with_suffix(".pdf")
+    ppm = getattr(args, "ppm", None) or 8   # 像素/毫米，8 ≈ 200dpi
+
+    with tempfile.TemporaryDirectory(prefix="ofd2pdf-") as td:
+        cmd = [java, "-Xmx4g", "-cp", f"{classes}:{libs}/*", "OfdToImages", str(src), td, str(ppm)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        pages = sorted(Path(td).glob("page-*.png"))
+        if r.returncode != 0 or not pages:
+            print("[ofd_ops] 渲染失败", file=sys.stderr)
+            print((r.stderr or r.stdout).strip()[:1500], file=sys.stderr)
+            return 1
+        # fail-closed ①：页数必须与 OFD 声明一致（OOM 时会只出前几页且退出码非 0，但双保险）
+        if len(pages) != n_expect:
+            print(f"[ofd_ops] 页数不符：OFD {n_expect} 页，只渲出 {len(pages)} 页 —— 拒绝产出残册",
+                  file=sys.stderr)
+            return 1
+        imgs = []
+        blank = []
+        for i, f in enumerate(pages, 1):
+            im = Image.open(f).convert("RGB")
+            # fail-closed ②：整页近乎纯白 = 这一页什么都没画出来
+            small = im.resize((80, 80))
+            if min(min(px) for px in small.getdata()) > 245:
+                blank.append(i)
+            imgs.append(im)
+        # 判据不是「渲出来是白的」而是「**原件有内容**却渲成白的」——
+        # 报批稿里常有真·空白页（扉页背面、章前空页），把它们判 FAIL 会拦下本来正常的转换。
+        # 2026-08-27 实证：云山水厂论证报告第 3 页 Content.xml 只有 148 字节、0 文本 0 图元。
+        lost = [i for i in blank if _page_has_content(z, pages_xml[i - 1])]
+        if lost:
+            print(f"[ofd_ops] 第 {lost} 页原件有内容却渲染成空白 —— 拒绝产出"
+                  "（这正是 easyofd 那类空壳的样子）", file=sys.stderr)
+            return 1
+        if blank:
+            print(f"    注：第 {blank} 页原件本身就是空白页，已原样保留。")
+        dpi = int(round(ppm * 25.4))
+        imgs[0].save(out, "PDF", save_all=True, append_images=imgs[1:], resolution=dpi)
+
+    size = out.stat().st_size
+    print(f"OK  {out}")
+    print(f"    {len(pages)} 页 · {size / 1e6:.1f} MB · 约 {dpi} dpi · 图片 PDF（无文字层）")
+    print("    ⚠ 验签能力只在 OFD 原件里，别把原件删了。")
+    return 0
 
 
 def cmd_batch(args) -> int:
@@ -257,8 +347,11 @@ def main() -> int:
     p2.add_argument("file"); p2.add_argument("--out", required=True)
     p2.set_defaults(fn=cmd_extract_image)
 
-    p = sub.add_parser("to-pdf", help="版面转换（不可用时 fail-closed）")
-    p.add_argument("file"); p.set_defaults(fn=cmd_to_pdf)
+    p = sub.add_parser("to-pdf", help="版面转换（图片路线；不可用时 fail-closed）")
+    p.add_argument("file")
+    p.add_argument("--out", help="输出 PDF 路径（默认同名 .pdf）")
+    p.add_argument("--ppm", type=int, default=8, help="像素/毫米，8≈200dpi（不是 dpi）")
+    p.set_defaults(fn=cmd_to_pdf)
 
     p = sub.add_parser("batch", help="递归批量抽正文落盘")
     p.add_argument("dir"); p.add_argument("--out-suffix", default=".正文摘录.txt")
