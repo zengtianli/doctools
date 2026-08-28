@@ -6,7 +6,7 @@
   read    <f.ofd> [--out FILE] [--pages 1-5]   抽正文文本（默认 stdout）
   info    <f.ofd>                              页数 / 签章 / 内嵌资源 / 元数据
   extract image <f.ofd> --out DIR              抽内嵌图（噪音过滤 + 页归属命名）
-  to-pdf  <f.ofd> [--out F] [--ppm 8]          版面转换 → 图片 PDF（需 java + vendor/ofdrw）
+  to-pdf  <f.ofd|dir>... [--out-dir D]         版面转换 → 图片 PDF（多文件/目录；需 java + vendor/ofdrw）
   batch   <dir> [--out-suffix .正文摘录.txt]    递归批量 read 落盘
 
 OFD = zip + XML。正文在 Doc_0/Pages/Page_N/Content.xml 的 <ofd:TextCode>，图在 Doc_0/Res/。
@@ -210,7 +210,7 @@ def _page_has_content(z: zipfile.ZipFile, page_xml: str) -> bool:
         return True
     return any(tag in raw for tag in ("ImageObject", "PathObject", "TextObject", "CompositeObject"))
 
-def cmd_to_pdf(args) -> int:
+def _one_to_pdf(src: Path, out: Path, ppm: int, quiet: bool = False) -> int:
     """OFD → PDF。走 **图片路线**（ofdrw ImageMaker 逐页自绘 → PIL 合成 PDF）。
 
     为什么不用 ofdrw 的 ConvertHelper.toPdf（PDF 直转）：
@@ -228,11 +228,6 @@ def cmd_to_pdf(args) -> int:
     import shutil
     import subprocess
     import tempfile
-
-    src = Path(args.file)
-    if not src.is_file():
-        print(f"[ofd_ops] 文件不存在: {src}", file=sys.stderr)
-        return 1
 
     z = _open(src)
     pages_xml = [name for _, name in _pages(z)]
@@ -257,9 +252,6 @@ def cmd_to_pdf(args) -> int:
     except ImportError:
         print("[ofd_ops] 需要 Pillow 合成 PDF：/opt/homebrew/bin/python3 -m pip install pillow", file=sys.stderr)
         return 1
-
-    out = Path(args.out) if getattr(args, "out", None) else src.with_suffix(".pdf")
-    ppm = getattr(args, "ppm", None) or 8   # 像素/毫米，8 ≈ 200dpi
 
     with tempfile.TemporaryDirectory(prefix="ofd2pdf-") as td:
         cmd = [java, "-Xmx4g", "-cp", f"{classes}:{libs}/*", "OfdToImages", str(src), td, str(ppm)]
@@ -299,8 +291,72 @@ def cmd_to_pdf(args) -> int:
     size = out.stat().st_size
     print(f"OK  {out}")
     print(f"    {len(pages)} 页 · {size / 1e6:.1f} MB · 约 {dpi} dpi · 图片 PDF（无文字层）")
-    print("    ⚠ 验签能力只在 OFD 原件里，别把原件删了。")
+    if not quiet:
+        print("    ⚠ 验签能力只在 OFD 原件里，别把原件删了。")
     return 0
+
+
+def cmd_to_pdf(args) -> int:
+    """to-pdf 的 driver：吃 1..N 个文件或目录，目录递归找 *.ofd。
+
+    批量时**一份失败不拖垮其余**（各自 fail-closed），最后汇总并按有无失败定退出码。
+    """
+    targets: list[Path] = []
+    for raw in args.files:
+        p = Path(raw)
+        if p.is_dir():
+            targets.extend(sorted(p.rglob("*.ofd")))
+        elif p.is_file():
+            targets.append(p)
+        else:
+            print(f"[ofd_ops] 不存在: {p}", file=sys.stderr)
+            return 1
+    # 去重（同一份可能既被目录扫到又被显式点名）
+    seen, uniq = set(), []
+    for p in targets:
+        rp = p.resolve()
+        if rp not in seen:
+            seen.add(rp)
+            uniq.append(p)
+    targets = uniq
+
+    if not targets:
+        print("[ofd_ops] 没找到任何 .ofd —— 拒绝在空集上报成功", file=sys.stderr)
+        return 2
+    if args.out and len(targets) > 1:
+        print(f"[ofd_ops] --out 只能配单个文件，这次匹配到 {len(targets)} 份；"
+              "批量请用 --out-dir，或不给（默认落在各自源文件旁）", file=sys.stderr)
+        return 1
+
+    ppm = args.ppm or 8
+    out_dir = Path(args.out_dir) if args.out_dir else None
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    ok, failed = [], []
+    for k, src in enumerate(targets, 1):
+        if len(targets) > 1:
+            print(f"[{k}/{len(targets)}] {src.name}")
+        if args.out:
+            out = Path(args.out)
+        elif out_dir:
+            out = out_dir / (src.stem + ".pdf")
+        else:
+            out = src.with_suffix(".pdf")
+        if out.exists() and not args.force:
+            print(f"    跳过：{out.name} 已存在（--force 覆盖）")
+            ok.append(src)
+            continue
+        rc = _one_to_pdf(src, out, ppm, quiet=(len(targets) > 1))
+        (ok if rc == 0 else failed).append(src)
+
+    if len(targets) > 1:
+        print(f"\n合计 {len(targets)} 份：成功 {len(ok)} · 失败 {len(failed)}")
+        for f in failed:
+            print(f"  FAIL {f}")
+        if ok:
+            print("⚠ 验签能力只在 OFD 原件里，别把原件删了。")
+    return 1 if failed else 0
 
 
 def cmd_batch(args) -> int:
@@ -347,10 +403,12 @@ def main() -> int:
     p2.add_argument("file"); p2.add_argument("--out", required=True)
     p2.set_defaults(fn=cmd_extract_image)
 
-    p = sub.add_parser("to-pdf", help="版面转换（图片路线；不可用时 fail-closed）")
-    p.add_argument("file")
-    p.add_argument("--out", help="输出 PDF 路径（默认同名 .pdf）")
+    p = sub.add_parser("to-pdf", help="版面转换 → 图片 PDF（图片路线；不可用时 fail-closed）")
+    p.add_argument("files", nargs="+", help="一个或多个 .ofd，或目录（递归找 *.ofd）")
+    p.add_argument("--out", help="输出 PDF 路径（只能配单个文件）")
+    p.add_argument("--out-dir", help="批量输出目录（默认落在各自源文件旁）")
     p.add_argument("--ppm", type=int, default=8, help="像素/毫米，8≈200dpi（不是 dpi）")
+    p.add_argument("--force", action="store_true", help="覆盖已存在的同名 PDF（默认跳过）")
     p.set_defaults(fn=cmd_to_pdf)
 
     p = sub.add_parser("batch", help="递归批量抽正文落盘")
