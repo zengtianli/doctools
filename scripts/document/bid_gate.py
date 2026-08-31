@@ -8,6 +8,7 @@
   sweep    <docx> [--mode] [--rules] [--check|--apply]      原 bid_finalize_sweep.py（类 1-7 确定性清理，三护栏）
   identity <docx> [--mode] [--rules]                        原 bid_identity_gate.py（第 8 类身份泄漏只读门）
   print    <docx> [--mode] [--rules]                        原 bid_print_ready.py（付印只读门）
+  toc      <项目目录|docx> [--chapters Y]                    bid_toc_gate.py（目录 ≡ 招标表，2026-08-30 立）
   deref    <target> [--check] [--md] [--manual-pairs Y]     原 bid_deref.py（交叉引用去耦合，表面与众不同：无 --mode）
 
 exit 契约不变: 0 = PASS · 2 = 有门红/待人判 · 1 = 用法/IO 错误。
@@ -36,6 +37,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bid_residue_lib as lib  # noqa: E402
+import bid_toc_gate  # noqa: E402  目录一致性门（2026-08-30 /govern）
 
 sys.path.append(str(Path(__file__).resolve().parents[2] / "lib"))
 import caption_re  # noqa: E402  题注判据 SSOT
@@ -1315,6 +1317,11 @@ def cmd_run(args) -> int:
             return 1
         gates[name] = rc
 
+    # ⑤ 目录门：正文章号 ≡ chapters.yaml ≡ 招标那张规定顺序的表（2026-08-30 /govern）
+    #    本 driver 是标书专用编排 —— 定位不到 _project.yaml 就是红，不静默跳过。
+    print("── bid_toc_gate.py " + "─" * 44)
+    gates["toc_gate"] = bid_toc_gate.main([str(args.docx)])
+
     # ── 汇总 ──
     red = [g for g, rc in gates.items() if rc != 0]
     print("═" * 68)
@@ -1336,7 +1343,7 @@ def cmd_run(args) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="bid_gate.py",
-        description="标书终稿门检族（run=四门 driver · scan/sweep/identity/print=单门 · deref=交叉引用去耦合）")
+        description="标书终稿门检族（run=五门 driver · scan/sweep/identity/print/toc=单门 · deref=交叉引用去耦合）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("run", help="终稿机械管线 driver（原 bid_final.py）",
@@ -1363,6 +1370,13 @@ def main(argv=None) -> int:
     g.add_argument("--check", action="store_true", help="干跑打印计数（默认）")
     g.add_argument("--apply", action="store_true", help="落盘（备份+三护栏机检）")
     p.set_defaults(fn=cmd_sweep)
+
+    p = sub.add_parser("toc", help="目录一致性门：章号 ≡ chapters.yaml ≡ 招标表",
+                       description="正文章号/章名/分值 ≡ chapters.yaml ≡ 招标文件那张规定顺序的表")
+    p.add_argument("target", type=Path, help="项目目录 或 技术标 docx")
+    p.add_argument("--chapters", type=Path, default=None)
+    p.set_defaults(fn=lambda a: bid_toc_gate.main(
+        [str(a.target)] + (["--chapters", str(a.chapters)] if a.chapters else [])))
 
     p = sub.add_parser("identity", help="第 8 类身份泄漏只读门（原 bid_identity_gate.py）",
                        description="标书终稿身份泄漏门（只读）")
