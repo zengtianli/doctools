@@ -204,6 +204,9 @@ def check_form_requirements(docx: Path, reqs: list):
         name = str(r.get("要求") or r.get("item") or "").strip()
         src = str(r.get("条款") or r.get("clause") or "").strip()
         n += 1
+        by = str(r.get("by") or "").strip()
+        if by and by not in ("投标人", "本稿"):
+            continue
         if name in AUTO:
             fn, msg = AUTO[name]
             if not fn():
@@ -215,6 +218,9 @@ def check_form_requirements(docx: Path, reqs: list):
             if miss:
                 findings.append(f"[形式要求] {name}（招标 {src}）：卷首缺 {'、'.join(miss)}")
             continue
+        by = str(r.get("by") or "").strip()
+        if by and by not in ("投标人", "本稿"):
+            continue  # 责任方不是本稿（如统稿单位统一编页），已在 chapters.yaml 显式声明
         if not str(r.get("location") or "").strip():
             findings.append(f"[形式要求] {name}（招标 {src}）：既无机检也没写 location —— 无法证明已落位")
     return findings, n
@@ -313,8 +319,15 @@ def main(argv=None):
         return 2
     print(f"正文章标题来源: {where} · 扫到 {len(got)} 章")
 
+    # delivery_scope：交付件只含部分章（陪标分册/技术线通用稿）时，必须**显式声明**范围，
+    # 声明后只校验范围内的章。没声明就按全量比 —— 不给"少几章"留默认放过的口子。
+    scope = ((y.get("delivery_scope") or {}).get("chapters")) or []
+    if scope:
+        exp = [e for e in exp if e[0] in {str(s) for s in scope}]
+        print(f"交付范围: 第 {'、'.join(str(s) for s in scope)} 章"
+              f"（{(y.get('delivery_scope') or {}).get('reason', '')}）")
     if len(got) != len(exp):
-        err.append(f"正文 {len(got)} 章 ≠ chapters.yaml {len(exp)} 章："
+        err.append(f"正文 {len(got)} 章 ≠ 应交付 {len(exp)} 章："
                    f"正文={[g[0] for g in got]} 期望={[e[0] for e in exp]}")
     else:
         for (gno, gtitle, gscore, gsrc), (eno, etitle, escore) in zip(got, exp):
