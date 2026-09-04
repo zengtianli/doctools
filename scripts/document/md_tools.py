@@ -579,6 +579,30 @@ def extract_styles_xml(docx_path, output_dir=None):
     for style_id in collected_styles:
         add_style(style_id)
 
+    # eastAsia 只准中文字体（2026-09-04 修根）
+    # 模板 template.docx 的 styles.xml 里混进了 eastAsia="Times New Roman"
+    # /"TimesNewRomanPS-BoldMT"/"DengXian" —— eastAsia 槽位放西文字体本身就是错的，
+    # 而 DengXian＝等线，全局规则明令禁止出现在中文 docx 里。以前靠出件方每次手工
+    # 打补丁改回宋体（ip-legal docx-outfile 规程第 3 项），漏一次就把等线印进递交件。
+    # 这里在样式提取时一次性归一，所有下游消费者自动对齐。
+    # ⚠ 只动 w:rFonts/@w:eastAsia；w:lang 也有 eastAsia 属性（值是 zh-CN/en-US 这类
+    # 语言代码），碰了会把语言标记写成字体名。
+    _cjk_ok = ("宋", "仿", "黑", "楷", "圆", "魏", "隶", "方正", "华文", "思源",
+               "SimSun", "SimHei", "FangSong", "KaiTi", "STSong", "STFangsong",
+               "STKaiti", "STHeiti", "Source Han", "Noto Sans CJK", "Noto Serif CJK",
+               "PingFang", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑")
+    _fixed = 0
+    for _rf in new_root.iter(f"{{{NSMAP['w']}}}rFonts"):
+        _ea = _rf.get(f"{{{NSMAP['w']}}}eastAsia")
+        if not _ea:
+            continue
+        if any(k in _ea for k in _cjk_ok):
+            continue
+        _rf.set(f"{{{NSMAP['w']}}}eastAsia", "宋体")
+        _fixed += 1
+    if _fixed:
+        print(f"🔤 eastAsia 归一：{_fixed} 处非中文字体（含等线/DengXian）改为宋体")
+
     # 保存 XML
     styles_xml_path = os.path.join(output_dir, "heading_styles.xml")
     tree = etree.ElementTree(new_root)
