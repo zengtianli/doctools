@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Xcode / Swift build artifacts
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+.swiftpm/
+.build/
+
+# Xcode per-user state (track shared project, ignore user-specific)
+xcuserdata/
+*.xcuserdatad

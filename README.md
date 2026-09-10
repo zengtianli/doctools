@@ -1,7 +1,6 @@
 # doctools
 
-文档处理与数据转换工具集，从 [scripts](https://github.com/tianlizeng/scripts) 仓库拆分。macOS 环境，**入口是命令行**
-（`raycast/` 整子树 2026-07-27 已归档，不再是调用方式）。
+文档处理与数据转换工具集，统一维护命令行引擎与 [DocKit 桌面端](mac/README.md)。两种入口复用同一处理能力；桌面端构建与 JSON 契约见其目录，CLI 入口如下。
 
 - 现状盘点（有几个脚本 / docx 怎么被改 / 闸门）：[`handoffs/_archive/2026-08-04-docx-scripts-inventory.md`](handoffs/_archive/2026-08-04-docx-scripts-inventory.md)
 - 改造路线图与销项账：[`handoffs/_archive/2026-08-04-docx-refactor-roadmap.md`](handoffs/_archive/2026-08-04-docx-refactor-roadmap.md)

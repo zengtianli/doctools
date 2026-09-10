@@ -1,10 +1,32 @@
-# catalog.yaml — 模块 SSOT(认知单位,仿 Backstage catalog-info.yaml)
 name: doctools
 domain: dev-infra
-function: 让我读、改、审阅、修订 docx/md/有声书文档(含批注/编号/模板/质检),入口=docx_cli 与命令行
-public_api: doctools CLI
-key_scripts: [docx_cli.py, typeset_apply.py, docx_revise.py, doc_dispatch.py, bid_gate.py, renum.py, docx_fmt.py, md_tools.py]
-depends_on: [dev-corelib, dockit, mailroom, llm-client, photo-app, mactools]
+function: 统一维护文档处理 CLI 与 DocKit 桌面端，共用现有文档引擎
+public_api: doctools CLI；mac/build.sh；doc_gui_backend.py gui-ops/gui-run
+key_scripts:
+- scripts/document/docx_cli.py
+- scripts/document/typeset_apply.py
+- scripts/document/docx_revise.py
+- scripts/document/doc_dispatch.py
+- scripts/document/bid_gate.py
+- scripts/document/renum.py
+- scripts/document/docx_fmt.py
+- scripts/document/md_tools.py
+depends_on:
+- dev-corelib
+- dockit
+- mailroom
+- llm-client
+- photo-app
+- mactools
 tier: CORE
 owner: tianli
 docs: ./README.md
+display_name: 文档处理
+maintenance:
+  role: core
+packages:
+  mac:
+    display_name: DocKit 桌面端
+    maintenance:
+      role: internal
+      parent: ..

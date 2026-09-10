@@ -1,6 +1,6 @@
 # doctools
 
-文档处理与数据转换工具集。**入口是命令行**（`/docx` skill 与 `raycast/` 已退役，史见 `docs/history.md`）。
+文档处理与数据转换工具集，统一维护 CLI 引擎与 [DocKit 桌面端](mac/CLAUDE.md)。桌面端消费现有 GUI JSON 接口，业务实现留在本项目；文档任务使用现行 `/docx` skill。
 
 > **Python venv**：共享于 `~/Dev/.venv`（uv workspace member · 见 `~/Dev/CLAUDE.md` § uv workspace）。本 repo 不建独立 `.venv`。改 deps → 改 `pyproject.toml` + `cd ~/Dev && uv sync`。
 
