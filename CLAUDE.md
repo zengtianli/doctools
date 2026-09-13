@@ -67,6 +67,7 @@ docs/                 # 从本文外迁的长叙事
 
 | 脚本 | 干什么 | 怎么跑 |
 |---|---|---|
+| `scripts/document/word_table_format.command` | Mac Word 当前文档表格一键整理：去底纹、内容水平/垂直居中、内外边框 0.5 磅黑色实线；自动备份，直接使用 Word 文档接口 | Word 打开目标 `.docx` 后双击；或 `word_table_format.command [当前文档完整路径]`；`--help` 只显示帮助 |
 | `scripts/document/bid_gate.py` | 标书终稿门检族（检测逻辑 SSOT 在 `bid_residue_lib.py`）。`run`=四门 driver · `scan`/`sweep`/`identity`/`print`=单门 · `deref`=交叉引用去耦合 | `bid_gate.py run <docx> --mode main\|pei [--rules Y] [--apply]`；单门 `scan\|sweep\|identity\|print <docx>`；`deref <docx> --check` |
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run …/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
 | `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |

@@ -13,6 +13,7 @@
 | 脚本 | 功能 |
 |------|------|
 | `docx_cli.py` | **docx 总入口**：46 个唯一族 / 126 条子命令，dispatch 到 `sub/` |
+| `word_table_format.command` | Mac Word 当前文档表格一键整理：去底纹、水平/垂直居中、0.5 磅黑色实线；[使用说明](docs/word-table-format.md) |
 | `docx_tools.py` | extract / check / track 组合入口（batch 并行 + library re-export） |
 | `typeset_apply.py` | spec(yaml) 驱动的排版引擎（29 actions，固定顺序） |
 | `typeset_pipeline.py` | 排版一条龙 driver（每步 snapshot → 自检 → 保留/回滚） |
