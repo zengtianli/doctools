@@ -11,7 +11,7 @@
 | `chart.py` | 数据驱动图表生成（JSON → PNG） |
 | `docx_fmt.py` | docx 版式/字体/文本规范化族（template/clone/fonts/text 子命令） |
 | `docx_tools.py` | Word 文档工具集 |
-| `word_table_format.command` | Mac Word 当前文档表格：去底纹、内容居中、内外边框实线化；[使用说明](docs/word-table-format.md) |
+| `word_table_format.command` | Mac Word 表格去底纹、居中、实线化，图名/表名统一为 ZDWP图名 样式；[使用说明](docs/word-table-format.md) |
 | `md_tools.py md2docx` | Markdown 转 Docx（样式复刻） |
 | `md_tools.py` | Markdown 工具集 |
 | `pptx_cli.py to-md` | PPTX 转 Markdown |
