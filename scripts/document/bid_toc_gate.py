@@ -24,6 +24,8 @@ Why（2026-08-30 用户钦定 /govern，桐乡实证）：
 
 chapters.yaml 两种 schema 都认：
   A) chapters: [{item_no, title, score, file}]           ← 章号 = 招标表项号（桐乡式）
+     用户明确要求展开正文标题时，title 为正文标题，source_title 保留原评分项名；
+     招标源核对 source_title，正文仍精确核对 title；未声明时两者均使用 title。
   B) number_base: N + sequence: [{slug,title,subs?}]     ← 章号 = number_base + 序位（温州式）
 豁免：项目 _project.yaml 写 `toc_gate: legacy   # <理由>` → 打印豁免行并 exit 0，不静默跳过。
 """
@@ -82,14 +84,17 @@ def find_chapters_yaml(root: Path):
 
 
 # ── chapters.yaml → 期望章表 ────────────────────────────────────────────────
-def expected_from_yaml(y: dict):
+def expected_from_yaml(y: dict, *, source_titles: bool = False):
     """→ ([(章键str, 章名, 分值or None)], schema名)。
     章键 = 显示章号的字符串形式："6" / "12.3"，两种 schema 与两种标题写法共用同一比较键。"""
     if isinstance(y.get("chapters"), list) and y["chapters"]:
         out = []
         for c in y["chapters"]:
             no = c.get("item_no", c.get("no"))
-            out.append((str(int(no)), str(c["title"]), c.get("score")))
+            title = c.get("source_title", c["title"]) if source_titles else c["title"]
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError(f"第 {no} 章的标题必须是非空字符串")
+            out.append((str(int(no)), title, c.get("score")))
         return out, "chapters"
     if isinstance(y.get("sequence"), list) and y["sequence"]:
         base = int(y.get("number_base", 1))
@@ -259,6 +264,7 @@ def main(argv=None):
         return 2
     y = yaml.safe_load(cy.read_text(encoding="utf-8")) or {}
     exp, schema = expected_from_yaml(y)
+    source_exp, _ = expected_from_yaml(y, source_titles=True)
     if not exp:
         print(f"[FAIL] {cy} 里 chapters/sequence 枚举为空 —— 拒绝在空集上报绿")
         return 2
@@ -271,7 +277,7 @@ def main(argv=None):
     if items:
         print(f"招标评分表一手源: 招标文件/{src} · {len(items)} 项")
         if len(items) == len(exp):
-            for (no, name, score), (eno, etitle, escore) in zip(items, exp):
+            for (no, name, score), (eno, etitle, escore) in zip(items, source_exp):
                 if str(no) != eno:
                     err.append(f"章号 {eno} ≠ 评分项 {no}")
                 elif name[:4] != etitle[:4]:
@@ -290,7 +296,7 @@ def main(argv=None):
         tb = json.loads(sj.read_text(encoding="utf-8")).get("tech_business", {})
         si = tb.get("items", [])
         if si and len(si) == len(exp):
-            for (eno, etitle, escore), j in zip(exp, si):
+            for (eno, etitle, escore), j in zip(source_exp, si):
                 if eno != str(j["no"]) or etitle != j["name"]:
                     err.append(f"chapters.yaml 第 {eno} 章「{etitle}」≠ scoring.json 项{j['no']}「{j['name']}」")
                 elif escore is not None and escore != j["max"]:
