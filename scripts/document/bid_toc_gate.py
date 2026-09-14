@@ -10,7 +10,8 @@ Why（2026-08-30 用户钦定 /govern，桐乡实证）：
 
 判据（顺序固定，别自己发挥）：
   ① 招标文件有「投标文件组成 / 装订顺序」表 → 整册装订顺序跟它；
-  ② 招标文件有「评标办法」评分表        → 正文章号跟它（章名、分值照抄原文）；
+  ② 招标文件有「评标办法」评分表        → 正文章号、分值和原评审项名跟它；
+     用户明确要求展开正文标题时，使用 title/source_title 分别保留正文名与原项名；
   ③ 两张都有 → 两张都要对上（嵌套：装订表管排列，评分表管正文章号）；
   ④ 一张都没有 → 才允许自拟，且必须先问用户。
   招标表里没有的内容不占章号（放不编号卷首/附件）。
@@ -263,24 +264,30 @@ def main(argv=None):
         print("       确属规则之前的历史稿 → _project.yaml 写 `toc_gate: legacy  # 理由`")
         return 2
     y = yaml.safe_load(cy.read_text(encoding="utf-8")) or {}
-    exp, schema = expected_from_yaml(y)
-    source_exp, _ = expected_from_yaml(y, source_titles=True)
+    try:
+        exp, schema = expected_from_yaml(y)
+        source_exp, _ = expected_from_yaml(y, source_titles=True)
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"[FAIL] chapters.yaml 标题配置不合法：{exc}")
+        return 2
     if not exp:
         print(f"[FAIL] {cy} 里 chapters/sequence 枚举为空 —— 拒绝在空集上报绿")
         return 2
     print(f"chapters.yaml: {cy.relative_to(root)} · schema={schema} · {len(exp)} 章")
 
     err = []
+    checked_sources = []
 
     # ① chapters.yaml ≡ 招标评分表（一手源）
     items, src = tender_scoring_items(root)
     if items:
         print(f"招标评分表一手源: 招标文件/{src} · {len(items)} 项")
         if len(items) == len(exp):
+            checked_sources.append("招标转录评分表")
             for (no, name, score), (eno, etitle, escore) in zip(items, source_exp):
                 if str(no) != eno:
                     err.append(f"章号 {eno} ≠ 评分项 {no}")
-                elif name[:4] != etitle[:4]:
+                elif name != etitle:
                     err.append(f"第 {eno} 章 章名「{etitle}」≠ 评分表「{name}」")
                 elif score is not None and escore is not None and score != escore:
                     err.append(f"第 {eno} 章 分值 {escore} ≠ 评分表 {score}")
@@ -296,6 +303,7 @@ def main(argv=None):
         tb = json.loads(sj.read_text(encoding="utf-8")).get("tech_business", {})
         si = tb.get("items", [])
         if si and len(si) == len(exp):
+            checked_sources.append("scoring.json")
             for (eno, etitle, escore), j in zip(source_exp, si):
                 if eno != str(j["no"]) or etitle != j["name"]:
                     err.append(f"chapters.yaml 第 {eno} 章「{etitle}」≠ scoring.json 项{j['no']}「{j['name']}」")
@@ -369,8 +377,11 @@ def main(argv=None):
             print("  ✗", e)
         print(f"FAIL {len(err)} findings")
         return 2
-    print(f"[PASS] 招标表 ≡ chapters.yaml ≡ 正文 · {len(exp)} 章"
+    print(f"[PASS] chapters.yaml ≡ 正文 · {len(exp)} 章"
           + (f" / {sum(e[2] for e in exp if e[2])} 分" if all(e[2] for e in exp) else ""))
+    print("[范围] 原评分项自动比对：" + ("、".join(checked_sources) or "未完成"))
+    if "招标转录评分表" not in checked_sources:
+        print("[范围] 本次未自动核对招标原文；扫描原件需另行核图并记录来源页码。")
     print("PASS")
     return 0
 

@@ -34,3 +34,39 @@ def test_source_and_body_titles_are_checked_separately(tmp_path, source_title, b
     assert result.returncode == want, result.stdout + result.stderr
     if want == 2:
         assert '≠' in result.stdout, result.stdout
+    else:
+        assert '原评分项自动比对：scoring.json' in result.stdout
+        assert '本次未自动核对招标原文' in result.stdout
+        assert '[PASS] 招标表 ≡' not in result.stdout
+
+
+@pytest.mark.parametrize('mismatched', [False, True])
+def test_transcribed_source_requires_full_name_match(tmp_path, mismatched):
+    (tmp_path / '_project.yaml').write_text('{}\n')
+    tender = tmp_path / '招标文件'
+    tender.mkdir()
+    names = ['企业证书', '项目业绩', '项目负责人', '人员配置', '售后服务方案']
+    (tender / '评分表.md').write_text('\n'.join(f'| {i}、{name} |' for i, name in enumerate(names, 1)))
+    chapters = [{'item_no': i, 'title': name, 'score': 6, 'file': f'ch{i}.md'}
+                for i, name in enumerate(names, 1)]
+    chapters[-1].update(title=EXPANDED, source_title='售后服务其他要求' if mismatched else names[-1])
+    (tmp_path / 'chapters.yaml').write_text(yaml.safe_dump({'chapters': chapters}, allow_unicode=True))
+    for c in chapters:
+        (tmp_path / c['file']).write_text(f"# {c['item_no']} {c['title']}\n")
+    result = subprocess.run([sys.executable, str(GATE), str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == (2 if mismatched else 0), result.stdout + result.stderr
+    if mismatched:
+        assert '≠ 评分表' in result.stdout
+    else:
+        assert '原评分项自动比对：招标转录评分表' in result.stdout
+        assert '本次未自动核对招标原文' not in result.stdout
+
+
+def test_empty_source_title_is_a_configuration_error(tmp_path):
+    (tmp_path / '_project.yaml').write_text('{}\n')
+    (tmp_path / 'chapters.yaml').write_text(yaml.safe_dump({'chapters': [
+        {'item_no': 7, 'title': EXPANDED, 'source_title': '', 'score': 6}]}))
+    result = subprocess.run([sys.executable, str(GATE), str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert '标题配置不合法' in result.stdout
+    assert 'Traceback' not in result.stderr
