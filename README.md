@@ -1,5 +1,7 @@
 # doctools
 
+**中文** | [English](README_EN.md)
+
 文档处理与数据转换工具集，统一维护命令行引擎与 [DocKit 桌面端](mac/README.md)。两种入口复用同一处理能力；桌面端构建与 JSON 契约见其目录，CLI 入口如下。
 
 - 现状盘点（有几个脚本 / docx 怎么被改 / 闸门）：[`handoffs/_archive/2026-08-04-docx-scripts-inventory.md`](handoffs/_archive/2026-08-04-docx-scripts-inventory.md)
