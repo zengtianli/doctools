@@ -12,6 +12,8 @@
   2. 正文末段若是引出表格的短行，图停在它之前
   3. 损坏形态（表在首个标题之前 / sectPr 不在末位）check 必须判红
   4. 同秒两次写回，两份备份都在
+  6. 二级标题下平铺的 N）条目：check 判「标题跳级」；h3group 只插三级标题与引导段、
+     组内编号从 1）重排、表仍跟表题；计划条数对不上或重复执行必须拒绝
   5. 来源渲染：简称→正式名、PDF 页→印刷页按已核偏移换算、同文件相邻页合并、
      无法确定的进 errs 而不是猜
 """
@@ -148,3 +150,64 @@ def test_render_refuses_to_guess(detail):
     errs = []
     B.render(detail, RULES, errs)
     assert errs
+
+
+def build_flat(tmp_path):
+    d = Document()
+    d.add_heading("7 技术路线", level=1)
+    d.add_heading("7.1 现状调查", level=2)
+    d.add_heading("7.1.1 思路", level=3)
+    d.add_heading("1）样板条目", level=4)
+    d.add_paragraph("样板正文" * 20)
+    d.add_heading("7.2 实施方案", level=2)
+    d.add_paragraph("节首说明" * 20)
+    for i, name in enumerate(["方案框架", "规划约束", "供需平衡", "空间布局", "重点工程"], 1):
+        d.add_heading(f"{i}）{name}", level=4)
+        d.add_paragraph(f"{name}正文" * 15)
+    d.add_paragraph("表7-1 指标")
+    d.add_table(rows=2, cols=2)
+    out = tmp_path / "flat.docx"
+    d.save(out)
+    return out
+
+
+PLAN = """
+sections:
+  - h2: "7.2 实施方案"
+    groups:
+      - {title: "7.2.1 总体思路", n: 2, lead: "引导段一（招标文件第二章）。"}
+      - title: "7.2.2 布局与工程"
+        n: 3
+        lead: "引导段二。"
+        append:
+          - {h4: "保障措施", paras: ["新增正文（招标文件第二章）。"]}
+"""
+
+
+def test_h3group_inserts_levels_and_renumbers(tmp_path):
+    f = build_flat(tmp_path)
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN, encoding="utf-8")
+    r = run("check", f)
+    assert r.returncode == 2 and "标题跳级: 1" in r.stdout
+    r = run("h3group", f, "--plan", plan, "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = B.Doc(f)
+    heads = [(doc.level(k), B.ptext(k).strip()) for k in doc.body if doc.is_heading(k)]
+    assert heads[4:] == [(2, "7.2 实施方案"), (3, "7.2.1 总体思路"), (4, "1）方案框架"), (4, "2）规划约束"),
+                         (3, "7.2.2 布局与工程"), (4, "1）供需平衡"), (4, "2）空间布局"), (4, "3）重点工程"),
+                         (4, "4）保障措施")]
+    s = seq(f)
+    assert s[s.index("TBL") - 1] == "表7-1 指" and s[-1] == "SECT"
+    assert s[s.index("4）保障措施") + 1].startswith("新增正文")
+    assert "标题跳级: 0" in run("check", f).stdout
+    assert run("h3group", f, "--plan", plan, "--apply").returncode != 0      # 重复执行必须拒绝
+
+
+def test_h3group_refuses_count_mismatch(tmp_path):
+    f = build_flat(tmp_path)
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN.replace("n: 3", "n: 2"), encoding="utf-8")
+    before = f.read_bytes()
+    assert run("h3group", f, "--plan", plan, "--apply").returncode != 0
+    assert f.read_bytes() == before

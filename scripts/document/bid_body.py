@@ -11,6 +11,7 @@ Why（2026-09-17 海宁标立）：一次性脚本按「段落列表」重排 do
     bid_body.py h4num  <docx> [--apply]                        # （十九）→ 19）
     bid_body.py figs   <docx> [--apply]                        # 图+题注 挪到正文之后
     bid_body.py cite   <docx> --trace <溯源稿.md> --rules <yaml> [--apply]
+    bid_body.py h3group <docx> --plan <yaml> [--apply]          # 二级标题下平铺的 N）分组：插三级标题+引导段，组内重排 1）
     bid_body.py note   <docx> --after <完整标题> --text <一段话> [--apply]   # 标题下插一段正文（幂等）
 
 不带 --apply = 干跑只报告。写回 = 备份 .bak-时间戳 + 原地 + 并发写回门。
@@ -238,6 +239,13 @@ def scan(doc):
     f["过渡套话"] = [ptext(e).strip()[:40] for e in find_fillers(doc)]
     h4 = find_h4(doc)
     f["四级编号"] = [f"{old}→{new} {ptext(e).strip()[:24]}" for e, old, new in h4] + h4_sequence_issues(doc)
+    skip, last = [], None                              # 标题层级跳级：1 / 1.1 / 1.1.1 / 1）逐级下挂
+    for k in kids:
+        if doc.is_heading(k):
+            if last is not None and doc.level(k) > doc.level(last) + 1:
+                skip.append(f"「{ptext(last).strip()[:22]}」下直接挂 {doc.level(k)} 级「{ptext(k).strip()[:16]}」")
+            last = k
+    f["标题跳级"] = skip
     allp = list(doc.root.iter(w("p")))
     f["内部来源号"] = [ptext(p).strip()[:36] for p in allp
                   if re.search(r"S-0\d", ptext(p))]
@@ -507,6 +515,96 @@ def cmd_cite(a):
     doc.save()
 
 
+def _clone(model, text):
+    """克隆段落外壳（pPr + 首个 run 的 rPr），换成一段纯文本；不带 paraId/书签/图。"""
+    import copy
+    new = copy.deepcopy(model)
+    runs = new.findall(w("r"))
+    for extra in new.xpath("./*[not(self::w:pPr)]", namespaces=NS):
+        if extra is not runs[0]:
+            new.remove(extra)
+    for child in list(runs[0]):
+        if child.tag not in (w("rPr"),):
+            runs[0].remove(child)
+    t = etree.SubElement(runs[0], w("t"))
+    t.text = text
+    for attr in list(new.attrib):
+        del new.attrib[attr]
+    return new
+
+
+def cmd_h3group(a):
+    """把某二级标题下平铺的四级条目按计划分组：每组前插三级标题与引导段，组内四级编号从 1）重排，
+    可在组末追加新的四级条目。只插入、不移动既有内容，图表位置与编号不受影响。"""
+    import yaml
+    plan = yaml.safe_load(Path(a.plan).read_text(encoding="utf-8"))
+    doc = Doc(a.docx)
+    before = invariants(doc, content=False)
+    kids = list(doc.body)
+    h3_model = next((k for k in kids if doc.is_heading(k) and doc.level(k) == 3), None)
+    h4_model = next((k for k in kids if doc.is_heading(k) and doc.level(k) == 4), None)
+    tx_model = next((k for k in kids if doc.is_text(k) and len(ptext(k)) > 60
+                     and k.find(".//w:drawing", NS) is None), None)
+    if None in (h3_model, h4_model, tx_model):
+        sys.exit("⛔ 文档内找不到可克隆的三级标题/四级标题/正文段")
+    titles = {ptext(k).strip() for k in kids if doc.is_heading(k)}
+    added = 0
+    for sec in plan["sections"]:
+        heads = [k for k in kids if doc.is_heading(k) and doc.level(k) == 2 and ptext(k).strip() == sec["h2"]]
+        if len(heads) != 1:
+            sys.exit(f"⛔ 二级标题「{sec['h2']}」命中 {len(heads)} 处（应为 1）")
+        h4s, end = [], None
+        for k in heads[0].itersiblings():
+            if k.tag == w("sectPr") or (doc.is_heading(k) and doc.level(k) <= 2):
+                end = k
+                break
+            if doc.is_heading(k) and doc.level(k) == 3:
+                sys.exit(f"⛔ 「{sec['h2']}」下已有三级标题「{ptext(k).strip()}」，不重复分组")
+            if doc.is_heading(k) and doc.level(k) == 4:
+                h4s.append(k)
+        if sum(g["n"] for g in sec["groups"]) != len(h4s):
+            sys.exit(f"⛔ 「{sec['h2']}」下四级条目 {len(h4s)} 个 ≠ 计划 {sum(g['n'] for g in sec['groups'])} 个")
+        print(f"{sec['h2']}（{len(h4s)} 条 → {len(sec['groups'])} 组）")
+        i = 0
+        for gi, g in enumerate(sec["groups"]):
+            if g["title"] in titles:
+                sys.exit(f"⛔ 标题「{g['title']}」已存在")
+            members = h4s[i:i + g["n"]]
+            i += g["n"]
+            anchor_end = h4s[i] if i < len(h4s) else end
+            members[0].addprevious(_clone(h3_model, g["title"]))
+            added += 1
+            for para in ([g["lead"]] if isinstance(g.get("lead"), str) else g.get("lead") or []):
+                members[0].addprevious(_clone(tx_model, para.strip()))
+                added += 1
+            print(f"  {g['title']}")
+            for n, el in enumerate(members, 1):
+                old = re.match(r"\d+）", ptext(el).strip())
+                if not old:
+                    sys.exit(f"⛔ 四级标题无「N）」编号: {ptext(el).strip()[:30]}")
+                if old.group(0) != f"{n}）":
+                    replace_once(el, old.group(0), f"{n}）")
+                print(f"      {ptext(el).strip()[:40]}")
+            for m, blk in enumerate(g.get("append") or [], len(members) + 1):
+                anchor_end.addprevious(_clone(h4_model, f"{m}）{blk['h4']}"))
+                added += 1
+                for para in blk["paras"]:
+                    anchor_end.addprevious(_clone(tx_model, para.strip()))
+                    added += 1
+                print(f"      {m}）{blk['h4']}  [新增 {len(blk['paras'])} 段]")
+    issues = h4_sequence_issues(doc)
+    print(f"新增段落 {added}；四级序号断点 {len(issues)}")
+    for x in issues:
+        print("  ⚠", x)
+    if a.apply:
+        if issues:
+            sys.exit("⛔ 序号不连续，未写回")
+        before["count"] += added
+        before["tags"] = sorted(before["tags"] + [w("p")] * added)
+        assert_invariants(doc, before)
+        doc.save()
+
+
 def cmd_note(a):
     """在指定标题后插入一段正文：克隆其后最近一段正文的段落/字符格式，已存在同文则跳过。"""
     import copy
@@ -545,7 +643,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("check", cmd_check), ("filler", cmd_filler), ("h4num", cmd_h4num),
-                     ("figs", cmd_figs), ("cite", cmd_cite), ("note", cmd_note)]:
+                     ("figs", cmd_figs), ("cite", cmd_cite), ("note", cmd_note),
+                     ("h3group", cmd_h3group)]:
         s = sub.add_parser(name)
         s.add_argument("docx")
         s.set_defaults(fn=fn)
@@ -555,6 +654,8 @@ def main():
             s.add_argument("--apply", action="store_true")
         if name == "h4num":
             s.add_argument("--force", action="store_true")
+        if name == "h3group":
+            s.add_argument("--plan", required=True)
         if name == "note":
             s.add_argument("--after", required=True)
             s.add_argument("--text", required=True)
