@@ -12,10 +12,14 @@ Why（2026-09-17 海宁标立）：一次性脚本按「段落列表」重排 do
     bid_body.py figs   <docx> [--apply]                        # 图+题注 挪到正文之后
     bid_body.py cite   <docx> --trace <溯源稿.md> --rules <yaml> [--apply]
     bid_body.py h3group <docx> --plan <yaml> [--apply]          # 二级标题下平铺的 N）分组：插三级标题+引导段，组内重排 1）
+    bid_body.py uncite <docx> [--apply]                        # 清掉正文里的页码级出处括注（先用出处对照留底）
+    bid_body.py resub  <docx> --rules <yaml> [--apply]          # 按项目 rules 的 resub 列表做保格式正则替换（去“拟”等过程稿口气）
+    bid_body.py media  <docx> --old <旧图目录> --new <新图目录>… [--apply]  # 内嵌图按旧图哈希匹配、同名同像素尺寸替换
     bid_body.py note   <docx> --after <完整标题> --text <一段话> [--apply]   # 标题下插一段正文（幂等）
 
 不带 --apply = 干跑只报告。写回 = 备份 .bak-时间戳 + 原地 + 并发写回门。
-体例口径：标题 → 正文 → 图 → 题注；来源写到文件名和页码，内部来源号不进交付正文。
+体例口径：标题逐级下挂；标题 → 正文 → 图 → 题注；交付正文靠句内点名交代出处（“《××规划》记载…”“采购文件要求…”），
+页码级来源留在稿外的出处对照表，不以括注形式进正文；内部来源号、过程稿口气（“拟”）不进交付正文。
 """
 from __future__ import annotations
 
@@ -249,6 +253,7 @@ def scan(doc):
     allp = list(doc.root.iter(w("p")))
     f["内部来源号"] = [ptext(p).strip()[:36] for p in allp
                   if re.search(r"S-0\d", ptext(p))]
+    f["正文出处括注"] = [x[:40] for p in allp for x in find_src_parens(ptext(p))]
     f["过程稿式来源写法"] = [ptext(p).strip()[:36] for p in allp if re.search(r"(?<!不)同规划(PDF|第|，|印刷)|(PDF|印刷)第\d", ptext(p))]
     return f
 
@@ -515,6 +520,155 @@ def cmd_cite(a):
     doc.save()
 
 
+SRC_PAREN = re.compile(r"（((?:[^（）]|（[^（）]*）)*)）")
+SRC_HEAD = re.compile(r"^(?:来源：)?(?:招标文件|合同第|《|海宁市20\d\d|海宁市非居民|夹浦)")
+STUB = re.compile(r"^[^。；，]{0,12}[：据见]?[。；]?$")
+
+
+def find_src_parens(text):
+    return [m.group(0) for m in SRC_PAREN.finditer(text) if SRC_HEAD.match(m.group(1))]
+
+
+def cmd_uncite(a):
+    """交付正文不挂页码级出处括注：删括注、顺手收拾删后留下的残句；整段只剩引导残句的删段。"""
+    doc = Doc(a.docx)
+    before = invariants(doc, content=False)
+    n, drop, odd = 0, [], []
+    for p in list(doc.root.iter(w("p"))):
+        full = ptext(p)
+        hits = find_src_parens(full)
+        if not hits:
+            continue
+        rest = full
+        for h in hits:
+            rest = rest.replace(h, "", 1)
+        rest = rest.strip()
+        if STUB.match(rest) and p.getparent() is doc.body and not doc.is_caption(p):
+            drop.append(p)
+            print(f"  删段: {full[:60]}")
+            n += len(hits)
+            continue
+        for h in hits:
+            cur = ptext(p) if a.apply else full
+            i = cur.find(h)
+            start = max(cur.rfind("。", 0, i), cur.rfind("；", 0, i)) + 1
+            m = re.search(r"[。；]", cur[i + len(h):])
+            end = i + len(h) + (m.end() if m else 0)
+            sent = cur[start:end]
+            target = h
+            if len(sent.replace(h, "").strip("。；")) < 14:        # 括注前只剩“表中…分别见”这类引导残句 → 整句删
+                target = sent
+                print(f"  删句: {sent[:70]}")
+            elif cur[i - 1:i] in "见：，" or (cur[i - 1:i] == "据" and cur[i - 2:i] not in ("依据", "证据", "数据", "凭据")):
+                odd.append(cur[max(0, i - 20):i + 30])
+            else:
+                print(f"  删括注: …{cur[max(0, i - 16):i]}|{h[:70]}")
+            if a.apply and not replace_once(p, target, ""):
+                sys.exit(f"⛔ 替换失败: {target[:40]}")
+            n += 1
+    print(f"括注 {n} 处，其中整段删除 {len(drop)} 段；需人工看的残句 {len(odd)}")
+    for x in odd:
+        print("  ⚠", x)
+    if a.apply:
+        if odd:
+            sys.exit("⛔ 有残句，未写回（先处理或写进 replace 规则）")
+        for p in drop:
+            doc.body.remove(p)
+        before["count"] -= len(drop)
+        tags = list(before["tags"])
+        for _ in drop:
+            tags.remove(w("p"))
+        before["tags"] = tags
+        assert_invariants(doc, before)
+        doc.save()
+
+
+def replace_span(p, a, b, new):
+    """按段内字符区间 [a,b) 保格式替换（跨 run）；replace_once 的按位置版。"""
+    pos, done = 0, False
+    for t in [t for r in p.iter(w("r")) for t in r.findall(w("t"))]:
+        txt = t.text or ""
+        s0, e0 = pos, pos + len(txt)
+        pos = e0
+        if e0 <= a or s0 >= b:
+            continue
+        left = txt[:a - s0] if s0 < a else ""
+        right = txt[b - s0:] if e0 > b else ""
+        t.text = left + ("" if done else new) + right
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        done = True
+    return done
+
+
+def cmd_resub(a):
+    """rules.resub = [[正则, 替换], …] 依次作用于每个段落；护栏：去空白后的数字序列不变。"""
+    rules = load_rules(a.rules)
+    subs = [(re.compile(pat), rep) for pat, rep in rules.get("resub") or []]
+    doc = Doc(a.docx)
+    before = invariants(doc, content=False)
+    total, shown = 0, 0
+    for p in doc.root.iter(w("p")):
+        orig = ptext(p)
+        for rx, rep in subs:
+            for m in reversed(list(rx.finditer(ptext(p)))):
+                cur = ptext(p)
+                if shown < a.show:
+                    print(f"  {cur[max(0, m.start() - 10):m.end() + 8]} → {cur[max(0, m.start() - 10):m.start()]}{m.expand(rep)}{cur[m.end():m.end() + 8]}")
+                    shown += 1
+                replace_span(p, m.start(), m.end(), m.expand(rep))
+                total += 1
+        if re.findall(r"\d+(?:\.\d+)?", orig) != re.findall(r"\d+(?:\.\d+)?", ptext(p)):
+            sys.exit(f"⛔ 数字序列被改动，未写回: {orig[:50]}")
+    print(f"替换 {total} 处")
+    if a.apply and total:
+        assert_invariants(doc, before)
+        doc.save()
+
+
+def cmd_media(a):
+    """图源改过后把新 PNG 换进 docx：内嵌图字节哈希 == 旧图目录里某文件 → 用新图目录里的同名文件替换。
+    只换 word/media 下命中的部件，像素尺寸必须一致（版面不变），document.xml 不动。"""
+    import io
+    from PIL import Image
+    path = Path(a.docx)
+    gate = WriteGate(path)
+    olds = {hashlib.md5(f.read_bytes()).hexdigest(): f.name for f in Path(a.old).glob("*.png")}
+    news = {f.name: f for d in a.new for f in Path(d).glob("*.png")}
+    with zipfile.ZipFile(path) as z:
+        infos = z.infolist()
+        parts = {i.filename: z.read(i.filename) for i in infos}
+    changed = set()
+    for name, data in parts.items():
+        if not name.startswith("word/media/"):
+            continue
+        src = olds.get(hashlib.md5(data).hexdigest())
+        if not src or src not in news:
+            continue
+        nb = news[src].read_bytes()
+        if Image.open(io.BytesIO(nb)).size != Image.open(io.BytesIO(data)).size:
+            sys.exit(f"⛔ {src} 新旧像素尺寸不一致，未写回")
+        if nb != data:
+            parts[name] = nb
+            changed.add(name)
+            print(f"  {name[11:]} ← {src}")
+    print(f"替换 {len(changed)} 张")
+    if a.apply and changed:
+        gate.assert_unchanged()
+        bak = path.with_name(path.name + ".bak-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+        n = 1
+        while bak.exists():
+            n += 1
+            bak = bak.with_name(bak.name.split("~")[0] + f"~{n}")
+        shutil.copy2(path, bak)
+        tmp = path.with_name(path.name + ".tmp-bid-body")
+        with zipfile.ZipFile(tmp, "w") as z:
+            for i in infos:
+                z.writestr(i, parts[i.filename], compress_type=i.compress_type)
+        assert_parts_intact(bak, tmp, allow_changed=changed, verbose=False)
+        tmp.replace(path)
+        print(f"✓ 备份 {bak.name}\n✓ 写回 {path.name}（仅 {len(changed)} 个 media 部件）")
+
+
 def _clone(model, text):
     """克隆段落外壳（pPr + 首个 run 的 rPr），换成一段纯文本；不带 paraId/书签/图。"""
     import copy
@@ -644,7 +798,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("check", cmd_check), ("filler", cmd_filler), ("h4num", cmd_h4num),
                      ("figs", cmd_figs), ("cite", cmd_cite), ("note", cmd_note),
-                     ("h3group", cmd_h3group)]:
+                     ("h3group", cmd_h3group), ("uncite", cmd_uncite),
+                     ("resub", cmd_resub), ("media", cmd_media)]:
         s = sub.add_parser(name)
         s.add_argument("docx")
         s.set_defaults(fn=fn)
@@ -654,6 +809,12 @@ def main():
             s.add_argument("--apply", action="store_true")
         if name == "h4num":
             s.add_argument("--force", action="store_true")
+        if name == "media":
+            s.add_argument("--old", required=True)
+            s.add_argument("--new", required=True, action="append")
+        if name == "resub":
+            s.add_argument("--rules", required=True)
+            s.add_argument("--show", type=int, default=25)
         if name == "h3group":
             s.add_argument("--plan", required=True)
         if name == "note":

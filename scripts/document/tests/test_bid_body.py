@@ -211,3 +211,55 @@ def test_h3group_refuses_count_mismatch(tmp_path):
     before = f.read_bytes()
     assert run("h3group", f, "--plan", plan, "--apply").returncode != 0
     assert f.read_bytes() == before
+
+
+def build_cited(tmp_path):
+    d = Document()
+    d.add_heading("6.1 概况", level=2)
+    d.add_paragraph("水网规划记载总设计规模7万m³/日（《海宁水网建设规划》第10页）。本项目拟采用分时段方法，原拟用途保留。")
+    d.add_paragraph("规划期为（2021—2035年），以《管理办法》为指引（招标文件第二章“招标需求”）；并开展模拟。")
+    d.add_paragraph("表中事实定位分别见（《海宁水网建设规划》第10页；《海宁市域污水工程专项规划修编（2022—2035）》第150页）。矩阵用于说明资料如何进入分析。")
+    out = tmp_path / "c.docx"
+    d.save(out)
+    return out
+
+
+def test_uncite_removes_source_parens_only(tmp_path):
+    f = build_cited(tmp_path)
+    assert "正文出处括注: 3" in run("check", f).stdout
+    assert run("uncite", f, "--apply").returncode == 0
+    ts = [B.ptext(p) for p in B.Doc(f).root.iter(B.w("p"))]
+    assert ts[1].startswith("水网规划记载总设计规模7万m³/日。")
+    assert "（2021—2035年）" in ts[2] and "以《管理办法》为指引；" in ts[2]      # 非出处括注不动
+    assert ts[3] == "矩阵用于说明资料如何进入分析。"                           # “分别见（…）。”整句删
+    assert "正文出处括注: 0" in run("check", f).stdout
+
+
+def test_resub_keeps_protected_terms_and_numbers(tmp_path):
+    f = build_cited(tmp_path)
+    rules = tmp_path / "r.yaml"
+    rules.write_text('resub:\n  - ["(?<![模原])拟(?!议|定)", ""]\n', encoding="utf-8")
+    assert run("resub", f, "--rules", rules, "--apply").returncode == 0
+    t = "".join(B.ptext(p) for p in B.Doc(f).root.iter(B.w("p")))
+    assert "本项目采用分时段方法" in t and "原拟用途" in t and "模拟" in t
+    rules.write_text('resub:\n  - ["7万", "8万"]\n', encoding="utf-8")
+    before = f.read_bytes()
+    assert run("resub", f, "--rules", rules, "--apply").returncode != 0           # 改数字必须被护栏拦下
+    assert f.read_bytes() == before
+
+
+def test_media_swaps_by_hash_and_rejects_size_change(tmp_path):
+    from PIL import Image
+    f = build(tmp_path)
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir(); new.mkdir()
+    (old / "x.png").write_bytes(PNG)
+    Image.new("RGB", (1, 1), "red").save(new / "x.png")
+    r = run("media", f, "--old", old, "--new", new, "--apply")
+    assert r.returncode == 0 and "替换 1 张" in r.stdout
+    import zipfile
+    z = zipfile.ZipFile(f)
+    assert any(z.read(n) == (new / "x.png").read_bytes() for n in z.namelist() if n.startswith("word/media/"))
+    f2 = build(tmp_path)
+    Image.new("RGB", (2, 2), "red").save(new / "x.png")
+    assert run("media", f2, "--old", old, "--new", new, "--apply").returncode != 0
