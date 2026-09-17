@@ -381,7 +381,9 @@ def main_delete_chapter():
             print(f"[backup] {bak}")
             report["backup"] = str(bak)
         total_p, total_t = apply_plan(plans)
-        doc.save(str(args.docx))
+        # 删整章 = 章内的图一起删，有意减图，向图片守卫报备。
+        with docx_safe_save.allow_media_loss():
+            doc.save(str(args.docx))
         print(f"[done] 已删 {total_p} 段 + {total_t} 表, 保存 → {args.docx}")
         report["deleted_paragraphs"] = total_p
         report["deleted_tables"] = total_t

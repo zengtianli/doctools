@@ -43,11 +43,25 @@ doctools 里 36 个非测试脚本用 python-docx 存盘、合计 8500+ 行。�
 新建文档（`Document()` 无参，源就是 python-docx 自带模板）**不 graft** —— 没有
 「原件」可保留，pdf_to_docx 这类从零造文件的走这条。
 
+## 图片守卫（2026-09-17 加）
+
+部件集合比对看不见「重建文档把内嵌图全丢了」：`Document()` 新建再把文字搬过去、
+覆盖存回原路径，走的正是上面那条不 graft 的分支。所以不论有没有源，临时件写好之后、
+replace 之前再量一次图（`docx_parts.media_census`）：
+
+    目标路径上已有一份 docx → 以**即将被覆盖的那份**为基线，图片部件数或正文图引用数
+                              变少 = 抛 PartIntegrityError，目标文件一个字节不动
+    新出现的悬空图片关系     → 抛（跨文档搬元素的症状）
+    存到新路径且比源件图少   → 只打印告警（拆册/取一章是正常操作，源件没被覆盖）
+
+范围：只管 import 了本模块的进程。临时脚本裸用 python-docx 不经过这里。
+
 ## 逃生 / 调参
 
     DOCX_GRAFT_OFF=1     完全不打补丁（退回裸 python-docx 行为）
     DOCX_GRAFT_QUIET=1   不打印每次收口的那行 stderr
     with docx_safe_save.allow_part_loss(): ...   这段里允许部件丢失（默认抛错）
+    with docx_safe_save.allow_media_loss(): ...  这段里允许覆盖存盘后图变少（默认抛错）
 """
 from __future__ import annotations
 
@@ -61,8 +75,10 @@ from weakref import WeakKeyDictionary
 # 脚本自己那一份。append 让「顶掉」在结构上不可能发生。
 sys.path.append(str(Path(__file__).resolve().parent))
 from docx_surgical import graft_unchanged  # noqa: E402
+from docx_parts import (PartIntegrityError, assert_media_intact,  # noqa: E402
+                        media_census)
 
-__all__ = ["allow_part_loss", "patched"]
+__all__ = ["allow_part_loss", "allow_media_loss", "patched"]
 
 _QUIET = os.environ.get("DOCX_GRAFT_QUIET") == "1"
 _SENTINEL = "_docx_safe_save_patched"
@@ -87,6 +103,53 @@ def allow_part_loss():
         yield
     finally:
         _ALLOW_LOSS -= 1
+
+
+# 允许覆盖存盘后图变少的作用域深度（嵌套安全）
+_ALLOW_MEDIA_LOSS = 0
+
+
+@contextlib.contextmanager
+def allow_media_loss():
+    """这段代码里的存盘允许「覆盖一份 docx 后图比原来少」（默认 = 抛 PartIntegrityError）。
+
+    只在**有意删图**时用（删含图的块、原地瘦身）。新出现的悬空图片关系不受它放行。
+    """
+    global _ALLOW_MEDIA_LOSS
+    _ALLOW_MEDIA_LOSS += 1
+    try:
+        yield
+    finally:
+        _ALLOW_MEDIA_LOSS -= 1
+
+
+def _census_or_none(path: Path):
+    """基线普查。目标路径上的旧文件不是 docx（空文件/别的格式）→ 没有图可丢，返回 None。"""
+    try:
+        return media_census(path)
+    except PartIntegrityError:
+        return None
+
+
+def _check_media(src, target: Path, tmp: Path) -> None:
+    """replace 之前调。抛错 = 目标文件未动。"""
+    after = media_census(tmp)
+    old = _census_or_none(target) if target.is_file() else None
+    origin = _census_or_none(src) if src is not None else None
+    # 悬空引用的基线：源件本来就有的不算这次弄坏的
+    base_dangling = (origin or old or {"dangling": []})["dangling"]
+    if old is not None:
+        assert_media_intact({**old, "dangling": base_dangling}, after,
+                            allow_loss=bool(_ALLOW_MEDIA_LOSS),
+                            label=f"覆盖 {target.name}")
+    else:
+        assert_media_intact({"media": 0, "refs": 0, "dangling": base_dangling}, after,
+                            label=f"写出 {target.name}")
+        if (origin is not None and after["refs"] < origin["refs"]
+                and not _ALLOW_MEDIA_LOSS and not _QUIET):
+            print(f"⚠ [图片守卫] {target.name}: 正文图引用 {origin['refs']} → "
+                  f"{after['refs']}（比源件 {Path(src).name} 少；存的是新路径，未拦）",
+                  file=sys.stderr)
 
 
 def _default_template() -> Path | None:
@@ -139,15 +202,22 @@ def _install() -> bool:
     def _save(self, pkg_file):
         src = _SRC.get(self)
         target = _as_path(pkg_file)
-        if src is None or target is None:
-            # 新建文档 或 存到流里 —— 没有原件可对照，原样存。
+        if target is None:
+            # 存到流里 —— 没有落盘路径，没有东西会被覆盖，原样存。
             return _orig_save(self, pkg_file)
 
+        if target.is_symlink():
+            # os.replace 换掉的是链接本身；写到链接指向的真文件上，和裸 python-docx 行为一致。
+            target = target.resolve()
         tmp = target.with_name(target.name + ".dsafe")
         try:
             _orig_save(self, str(tmp))
-            info = graft_unchanged(src, tmp,
-                                   on_missing="ignore" if _ALLOW_LOSS else "error")
+            # 新建文档没有原件可 graft，但照样要过图片守卫：
+            # 「Document() 重建后覆盖原稿」正是这条分支。
+            info = ({"还原": [], "真变了": [], "新增": []} if src is None else
+                    graft_unchanged(src, tmp,
+                                    on_missing="ignore" if _ALLOW_LOSS else "error"))
+            _check_media(src, target, tmp)
             os.replace(tmp, target)
         except BaseException:
             # 目标文件至今一个字节都没动过；把临时件收掉，让错误照原样往上抛。

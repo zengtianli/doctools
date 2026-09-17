@@ -412,7 +412,9 @@ def merge_md_into_docx(
             ref = tbl_elem
             print(f'  非段落元素插到章末（锚点 "{anchor[:40]}" 未匹配）')
 
-    doc.save(output_file)
+    # 用 md 内容替换整章：旧章里的图随旧内容一起被换掉，有意减图，向图片守卫报备。
+    with docx_safe_save.allow_media_loss():
+        doc.save(output_file)
     print(f"\n已保存到 {output_file}")
 
     # Verification pass

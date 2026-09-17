@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# doctools 项目级 pre-commit —— 由全局分发器（core.hooksPath=~/.git-hooks）的
+# `.tools/pre-commit` 兜底触发；放 .git/hooks/ 无效。
+#
+# 仓外引用存在性：本次提交删/改名了 doctools 的 .py/.sh 时，全扫仓外指向
+# doctools 的路径是否仍然存在；未删改则直接通过。这条只在本机提交时跑，CI 不跑。
+# 手跑：python3 tools/check_external_refs.py [--changed-only]
+# 绕过：git commit --no-verify
+set -e
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECK="$ROOT/tools/check_external_refs.py"
+if [[ ! -f "$CHECK" ]]; then
+  echo "⛔ [external-refs] 检查脚本缺失：${CHECK}（fail-closed，不放行）" >&2
+  exit 1
+fi
+exec python3 "$CHECK" --changed-only

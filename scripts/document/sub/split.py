@@ -252,7 +252,9 @@ def write_slice(src_docx: Path, dst_docx: Path, start: int, end: int,
             continue
         if i not in keep_set:
             body.remove(elem)
-    doc.save(str(dst_docx))
+    # dst 是整本的副本，裁成一册后图必然变少 —— 有意减图，向图片守卫报备。
+    with docx_safe_save.allow_media_loss():
+        doc.save(str(dst_docx))
     # 去冗余 media: 本片 body 已裁但 rels/media 仍是整本 → deep 扫只留真引用的, 同步裁 rels。
     # best-effort: 任何异常都不让 split 失败(去冗余是优化, 不是正确性前提)。
     if prune_media and _som is not None:

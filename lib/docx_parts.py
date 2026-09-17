@@ -42,11 +42,15 @@
 from __future__ import annotations
 
 import hashlib
+import posixpath
+import re
+import sys
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ['PartIntegrityError', 'PartDiff', 'diff_parts', 'assert_parts_intact']
+__all__ = ['PartIntegrityError', 'PartDiff', 'diff_parts', 'assert_parts_intact',
+           'media_census', 'assert_media_intact']
 
 # surgical 改写中「本来就会变」的部件：正文永远要改；
 # 改批注/新增部件时会连带动 rels 与 content-types 注册表。
@@ -110,6 +114,97 @@ def _digests(path: Path) -> dict[str, str]:
         return {n: hashlib.sha256(z.read(n)).hexdigest() for n in names}
 
 
+# ── 图片守卫 ─────────────────────────────────────────────────────────────
+# 部件集合比对看不见的一种丢失：media 部件与 rels 都还在，正文里的 w:drawing 没了
+# （python-docx 删段/重建后就是这个形状——zip 条目一个没少，图却不在文档里）。
+# 所以另量一把尺：图片部件数 + 正文类部件里的图引用数 + 悬空的图片关系。
+_STORY_RE = re.compile(
+    r'^word/(document|footnotes|endnotes|header\d*|footer\d*)\.xml$')
+_REF_RE = re.compile(rb'<w:(?:drawing|pict|object)[\s>/]')
+_RID_RE = re.compile(rb'<(?:a:blip|v:imagedata|asvg:svgBlip)\b[^>]*?'
+                     rb'\br:(?:embed|link|id)="([^"]+)"')
+_REL_RE = re.compile(rb'<Relationship\b[^>]*>')
+_ATTR_RE = re.compile(rb'\b(Id|Target|TargetMode)="([^"]*)"')
+
+
+def _rels_of(z: zipfile.ZipFile, part: str, names: set) -> dict:
+    d, b = posixpath.split(part)
+    rp = f'{d}/_rels/{b}.rels'
+    if rp not in names:
+        return {}
+    out = {}
+    for m in _REL_RE.finditer(z.read(rp)):
+        a = {k.decode(): v.decode('utf-8', 'replace')
+             for k, v in _ATTR_RE.findall(m.group(0))}
+        if 'Id' in a:
+            out[a['Id']] = (a.get('Target', ''), a.get('TargetMode', ''))
+    return out
+
+
+def media_census(path) -> dict:
+    """数一份 docx 里的图：`media` 图片部件数 / `refs` 正文类部件里的图引用数 /
+    `dangling` 指不到部件的图片关系（形如 ``word/document.xml#rId7``）。
+
+    纯 stdlib（zipfile + 正则），不依赖 python-docx。读不了 → 抛，不返回全 0 装没事。
+    """
+    path = Path(path)
+    try:
+        z = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as e:
+        raise PartIntegrityError(f'图片普查失败：{path} 读不了（{e}）') from e
+    with z:
+        names = {n for n in z.namelist() if not n.endswith('/')}
+        if 'word/document.xml' not in names:
+            raise PartIntegrityError(f'图片普查失败：{path} 里没有 word/document.xml')
+        media = sum(1 for n in names if n.startswith('word/media/'))
+        refs, dangling = 0, []
+        for part in sorted(n for n in names if _STORY_RE.match(n)):
+            xml = z.read(part)
+            refs += len(_REF_RE.findall(xml))
+            rids = {r.decode() for r in _RID_RE.findall(xml)}
+            if not rids:
+                continue
+            rels = _rels_of(z, part, names)
+            for rid in sorted(rids):
+                if rid not in rels:
+                    dangling.append(f'{part}#{rid}')
+                    continue
+                target, mode = rels[rid]
+                if mode == 'External':
+                    continue                       # 链接图：目标本来就不在包里
+                full = (target.lstrip('/') if target.startswith('/') else
+                        posixpath.normpath(posixpath.join(posixpath.dirname(part), target)))
+                if full not in names:
+                    dangling.append(f'{part}#{rid}')
+    return {'media': media, 'refs': refs, 'dangling': dangling}
+
+
+def assert_media_intact(before: dict, after: dict, *, allow_loss: bool = False,
+                        label: str = '') -> None:
+    """改后的图不许比改前少。`before`/`after` 是 `media_census()` 的返回。
+
+    - 新出现的悬空图片关系 → **总是**抛（Word 里就是一个红叉，没有「有意为之」）
+    - `media` 或 `refs` 变少 → 抛；确属有意减图传 `allow_loss=True`
+    - 变多不算错。
+    """
+    bad = []
+    new_dangling = sorted(set(after['dangling']) - set(before['dangling']))
+    if new_dangling:
+        bad.append(f'新增 {len(new_dangling)} 处悬空图片引用：{_brief(new_dangling)}')
+    if not allow_loss:
+        if after['media'] < before['media']:
+            bad.append(f"图片部件 {before['media']} → {after['media']}")
+        if after['refs'] < before['refs']:
+            bad.append(f"正文图引用 {before['refs']} → {after['refs']}")
+    if bad:
+        raise PartIntegrityError(
+            '\n'.join([f'图片守卫未通过{("（" + label + "）") if label else ""}：']
+                      + [f'  · {x}' for x in bad]
+                      + ['  图变少通常意味着「重建文档」而不是「改文档」——内嵌图不会跟着文字搬过去。',
+                         '  确属有意减图 → python-docx 存盘包 `with docx_safe_save.allow_media_loss():`，'
+                         'surgical 校验传 `allow_media_loss=True`。']))
+
+
 def diff_parts(src, dst, allow_changed=DEFAULT_ALLOW_CHANGED) -> PartDiff:
     """比对源件与产物的部件集合与逐部件字节。src 必须是**未被改动的源件**。"""
     src, dst = Path(src), Path(dst)
@@ -134,12 +229,18 @@ def diff_parts(src, dst, allow_changed=DEFAULT_ALLOW_CHANGED) -> PartDiff:
 
 
 def assert_parts_intact(src, dst, allow_changed=DEFAULT_ALLOW_CHANGED,
-                        allow_added=frozenset(), verbose: bool = True) -> PartDiff:
+                        allow_added=frozenset(), verbose: bool = True,
+                        allow_media_loss: bool | None = None) -> PartDiff:
     """surgical 存盘后调它。丢部件或白名单外部件被改 → 抛 PartIntegrityError。
 
     allow_added: 本次有意新增的部件（如首次加批注的 word/comments.xml）。
                  新增不算错，但**必须报备**，否则一样抛 —— 防的是
                  「悄悄多塞了个部件进去」。
+    allow_media_loss: 正文图引用（w:drawing/w:pict/w:object）变少怎么办。
+                 None（默认）= 打印告警不抛；False = 抛；True = 有意减图，不吭声。
+                 新增悬空图片关系与图片部件丢失不看这个参数，一律抛。
+                 默认先不抛的原因：本函数在存盘**之后**才被调用（拦不住覆盖），且有
+                 按章裁剪 document.xml 的调用方，减图对它们是正常结果。
     """
     allow_changed = set(allow_changed) | set(allow_added)
     d = diff_parts(src, dst, allow_changed)
@@ -152,6 +253,15 @@ def assert_parts_intact(src, dst, allow_changed=DEFAULT_ALLOW_CHANGED,
     unexpected = [n for n in d.added if n not in allow_added]
     if unexpected:
         bad.append(f'{len(unexpected)} 个未报备的新增部件：{_brief(unexpected)}')
+    before, after = media_census(src), media_census(dst)
+    try:
+        assert_media_intact(before, after, allow_loss=allow_media_loss is not False,
+                            label=f'{src.name} → {dst.name}')
+    except PartIntegrityError as e:
+        bad.append(str(e))
+    if allow_media_loss is None and after['refs'] < before['refs']:
+        print(f"  ⚠ 正文图引用 {before['refs']} → {after['refs']}（{src.name} → {dst.name}）"
+              f"——有意减图请传 allow_media_loss=True", file=sys.stderr)
     if bad:
         raise PartIntegrityError(
             '\n'.join([f'surgical 完整性校验未通过（{src.name} → {dst.name}）：']

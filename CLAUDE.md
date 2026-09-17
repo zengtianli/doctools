@@ -72,7 +72,7 @@ docs/                 # 从本文外迁的长叙事
 | `scripts/document/md_to_audiobook.py` | md → 有声书（edge-tts，章节并发） | `uv run …/md_to_audiobook.py <md>`（PEP-723 自带依赖） |
 | `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |
 | `scripts/document/renum.py` | 编号/题注位移与重排族。`chapter`=md 侧章号位移（/renumber skill 指向）· `tabfig`=md 侧表/图题注号对齐（--check 门 exit 2）· `figures`=docx 图号重排+引用同步（= docx_cli `renumber-fig`）。**三个子命令统一 exit 3 = 枚举为空**，见下节 | `renum.py chapter <chapters.yaml> [--apply]`；`tabfig <yaml\|目录> [--apply\|--check]`；`figures <docx> [--cn-section --kind 图\|表] [--dry-run\|--inplace]` |
-| `scripts/document/docx_fmt.py` | docx 版式/字体/文本规范化族。`template`=套模板（docx_cli `template`）· `clone`=版式克隆（docx_cli `format`）· `fonts`=去等线（docx-font-guard hook 指向）· `text`=引号/标点/单位规范化（docx_cli `text-fmt`） | `docx_fmt.py template <docx> [-t 模板]`；`clone extract\|apply …`；`fonts <docx...> --check\|--apply`；`text [flags] <docx...>` |
+| `scripts/document/docx_fmt.py` | docx 版式/字体/文本规范化族。`template`=套模板（docx_cli `template`）· `clone`=版式克隆（docx_cli `format`）· `fonts`=去等线 · `text`=引号/标点/单位规范化（docx_cli `text-fmt`） | `docx_fmt.py template <docx> [-t 模板]`；`clone extract\|apply …`；`fonts <docx...> --check\|--apply`；`text [flags] <docx...>` |
 
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则 `script_graph` 判孤儿，下次清理就清了。
 
