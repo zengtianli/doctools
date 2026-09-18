@@ -15,10 +15,11 @@ Why（2026-09-17 海宁标立）：一次性脚本按「段落列表」重排 do
     bid_body.py uncite <docx> [--apply]                        # 清掉正文里的页码级出处括注（先用出处对照留底）
     bid_body.py resub  <docx> --rules <yaml> [--apply]          # 按项目 rules 的 resub 列表做保格式正则替换（去“拟”等过程稿口气）
     bid_body.py media  <docx> --old <旧图目录> --new <新图目录>… [--apply]  # 内嵌图按旧图哈希匹配、同名同像素尺寸替换
+    bid_body.py swapfig <docx> --plan <plan.json> [--apply]   # 重画图按图号换入：可改比例（按版宽重设尺寸）、可改图题名，旧图部件无引用即移除
     bid_body.py note   <docx> --after <完整标题> --text <一段话> [--apply]   # 标题下插一段正文（幂等）
 
 不带 --apply = 干跑只报告。写回 = 备份 .bak-时间戳 + 原地 + 并发写回门。
-体例口径：标题逐级下挂；标题 → 正文 → 图 → 题注；交付正文靠句内点名交代出处（“《××规划》记载…”“采购文件要求…”），
+体例口径：标题逐级下挂；标题 → 正文 → 图 → 题注；交付正文靠句内点名交代出处（“《××规划》记载…”），
 页码级来源留在稿外的出处对照表，不以括注形式进正文；内部来源号、过程稿口气（“拟”）不进交付正文。
 """
 from __future__ import annotations
@@ -669,6 +670,125 @@ def cmd_media(a):
         print(f"✓ 备份 {bak.name}\n✓ 写回 {path.name}（仅 {len(changed)} 个 media 部件）")
 
 
+def cmd_swapfig(a):
+    """重画后的图按图号换进 docx：允许新图比例与旧图不同（按版宽重设显示尺寸），可同时改图题名称（图号不动）。
+    plan.json = [{"no": "7-2", "png": "新图.png", "caption": "新图名（可省）"}, …]。
+    新图作为新图片部件写入并改指向；旧图片部件无人引用即移除，不留孤儿 media（health gate 会判红）。"""
+    import io
+    import json
+    from PIL import Image
+    emu_cm = 360000
+    max_w, max_h = int(a.width * emu_cm), int(a.max_height * emu_cm)
+    plan = json.loads(Path(a.plan).read_text(encoding="utf-8"))
+    doc = Doc(a.docx)
+    before = invariants(doc, content=False)
+    RELS = "word/_rels/document.xml.rels"
+    PR = "http://schemas.openxmlformats.org/package/2006/relationships"
+    IMG = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+    A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    rels = etree.fromstring(doc.parts[RELS])
+    used_ids = {r.get("Id") for r in rels}
+    changed, added = {"word/document.xml", RELS}, set()
+    old_rids = []
+    for it in plan:
+        no = it["no"]
+        caps = [k for k in doc.body if doc.is_caption(k, "图") and re.match(rf"图\s*{re.escape(no)}(\s|$)", ptext(k).strip())]
+        if len(caps) != 1:
+            sys.exit(f"⛔ 图{no} 题注命中 {len(caps)} 处（应为 1）")
+        cap = caps[0]
+        pic = next((k for k in (cap.getprevious(), cap.getnext()) if k is not None and doc.has_img(k)), None)
+        if pic is None:
+            sys.exit(f"⛔ 图{no} 题注前后都没有图片段")
+        blips = pic.findall(f".//{{{A}}}blip")
+        if len(blips) != 1:
+            sys.exit(f"⛔ 图{no} 所在段有 {len(blips)} 个图片引用（应为 1）")
+        png = Path(it["png"]).expanduser()
+        data = png.read_bytes()
+        pw, ph = Image.open(io.BytesIO(data)).size
+        cx = max_w
+        cy = int(cx * ph / pw)
+        if cy > max_h:
+            cy, cx = max_h, int(max_h * pw / ph)
+        n = 1
+        while f"rId{n}" in used_ids:
+            n += 1
+        rid = f"rId{n}"
+        used_ids.add(rid)
+        k = 1
+        while f"word/media/swapfig{k}.png" in doc.parts:
+            k += 1
+        part = f"word/media/swapfig{k}.png"
+        doc.parts[part] = data
+        added.add(part)
+        etree.SubElement(rels, f"{{{PR}}}Relationship", Id=rid, Type=IMG, Target=f"media/swapfig{k}.png")
+        old_rids.append(blips[0].get(f"{{{R}}}embed"))
+        blips[0].set(f"{{{R}}}embed", rid)
+        for tag in (f"{{{WP}}}extent", f"{{{A}}}ext"):
+            for e in pic.iter(tag):
+                e.set("cx", str(cx)); e.set("cy", str(cy))
+        msg = f"  图{no}  {png.name} {pw}×{ph} → {cx / emu_cm:.1f}×{cy / emu_cm:.1f}cm"
+        if it.get("caption"):
+            m = re.match(rf"(图\s*{re.escape(no)}\s*)(.*)$", ptext(cap).strip())
+            if m.group(2) != it["caption"] and not replace_once(cap, m.group(2), it["caption"]):
+                sys.exit(f"⛔ 图{no} 题注改名失败")
+            msg += f"  题注：{ptext(cap).strip()}"
+        print(msg)
+    # 旧图片关系：正文不再引用即删；其指向的 media 部件别处也不引用即删
+    xml = etree.tostring(doc.root).decode()
+    removed = set()
+    for rid in set(old_rids):
+        if f'"{rid}"' in xml:
+            continue
+        rel = next(r for r in rels if r.get("Id") == rid)
+        target = "word/" + rel.get("Target").lstrip("/").removeprefix("word/")
+        rels.remove(rel)
+        still = any(r.get("Target").endswith(target[5:]) for r in rels) or any(
+            n.endswith(".rels") and n != RELS and target[5:].encode() in doc.parts[n] for n in doc.parts)
+        if not still and target in doc.parts:
+            del doc.parts[target]
+            removed.add(target)
+    ct = doc.parts["[Content_Types].xml"]
+    if b'Extension="png"' not in ct:
+        doc.parts["[Content_Types].xml"] = ct.replace(
+            b"</Types>", b'<Default Extension="png" ContentType="image/png"/></Types>')
+        changed.add("[Content_Types].xml")
+    print(f"换图 {len(plan)} 张；移除旧图片部件 {len(removed)} 个")
+    if not a.apply:
+        return
+    assert_invariants(doc, before)
+    doc.gate.assert_unchanged()
+    path = doc.path
+    bak = path.with_name(path.name + ".bak-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    n = 1
+    while bak.exists():
+        n += 1
+        bak = bak.with_name(bak.name.split("~")[0] + f"~{n}")
+    shutil.copy2(path, bak)
+    doc.parts["word/document.xml"] = etree.tostring(doc.root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    doc.parts[RELS] = etree.tostring(rels, xml_declaration=True, encoding="UTF-8", standalone=True)
+    tmp = path.with_name(path.name + ".tmp-bid-body")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for i in doc.infos:
+            if i.filename in doc.parts:
+                z.writestr(i, doc.parts[i.filename], compress_type=i.compress_type)
+        for name in sorted(added):
+            z.writestr(name, doc.parts[name])
+    from docx_parts import diff_parts, media_census
+    d = diff_parts(bak, tmp, changed)
+    bad = [f"丢失 {x}" for x in d.lost if x not in removed] + [f"改写 {x}" for x in d.changed] + \
+          [f"新增 {x}" for x in d.added if x not in added]
+    c0, c1 = media_census(bak), media_census(tmp)
+    if c1["dangling"] or c1["refs"] != c0["refs"]:
+        bad.append(f"图引用 {c0['refs']}→{c1['refs']}，悬空 {c1['dangling']}")
+    if bad:
+        tmp.unlink()
+        sys.exit("⛔ 部件校验未通过，未写回：" + "；".join(bad))
+    tmp.replace(path)
+    print(f"✓ 备份 {bak.name}\n✓ 写回 {path.name}（document.xml、关系表；新增 {len(added)} 张、移除 {len(removed)} 张图片部件）")
+
+
 def _clone(model, text):
     """克隆段落外壳（pPr + 首个 run 的 rPr），换成一段纯文本；不带 paraId/书签/图。"""
     import copy
@@ -799,7 +919,7 @@ def main():
     for name, fn in [("check", cmd_check), ("filler", cmd_filler), ("h4num", cmd_h4num),
                      ("figs", cmd_figs), ("cite", cmd_cite), ("note", cmd_note),
                      ("h3group", cmd_h3group), ("uncite", cmd_uncite),
-                     ("resub", cmd_resub), ("media", cmd_media)]:
+                     ("resub", cmd_resub), ("media", cmd_media), ("swapfig", cmd_swapfig)]:
         s = sub.add_parser(name)
         s.add_argument("docx")
         s.set_defaults(fn=fn)
@@ -812,6 +932,10 @@ def main():
         if name == "media":
             s.add_argument("--old", required=True)
             s.add_argument("--new", required=True, action="append")
+        if name == "swapfig":
+            s.add_argument("--plan", required=True)
+            s.add_argument("--width", type=float, default=15.5, help="显示宽度 cm（版心宽）")
+            s.add_argument("--max-height", type=float, default=21.0, help="显示高度上限 cm")
         if name == "resub":
             s.add_argument("--rules", required=True)
             s.add_argument("--show", type=int, default=25)

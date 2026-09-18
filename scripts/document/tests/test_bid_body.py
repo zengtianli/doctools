@@ -263,3 +263,35 @@ def test_media_swaps_by_hash_and_rejects_size_change(tmp_path):
     f2 = build(tmp_path)
     Image.new("RGB", (2, 2), "red").save(new / "x.png")
     assert run("media", f2, "--old", old, "--new", new, "--apply").returncode != 0
+
+
+def test_swapfig_changes_ratio_caption_and_drops_old_part(tmp_path):
+    """海宁第7章重画 10 张图：新图比例与旧图不同、图题要改名；旧图部件不能留成孤儿（health gate 判红）。"""
+    import json
+    import zipfile
+    from PIL import Image
+    f = build(tmp_path)
+    new = tmp_path / "f7.png"
+    Image.new("RGB", (400, 200), "blue").save(new)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"no": "1-1", "png": str(new), "caption": "调查成果复核流程图"}], ensure_ascii=False))
+    old_media = [n for n in zipfile.ZipFile(f).namelist() if n.startswith("word/media/")]
+    r = run("swapfig", f, "--plan", plan, "--apply")
+    assert r.returncode == 0, r.stderr
+    z = zipfile.ZipFile(f)
+    names = z.namelist()
+    assert not set(old_media) & set(names)
+    assert any(z.read(n) == new.read_bytes() for n in names if n.startswith("word/media/"))
+    xml = z.read("word/document.xml").decode()
+    assert 'cx="5580000" cy="2790000"' in xml               # 15.5cm 宽、按 2:1 比例
+    assert "图1-1 调查成果复核流程图" in [B.ptext(p).strip() for p in B.Doc(f).body.iter(B.w("p"))]
+    assert seq(f).count("IMG") == 1 and seq(f)[-1] == "SECT"
+
+
+def test_swapfig_refuses_unknown_figure(tmp_path):
+    import json
+    f = build(tmp_path)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"no": "9-9", "png": str(tmp_path / "x.png")}]))
+    assert run("swapfig", f, "--plan", plan, "--apply").returncode != 0
+
