@@ -90,7 +90,7 @@ CAT_NAMES = {
 CAT_ADVICE = {
     1: "整段删标记+去协作署名，正文能自立才算删完",
     2: "谨慎改写去 hedge（护术语/保护从句），非硬删",
-    3: "删脚手架块/照抄裸句；评分元语言改「招标要求/两方面」；去直呼评委",
+    3: "删脚手架块/照抄裸句；评分元语言改「招标要求/两方面」；去直呼评委；项目禁词（banned_terms）按项目口径改写，如「招标文件要求」→「本项目要求」",
     4: "剥内部码（〔E-xx〕/worklib#/招标段号）；公文文号〔2025〕保留",
     5: "修截断残渣（上一轮 regex 替换自产物，每轮替换后必复扫）",
     6: "题注按正文出现序重编号/修指向（占位法防连环替换）",
@@ -188,7 +188,9 @@ def regex_strip_para(p, pattern, repl=""):
 
 # ── 规则 YAML ────────────────────────────────────────────────────
 RULE_KEYS = {"delete_startswith": list, "delete_exact": list, "exact": list,
-             "caption_renumber": list, "protect_terms": list, "identity_banned": list}
+             "caption_renumber": list, "protect_terms": list, "identity_banned": list,
+             # 两种模式都不许进正文的项目禁词（2026-09-18 海宁标：领导要求正文不出现“招标文件”“采购人”等）
+             "banned_terms": list}
 
 
 def load_rules(path=None):
@@ -202,6 +204,10 @@ def load_rules(path=None):
         raise RuntimeError("解析 --rules 需要 PyYAML（pip install pyyaml），当前环境缺失")
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
+    # 模板曾写 banned_words/protected_terms 等引擎不认的键，填了也被静默忽略；照实提示
+    unknown = sorted(set(data) - set(RULE_KEYS) - {"mode", "caption_restart_heading"})
+    if unknown:
+        print(f"⚠ 规则文件 {path} 含引擎不读取的键 {unknown}；可用键 {sorted(RULE_KEYS)}", file=_sys.stderr)
     for k in RULE_KEYS:
         v = data.get(k) or []
         if not isinstance(v, list):
@@ -297,6 +303,7 @@ def scan_parts(parts, mode="pei", rules=None, cats=None):
             marks = [f"段首:{t}" for t in SCORE_STARTSWITH if st.startswith(t)]
             marks += [t for t in SCORE_TOKENS if t in st]
             marks += SCORE_RE.findall(st)
+            marks += [f"禁词:{t}" for t in rules["banned_terms"] if t in st]
             if st in rules["delete_exact"]:
                 marks.append("delete_exact 裸句")
             if marks:

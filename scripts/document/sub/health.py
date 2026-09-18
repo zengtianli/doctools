@@ -941,19 +941,27 @@ def check_numbering_depth_uniformity(doc_path: Path) -> dict:
     try:
         with zipfile.ZipFile(doc_path) as z:
             doc_xml = z.open("word/document.xml").read().decode("utf-8")
+            try:
+                styles_xml = z.open("word/styles.xml").read().decode("utf-8")
+            except KeyError:
+                styles_xml = ""
     except Exception as e:
         return {"found": False, "error": str(e)}
 
     PREFIX_RE = ahn.PREFIX_RE  # ^\d+(?:\.\d+)*\s  (复用, 不重定义)
+    # 按 styles.xml 的样式名解析标题级别：WPS/院模板常见 styleId="21"/"31"（name=heading 2/3），
+    # 只靠固定 ID 映射会漏认，误报「缺中间级」
+    sid_level = _resolve_style_to_heading_level(styles_xml)
 
     heading_depths: list[int] = []
     for para_xml in re.findall(r"<w:p[\s>].*?</w:p>", doc_xml, re.DOTALL):
         sm = re.search(r'<w:pStyle w:val="([^"]+)"', para_xml)
         if not sm:
             continue
-        # 仅看 heading 系样式 (复用 audit_heading_numbers 的归一)
-        norm = ahn._normalize_style(sm.group(1))
-        if norm not in {"Heading 1", "Heading 2", "Heading 3", "Heading 4"}:
+        # 仅看 heading 系样式：先按样式名解析，再退回 audit 的固定 ID 归一
+        sid = sm.group(1)
+        if not (1 <= sid_level.get(sid, 0) <= 4) and \
+                ahn._normalize_style(sid) not in {"Heading 1", "Heading 2", "Heading 3", "Heading 4"}:
             continue
         text = _para_text(para_xml)
         m = PREFIX_RE.match(text)
