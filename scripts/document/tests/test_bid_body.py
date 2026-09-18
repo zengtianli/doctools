@@ -295,3 +295,32 @@ def test_swapfig_refuses_unknown_figure(tmp_path):
     plan.write_text(json.dumps([{"no": "9-9", "png": str(tmp_path / "x.png")}]))
     assert run("swapfig", f, "--plan", plan, "--apply").returncode != 0
 
+
+
+# ── insert：定稿扩充按锚点原文插段（2026-09-18 海宁 6.2.3）────────────────
+def test_insert_keeps_originals_and_is_idempotent(tmp_path):
+    src = build(tmp_path)
+    patch = tmp_path / "p.md"
+    patch.write_text("@after 第一段正文\n补充甲。\n补充乙。\n@after 2）资源约束\n补充丙。\n", encoding="utf-8")
+    before = [B.ptext(p) for p in B.Doc(src).body.iter(B.w("p"))]
+    run = lambda: subprocess.run([sys.executable, str(TOOL), "insert", str(src), "--patch", str(patch), "--apply"],
+                                 capture_output=True, text=True)
+    r = run()
+    assert r.returncode == 0, r.stderr
+    s = seq(src)
+    assert s[s.index("第一段正文，")+1:s.index("第一段正文，")+3] == ["补充甲。", "补充乙。"]
+    assert s[s.index("2）资源约束")+1] == "补充丙。"          # 锚点是标题：插在标题后
+    after = [B.ptext(p) for p in B.Doc(src).body.iter(B.w("p"))]
+    it = iter(after)
+    assert all(any(t == n for n in it) for t in before)        # 原段按序全在
+    assert "TBL" in s and s[-1] == "SECT"
+    assert "共插入 0 段" in run().stdout                         # 重跑不重复插
+
+
+def test_insert_rejects_ambiguous_anchor(tmp_path):
+    src = build(tmp_path)
+    patch = tmp_path / "p.md"
+    patch.write_text("@after 第\n补充。\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, str(TOOL), "insert", str(src), "--patch", str(patch), "--apply"],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and "命中" in r.stderr

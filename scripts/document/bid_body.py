@@ -17,6 +17,7 @@ Why（2026-09-17 海宁标立）：一次性脚本按「段落列表」重排 do
     bid_body.py media  <docx> --old <旧图目录> --new <新图目录>… [--apply]  # 内嵌图按旧图哈希匹配、同名同像素尺寸替换
     bid_body.py swapfig <docx> --plan <plan.json> [--apply]   # 重画图按图号换入：可改比例（按版宽重设尺寸）、可改图题名，旧图部件无引用即移除
     bid_body.py note   <docx> --after <完整标题> --text <一段话> [--apply]   # 标题下插一段正文（幂等）
+    bid_body.py insert <docx> --patch <补丁.md>… [--apply]     # 定稿扩充：按锚点段原文插入多段，原段一字不动（幂等）
 
 不带 --apply = 干跑只报告。写回 = 备份 .bak-时间戳 + 原地 + 并发写回门。
 体例口径：标题逐级下挂；标题 → 正文 → 图 → 题注；交付正文靠句内点名交代出处（“《××规划》记载…”），
@@ -913,13 +914,98 @@ def cmd_note(a):
         doc.save()
 
 
+def _parse_patch(paths):
+    """补丁格式：`@after <锚点段原文或其唯一开头>` 起一块，其后每个非空行是一段新正文。"""
+    blocks = []
+    for path in paths:
+        cur = None
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if s.startswith("@after "):
+                cur = (s[7:].strip(), [])
+                blocks.append(cur)
+            elif cur is None:
+                sys.exit(f"⛔ {path}: 首个 @after 之前有正文：{s[:30]}")
+            else:
+                cur[1].append(s)
+    return blocks
+
+
+def _clone_para(model, text):
+    import copy
+    new = copy.deepcopy(model)
+    for k in list(new):
+        if k.tag != w("pPr"):
+            new.remove(k)
+    for attr in list(new.attrib):                       # paraId 等须唯一，克隆件不带
+        del new.attrib[attr]
+    r = etree.SubElement(new, w("r"))
+    rpr = model.find("w:r/w:rPr", NS)
+    if rpr is not None:
+        r.append(copy.deepcopy(rpr))
+    t = etree.SubElement(r, w("t"))
+    t.text = text
+    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    return new
+
+
+def cmd_insert(a):
+    """用户定稿后的扩充：在锚点段之后插入多段新正文，原有段落一字不动、顺序不变。
+
+    Why（2026-09-18 海宁 6.2.3 扩充）：用户在 Word 定稿后要求“再扩充”，整章重生成会冲掉手改；
+    按段号定位又会在用户再改一次后漂移。这里按锚点段原文定位（须唯一命中），新段克隆锚点
+    的段落/首 run 格式——锚点是标题时改克隆其后第一段正文；首段新文已存在则整块跳过。
+    """
+    doc = Doc(a.docx)
+    before = invariants(doc, content=False)
+    old_texts = [ptext(p) for p in doc.body.iter(w("p"))]
+    existing = {t.strip() for t in old_texts}
+    body_ps = [k for k in doc.body if k.tag == w("p")]
+    plan = []
+    for anchor_text, lines in _parse_patch(a.patch):
+        hits = [k for k in body_ps if ptext(k).strip().startswith(anchor_text)]
+        if len(hits) != 1:
+            sys.exit(f"⛔ 锚点「{anchor_text[:30]}」命中 {len(hits)} 处（应为 1）")
+        anchor = hits[0]
+        if lines and lines[0] in existing:
+            print(f"  已存在「{lines[0][:20]}…」，跳过此块")
+            continue
+        model = anchor
+        if doc.is_heading(anchor):
+            model = next((k for k in anchor.itersiblings() if doc.is_text(k)), None)
+            if model is None:
+                sys.exit(f"⛔ 标题「{anchor_text[:30]}」之后找不到可克隆格式的正文段")
+        plan.append((anchor, model, lines))
+        print(f"  「{anchor_text[:24]}」之后插入 {len(lines)} 段")
+    added = sum(len(x[2]) for x in plan)
+    print(f"共插入 {added} 段")
+    if not a.apply or not added:
+        return
+    last = {}
+    for anchor, model, lines in plan:
+        tail = last.get(id(anchor), anchor)             # 同锚点多块按补丁顺序接续
+        for s in lines:
+            el = _clone_para(model, s)
+            tail.addnext(el)
+            tail = el
+        last[id(anchor)] = tail
+    before["count"] += added
+    before["tags"] = sorted(before["tags"] + [w("p")] * added)
+    assert_invariants(doc, before)
+    new_texts = iter(ptext(p) for p in doc.body.iter(w("p")))
+    if not all(any(t == n for n in new_texts) for t in old_texts):   # 原段须按原顺序全部保留
+        sys.exit("⛔ 原有段落缺失或顺序改变，未写回")
+    doc.save()
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in [("check", cmd_check), ("filler", cmd_filler), ("h4num", cmd_h4num),
                      ("figs", cmd_figs), ("cite", cmd_cite), ("note", cmd_note),
                      ("h3group", cmd_h3group), ("uncite", cmd_uncite),
-                     ("resub", cmd_resub), ("media", cmd_media), ("swapfig", cmd_swapfig)]:
+                     ("resub", cmd_resub), ("media", cmd_media), ("swapfig", cmd_swapfig), ("insert", cmd_insert)]:
         s = sub.add_parser(name)
         s.add_argument("docx")
         s.set_defaults(fn=fn)
@@ -941,6 +1027,8 @@ def main():
             s.add_argument("--show", type=int, default=25)
         if name == "h3group":
             s.add_argument("--plan", required=True)
+        if name == "insert":
+            s.add_argument("--patch", required=True, action="append")
         if name == "note":
             s.add_argument("--after", required=True)
             s.add_argument("--text", required=True)
