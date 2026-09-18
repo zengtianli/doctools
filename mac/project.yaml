@@ -1,0 +1,6 @@
+name: doc-tools
+display_name: DocKit
+family: doctools
+form: mac
+lifecycle: active
+bundle_id: cyou.tianli.DocTools
