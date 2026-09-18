@@ -142,13 +142,30 @@ def heads_from_md(paths):
     return got
 
 
+def _h1_style_ids(z):
+    """一级标题样式 ID：固定写法 + styles.xml 里样式名为 heading 1 / 标题 1 的 ID。
+    2026-09-18 舟山标：WPS 生成的一级标题 styleId="10"（name=heading 1），只认固定 ID 时整章漏扫。"""
+    ids = {"Heading1", "1", "a3", "标题1"}
+    try:
+        st = etree.fromstring(z.read("word/styles.xml"))
+    except KeyError:
+        return ids
+    for s in st.iter("{%s}style" % W):
+        n = s.find("{%s}name" % W)
+        if n is not None and n.get("{%s}val" % W, "").strip().lower() in ("heading 1", "标题 1"):
+            ids.add(s.get("{%s}styleId" % W))
+    return ids
+
+
 def heads_from_docx(docx: Path):
-    x = etree.fromstring(zipfile.ZipFile(docx).read("word/document.xml"))
+    z = zipfile.ZipFile(docx)
+    x = etree.fromstring(z.read("word/document.xml"))
+    h1 = _h1_style_ids(z)
     got = []
     for para in x.iter("{%s}p" % W):
         st = para.find(".//{%s}pStyle" % W)
         sid = st.get("{%s}val" % W) if st is not None else ""
-        if sid not in ("Heading1", "1", "a3", "标题1"):
+        if sid not in h1:
             continue
         txt = "".join(tt.text or "" for tt in para.iter("{%s}t" % W)).strip()
         h = parse_head(txt)
@@ -158,19 +175,58 @@ def heads_from_docx(docx: Path):
 
 
 # ── 招标一手源 ──────────────────────────────────────────────────────────────
+_SCORE_CELL_RX = re.compile(r"\|\s*([1-9]\d?)、\s*([^|\n]{2,40}?)\s*\|")
+_GRID_SEP_RX = re.compile(r"\+[-=]{3,}")   # pandoc 网格表行分隔线（+--- / +===）
+_SCORE_TAIL_RX = re.compile(r"（\d+分）$")
+
+
+def _clean_cell(t: str) -> str:
+    return re.sub(r"\[|\]\{\.s\d+\}", "", t).strip()
+
+
+def _scoring_cells(lines):
+    """逐行找「| N、名称 |」单元格 → [(no, name)]。
+
+    pandoc 网格表里评分项名可能在同一单元格内换行（如「4、项目组成员」/「组织方案（4分）」），
+    首行没凑出「（N分）」时按同一列序号（line.split("|")，不按字符偏移，前列有中文会错位）
+    向下拼续行，遇网格分隔线即停；拼到「（N分）」结尾才采用，否则保留首行名，
+    避免把同列的长段评分说明拼进来。
+    """
+    out = []
+    for i, line in enumerate(lines):
+        for m in _SCORE_CELL_RX.finditer(line):
+            name = _clean_cell(m.group(2))
+            if not _SCORE_TAIL_RX.search(name):
+                col = line[:m.start()].count("|") + 1
+                acc = name
+                for nxt in lines[i + 1:]:
+                    if nxt.lstrip().startswith("+") or _GRID_SEP_RX.search(nxt):
+                        break
+                    cells = nxt.split("|")
+                    if len(cells) <= col:
+                        break
+                    piece = _clean_cell(cells[col])
+                    if not piece:
+                        continue
+                    acc += piece
+                    if _SCORE_TAIL_RX.search(acc):
+                        name = acc
+                        break
+            out.append((m.group(1), name))
+    return out
+
+
 def tender_scoring_items(root: Path):
     """招标原件 md 里「评标办法」评分表 → [(no, name, score)]，解析不到返回 []。"""
     mds = sorted((root / "招标文件").glob("*.md")) if (root / "招标文件").is_dir() else []
     for md in mds:
         s = md.read_text(encoding="utf-8", errors="ignore")
-        raw = re.findall(r"\|\s*([1-9]\d?)、\s*([^|\n]{2,40}?)\s*\|", s)
         seen, items = set(), []
-        for no, name in raw:
+        for no, name in _scoring_cells(s.split("\n")):
             no = int(no)
             if no in seen:
                 continue
             seen.add(no)
-            name = re.sub(r"\[|\]\{\.s\d+\}", "", name).strip()
             m = re.match(r"^(.*?)（(\d+)分）$", name)
             items.append((no, (m.group(1) if m else name).strip(),
                           int(m.group(2)) if m else None))

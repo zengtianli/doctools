@@ -12,8 +12,10 @@
   2. 正文末段若是引出表格的短行，图停在它之前
   3. 损坏形态（表在首个标题之前 / sectPr 不在末位）check 必须判红
   4. 同秒两次写回，两份备份都在
-  6. 二级标题下平铺的 N）条目：check 判「标题跳级」；h3group 只插三级标题与引导段、
-     组内编号从 1）重排、表仍跟表题；计划条数对不上或重复执行必须拒绝
+  6. 二级标题下平铺的 N）正文条目：h3group 只插三级标题与引导段、组内编号从 1）重排、
+     追加条目也是正文段、表仍跟表题；计划条数对不上或重复执行必须拒绝
+  7. 条目编号体例：标题只用 1.1.1.1 式编号，标题样式里出现 N）/（十九）check 必须判红；
+     正文条目跳号判红，同一标题下几组并列清单各自从 1）起不算断点；h4num 已退役
   5. 来源渲染：简称→正式名、PDF 页→印刷页按已核偏移换算、同文件相邻页合并、
      无法确定的进 errs 而不是猜
 """
@@ -43,7 +45,7 @@ def build(tmp_path, lead_line=False):
     d.add_heading("1.1 概况", level=3)
     d.add_picture(str(png))
     d.add_paragraph("图1-1 技术联系")
-    d.add_heading("1）任务定位", level=4)
+    d.add_heading("1.1.1 任务定位", level=4)
     d.add_paragraph("第一段正文，说明任务定位与总体认识。")
     d.add_paragraph("第二段正文，说明证据来源与核验方式。")
     if lead_line:
@@ -51,7 +53,7 @@ def build(tmp_path, lead_line=False):
     d.add_paragraph("表1-1 指标一览")
     t = d.add_table(rows=2, cols=2)
     t.cell(0, 0).text = "指标"
-    d.add_heading("2）资源约束", level=4)
+    d.add_heading("1.1.2 资源约束", level=4)
     d.add_paragraph("第三段正文。")
     out = tmp_path / "t.docx"
     d.save(out)
@@ -157,12 +159,12 @@ def build_flat(tmp_path):
     d.add_heading("7 技术路线", level=1)
     d.add_heading("7.1 现状调查", level=2)
     d.add_heading("7.1.1 思路", level=3)
-    d.add_heading("1）样板条目", level=4)
+    d.add_heading("7.1.1.1 样板条目", level=4)
     d.add_paragraph("样板正文" * 20)
     d.add_heading("7.2 实施方案", level=2)
     d.add_paragraph("节首说明" * 20)
     for i, name in enumerate(["方案框架", "规划约束", "供需平衡", "空间布局", "重点工程"], 1):
-        d.add_heading(f"{i}）{name}", level=4)
+        d.add_paragraph(f"{i}）{name}")
         d.add_paragraph(f"{name}正文" * 15)
     d.add_paragraph("表7-1 指标")
     d.add_table(rows=2, cols=2)
@@ -184,24 +186,90 @@ sections:
 """
 
 
+def items_under(doc):
+    return [B.ptext(k).strip() for k in doc.body if doc.is_text(k) and B.ITEM.match(B.ptext(k).strip())]
+
+
 def test_h3group_inserts_levels_and_renumbers(tmp_path):
     f = build_flat(tmp_path)
     plan = tmp_path / "plan.yaml"
     plan.write_text(PLAN, encoding="utf-8")
-    r = run("check", f)
-    assert r.returncode == 2 and "标题跳级: 1" in r.stdout
     r = run("h3group", f, "--plan", plan, "--apply")
     assert r.returncode == 0, r.stdout + r.stderr
     doc = B.Doc(f)
     heads = [(doc.level(k), B.ptext(k).strip()) for k in doc.body if doc.is_heading(k)]
-    assert heads[4:] == [(2, "7.2 实施方案"), (3, "7.2.1 总体思路"), (4, "1）方案框架"), (4, "2）规划约束"),
-                         (3, "7.2.2 布局与工程"), (4, "1）供需平衡"), (4, "2）空间布局"), (4, "3）重点工程"),
-                         (4, "4）保障措施")]
+    assert heads[4:] == [(2, "7.2 实施方案"), (3, "7.2.1 总体思路"), (3, "7.2.2 布局与工程")]
+    assert items_under(doc) == ["1）方案框架", "2）规划约束", "1）供需平衡", "2）空间布局",
+                                "3）重点工程", "4）保障措施"]
     s = seq(f)
     assert s[s.index("TBL") - 1] == "表7-1 指" and s[-1] == "SECT"
     assert s[s.index("4）保障措施") + 1].startswith("新增正文")
-    assert "标题跳级: 0" in run("check", f).stdout
+    r = run("check", f).stdout
+    assert "标题样式N）: 0" in r and "条目编号: 0" in r and "标题跳级: 0" in r, r
     assert run("h3group", f, "--plan", plan, "--apply").returncode != 0      # 重复执行必须拒绝
+
+
+def test_h3group_renumbers_legacy_heading_items(tmp_path):
+    d = Document()
+    d.add_heading("7 技术路线", level=1)
+    d.add_heading("7.1 现状调查", level=2)
+    d.add_heading("7.1.1 思路", level=3)
+    d.add_paragraph("样板正文" * 20)
+    d.add_heading("7.2 实施方案", level=2)
+    for i, name in enumerate(["方案框架", "规划约束", "供需平衡"], 1):
+        d.add_heading(f"{i}）{name}", level=4)          # 旧稿：N）用了四级标题样式
+        d.add_paragraph(f"{name}正文" * 15)
+    f = tmp_path / "legacy.docx"
+    d.save(f)
+    plan = tmp_path / "plan.yaml"
+    plan.write_text("""
+sections:
+  - h2: "7.2 实施方案"
+    groups:
+      - {title: "7.2.1 总体思路", n: 1}
+      - {title: "7.2.2 布局", n: 2, append: [{item: "保障措施", paras: ["新增正文。"]}]}
+""", encoding="utf-8")
+    r = run("h3group", f, "--plan", plan, "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    doc = B.Doc(f)
+    heads = [B.ptext(k).strip() for k in doc.body if doc.is_heading(k) and doc.level(k) == 4]
+    assert heads == ["1）方案框架", "1）规划约束", "2）供需平衡"]
+    assert items_under(doc) == ["3）保障措施"]                # 追加条目是正文段，不再克隆四级标题
+    r = run("check", f)
+    assert r.returncode == 2 and "标题样式N）: 3" in r.stdout   # 旧稿标题样式仍报红，待按体例改
+
+
+def test_check_flags_heading_items_and_body_gaps(tmp_path):
+    d = Document()
+    d.add_heading("6.1 概况", level=2)
+    d.add_heading("6.1.1 依据", level=3)
+    d.add_paragraph("法规类依据如下。")
+    d.add_paragraph("1）《水法》")
+    d.add_paragraph("2）《水污染防治法》")
+    d.add_paragraph("规划类依据如下。")
+    d.add_paragraph("1）《海宁水网建设规划》")              # 同一标题下第二组清单从 1）重起，不算断点
+    d.add_paragraph("2）《海宁市域污水工程专项规划》")
+    f = tmp_path / "ok.docx"
+    d.save(f)
+    r = run("check", f)
+    assert r.returncode == 0, r.stdout
+    d.add_paragraph("4）跳号条目")
+    d.add_heading("6.1.1.1 实施步骤", level=4)
+    d.add_paragraph("1）第一步")                              # 标题后清零，从 1）起合规
+    d.add_heading("（十九）旧式条目", level=4)
+    d.add_heading("20）旧式条目", level=4)
+    d.save(f)
+    r = run("check", f)
+    assert r.returncode == 2
+    assert "标题样式N）: 2" in r.stdout and "条目编号: 1" in r.stdout and "2→4" in r.stdout
+
+
+def test_h4num_is_retired(tmp_path):
+    f = build(tmp_path)
+    before = f.read_bytes()
+    r = run("h4num", f, "--apply")
+    assert r.returncode != 0 and "已退役" in r.stderr
+    assert f.read_bytes() == before
 
 
 def test_h3group_refuses_count_mismatch(tmp_path):
@@ -301,7 +369,7 @@ def test_swapfig_refuses_unknown_figure(tmp_path):
 def test_insert_keeps_originals_and_is_idempotent(tmp_path):
     src = build(tmp_path)
     patch = tmp_path / "p.md"
-    patch.write_text("@after 第一段正文\n补充甲。\n补充乙。\n@after 2）资源约束\n补充丙。\n", encoding="utf-8")
+    patch.write_text("@after 第一段正文\n补充甲。\n补充乙。\n@after 1.1.2 资源约束\n补充丙。\n", encoding="utf-8")
     before = [B.ptext(p) for p in B.Doc(src).body.iter(B.w("p"))]
     run = lambda: subprocess.run([sys.executable, str(TOOL), "insert", str(src), "--patch", str(patch), "--apply"],
                                  capture_output=True, text=True)
@@ -309,7 +377,7 @@ def test_insert_keeps_originals_and_is_idempotent(tmp_path):
     assert r.returncode == 0, r.stderr
     s = seq(src)
     assert s[s.index("第一段正文，")+1:s.index("第一段正文，")+3] == ["补充甲。", "补充乙。"]
-    assert s[s.index("2）资源约束")+1] == "补充丙。"          # 锚点是标题：插在标题后
+    assert s[s.index("1.1.2 ")+1] == "补充丙。"          # 锚点是标题：插在标题后
     after = [B.ptext(p) for p in B.Doc(src).body.iter(B.w("p"))]
     it = iter(after)
     assert all(any(t == n for n in it) for t in before)        # 原段按序全在
