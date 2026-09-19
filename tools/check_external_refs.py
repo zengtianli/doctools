@@ -19,7 +19,7 @@ skill、总部 dev/lib 的 subprocess 常量、~/Apps 的 Swift 与 catalog。20
 断链的形状很温和，这正是它危险的地方：
   · `hooks/docx-font-guard.sh` 路径断了 → 只 printf 一行「本次没查」继续放行，
     「所有 docx 禁等线」这条用户钦定硬约束**静默停摆**。
-  · `~/Apps/mac/doc-tools/build.sh` 的解码契约自检是 `if [ -f "$BACKEND" ] && …`，
+  · `~/Dev/tools/doctools/mac/build.sh` 的解码契约自检是 `if [ -f "$BACKEND" ] && …`，
     没有 else 分支 —— 路径一断，自检被静默跳过，构建照样绿。
 
 fail-closed：扫描根不存在、或一处命中都没扫到，一律非 0 退出（判据坏了比漏报更该红）。

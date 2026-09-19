@@ -217,7 +217,7 @@ def route_formatclone(f: str, opts: dict | None = None) -> tuple[list[str], str]
     """公文版式复刻:拿一份**范式 docx** 当格式源,把内容刷成同款版式。
 
     2026-07-27 从「TL 代笔台」收编 —— 那个 app 实测 18 天里开过 1 次共 0 分钟,
-    而它唯一的动作就是调本引擎。能力留下,壳退役(见 ~/Apps/mac/handoffs/fleet-consolidation-plan.md)。
+    而它唯一的动作就是调本引擎。能力留下,壳已退役。
     引擎 docx_fmt.py clone(原 docx_format_clone.py)是 HQ SSOT(/docx format 也在用),此处只做编排,不碰它。
     """
     o = opts or {}
