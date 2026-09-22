@@ -433,7 +433,7 @@ def main():
             tracker.add_success()
         except Exception as e:
             print(f"❌ 处理失败: {e}")
-            tracker.add_error()
+            tracker.add_failure()
 
     print(f"\n{'=' * 50}")
     tracker.show_summary("文件处理")

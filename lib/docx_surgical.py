@@ -244,6 +244,10 @@ def graft_unchanged(original: Path, modified: Path, *, on_missing: str = "error"
         mod = {i.filename: (z.read(i.filename), i) for i in z.infolist()}
 
     lost = sorted(set(orig) - set(mod))
+    # 空的 .rels（零条 Relationship，pandoc 给 footnotes.xml 配的就是这种）丢了不算丢：
+    # 它不指向任何部件，python-docx 本来就不写空 rels，Word 也不读。
+    lost = [n for n in lost
+            if not (n.endswith(".rels") and b"<Relationship " not in orig[n][0])]
     if lost and on_missing == "error":
         raise RepackError(
             f"这个工具把 {len(lost)} 个部件整个弄丢了,不是「改」是「重造」:{lost[:8]}"

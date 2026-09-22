@@ -174,7 +174,7 @@ def cmd_format(args):
         if success:
             tracker.add_success()
         else:
-            tracker.add_error()
+            tracker.add_failure()
 
     print("\n" + "=" * 50)
     tracker.show_summary("文件处理")
