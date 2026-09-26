@@ -1,0 +1,16 @@
+{
+  "samples_ms": [
+    27.019,
+    28.136,
+    30.751,
+    27.448,
+    42.643,
+    31.761,
+    29.048
+  ],
+  "median_ms": 29.0,
+  "runs": 7,
+  "warmup_runs": 1,
+  "label": "读取操作列表（生产后端，含 Python 进程启动）",
+  "validation": "Every sample exited 0 and returned parseable production JSON; response contents are not retained."
+}

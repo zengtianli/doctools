@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "built_at": "2026-09-26T19:14:04+08:00",
+  "artifact": {
+    "bundle_id": "cyou.tianli.DocTools",
+    "version": "1.0",
+    "build": "298",
+    "executable": "Contents/MacOS/DocTools",
+    "sha256": "6dbd0a8b1f1eea28af7caf7f86b0127805aada5626a80ad552a5f08b5f379fd1"
+  },
+  "source": {
+    "input_globs": [
+      "Sources/**",
+      "icon/AppIcon.icns",
+      "Info.plist",
+      "DocTools.xcodeproj/project.pbxproj",
+      "build.sh"
+    ],
+    "sha256": "2f03acbacb6d7d1051406ac249977157a8b4a743c07aae30d0579de9c57614d2",
+    "file_count": 10,
+    "commit": "b6e8ca6260fe3c598a2fb46f54912f44c7cf3a11",
+    "dirty": false
+  },
+  "build_command_sha256": "dbfa2bf789ad76306184cbb5ab6a4445fbfec9357fe56ae69b033bbd8675df7e"
+}

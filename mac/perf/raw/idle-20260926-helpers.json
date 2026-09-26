@@ -1,0 +1,23 @@
+{
+  "idle": {
+    "footprint_mb": 46.0,
+    "main_footprint_mb": 46.0,
+    "cpu_pct": 0.0,
+    "main_cpu_pct": 0.0,
+    "processes": [
+      {
+        "pid": 97258,
+        "name": "main",
+        "cpu_pct": 0.0,
+        "footprint_peak_mb": 46.0
+      }
+    ],
+    "process": "DocKit.app",
+    "window_s": 60,
+    "settle_s": 45,
+    "scope": "主进程 + XPC 辅助进程 + 子进程合计",
+    "measured_at": "2026-09-26",
+    "load": "{ 5.48 5.73 10.91 }",
+    "method": "已安装版 open -g -j 后台隐藏启动，静置 45 秒；复用 measure.py idle_with_helpers：60 秒 CPU 窗口内不查询 footprint，窗口后 3 次同一时刻主进程与辅助进程 phys_footprint 合计取峰值。"
+  }
+}

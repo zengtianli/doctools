@@ -4,3 +4,18 @@ family: doctools
 form: mac
 lifecycle: active
 bundle_id: cyou.tianli.DocTools
+sop:
+  promo: false
+  test: ./build.sh --check
+  ui:
+  - Sources/**
+  - icon/**
+  - Info.plist
+  measure:
+    app: installed
+  source:
+  - Sources/**
+  - icon/AppIcon.icns
+  - Info.plist
+  - DocTools.xcodeproj/project.pbxproj
+  - build.sh
