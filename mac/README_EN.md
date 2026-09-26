@@ -9,7 +9,7 @@ Run `./build.sh --check` for the real backend decoding gate, or `./build.sh` for
 The catalog owns the display name; bundle ID remains `cyou.tianli.DocTools`. Builds use the shared Xcode selector.
 
 <!-- lightweight:start -->
-## Lightweight (measured)
+## Resource use
 
 | Installed | Idle memory | Idle CPU | Read operation list (production backend, including Python process start) |
 |---|---|---|---|
@@ -17,5 +17,5 @@ The catalog owns the display name; bundle ID remains `cyou.tianli.DocTools`. Bui
 
 Native SwiftUI client reusing the local shared Python document engine; backend processes exit when idle.
 
-<sub>v1.0 (298) · Mac16,12 / Apple M4 / macOS 27.2 · Installed personal app with 14 real operations and dynamic options loaded; no user document opened or modified. · measured 2026-09-26. Memory is phys_footprint (the Memory column in Activity Monitor); CPU is CPU time ÷ wall time over 60 idle seconds; sizes in decimal MB. Raw data: [perf/lightweight.json](perf/lightweight.json).</sub>
+<sub>v1.0 (298) · Mac16,12 / Apple M4 / macOS 27.2 · Installed personal app with 14 real operations and dynamic options loaded; no user document opened or modified. · measured 2026-09-26. Measured on the listed device; re-measured for each version. Memory uses phys_footprint; CPU is CPU time ÷ wall time over a 60-second sampling window; sizes in decimal MB. Raw data: [perf/lightweight.json](perf/lightweight.json).</sub>
 <!-- lightweight:end -->
