@@ -19,3 +19,8 @@ sop:
   - Info.plist
   - DocTools.xcodeproj/project.pbxproj
   - build.sh
+  product:
+    distribution: personal
+    source_visibility: private
+    source_url: ''
+    rationale: 本人 doctools 工作流的原生桌面入口，连接现有专业文档操作；与独立公开 DocKit 发行版分开维护。
