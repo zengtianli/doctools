@@ -1,5 +1,7 @@
 name: doc-tools
-display_name: DocKit
+name_en: DocKit
+name_zh: 文档工具箱
+display_name: DocKit · 文档工具箱
 family: doctools
 form: mac
 lifecycle: active
