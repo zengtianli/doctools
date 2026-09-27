@@ -62,6 +62,8 @@ final class AppViewModel: ObservableObject {
 
     private let backend = BackendClient()
 
+    func dismissBanner() { banner = nil }
+
     var selectedOp: DocOp? { ops.first { $0.id == selectedOpID } }
 
     var canRun: Bool {

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "privacy",
+  "app_id": "doc-tools-doctools",
+  "command": "~/Dev/.venv/bin/python scripts/accept/privacy.py",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-09-28T02:14:24.817311+08:00",
+  "finished_at": "2026-09-28T02:14:25.484146+08:00",
+  "input_sha256": "af6ddc3218a1995b17b2834403d8c4e30862fae219f2195be2dee868d3d5c2b0",
+  "log": "perf/acceptance/privacy.log",
+  "log_sha256": "4330c28c35afaeb7e87b07abed229da015e8e6e316ccdf8e1c55efcff83b85af",
+  "summary": "云端扫描需明确同意；本机处理通过操作系统禁网验收",
+  "detail": {
+    "summary": "云端扫描需明确同意；本机处理通过操作系统禁网验收",
+    "cloud_consent_default": false,
+    "rejected_consent_cases": 4,
+    "network_sandbox": "macOS sandbox-exec, deny network*, negative control passed",
+    "local_operations": [
+      "clean Markdown",
+      "quotes Markdown"
+    ],
+    "canary": "Synthetic document text preserved only in output, absent from GUI envelope/log",
+    "scope": "No real cloud request or account data used; this checks the GUI scan consent boundary and two local paths, not all engines or third-party provider retention"
+  }
+}

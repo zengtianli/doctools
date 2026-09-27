@@ -80,9 +80,22 @@ struct StatusBanner: View {
 
 // MARK: - Root
 
+@MainActor
 struct ContentView: View {
-    @StateObject private var vm = AppViewModel()
+    @StateObject private var vm: AppViewModel
     @State private var showPalette = false   // ⌘K 命令面板浮层开关
+    private let autoLoad: Bool
+
+    init() {
+        _vm = StateObject(wrappedValue: AppViewModel())
+        autoLoad = true
+    }
+
+    /// In-process tests share the actual view/model without a second backend task.
+    init(viewModel: AppViewModel, autoLoad: Bool) {
+        _vm = StateObject(wrappedValue: viewModel)
+        self.autoLoad = autoLoad
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -122,7 +135,7 @@ struct ContentView: View {
         } detail: {
             DetailView(vm: vm)
         }
-        .task { await vm.loadOps() }
+        .task { if autoLoad { await vm.loadOps() } }
         .onChange(of: vm.selectedOpID) { vm.onOpChanged() }
         .onReceive(NotificationCenter.default.publisher(for: .consoleRefresh)) { _ in
             Task { await vm.loadOps() }
@@ -149,7 +162,7 @@ struct ContentView: View {
 
     /// 把后端列出的文档操作（vm.ops）map 成可搜索条目；
     /// run = 用现成的 selectedOpID 机制切到该操作（与侧栏点选等价，触发 onOpChanged）。
-    private var paletteItems: [PaletteItem] {
+    var paletteItems: [PaletteItem] {
         vm.ops.map { op in
             PaletteItem(
                 id: op.id,
@@ -181,7 +194,7 @@ struct DetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             // 常驻 banner 槽：无选中项也能看到错误（范本铁律）。
             if let b = vm.banner {
-                StatusBanner(msg: b) { vm.banner = nil }
+                StatusBanner(msg: b) { vm.dismissBanner() }
             }
             if let op = vm.selectedOp {
                 ScrollView {

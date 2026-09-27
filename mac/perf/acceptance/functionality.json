@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "functionality",
+  "app_id": "doc-tools-doctools",
+  "command": "~/Dev/.venv/bin/python scripts/accept/functionality.py",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-09-28T02:14:24.817068+08:00",
+  "finished_at": "2026-09-28T02:14:25.589958+08:00",
+  "input_sha256": "af6ddc3218a1995b17b2834403d8c4e30862fae219f2195be2dee868d3d5c2b0",
+  "log": "perf/acceptance/functionality.log",
+  "log_sha256": "17b51f0d5d97b5385a8de3123218a4256caa8d0a8b5a4bae13de201f36fe4164",
+  "summary": "真实 GUI 后端目录及 4 条文件处理链通过",
+  "detail": {
+    "summary": "真实 GUI 后端目录及 4 条文件处理链通过",
+    "catalog_operations": 14,
+    "catalog_options": 20,
+    "checks": [
+      "gui-ops catalog and declarative option contract",
+      "DOCX clean: body/table/header normalization, unit boundaries, header/footer retention and byte-identical source",
+      "GUI option forwarding: disabled table/header/unit rules, unspecified rules retain defaults",
+      "Markdown quotes: only quotation marks change; punctuation, units and source retained",
+      "Markdown merge: ordered content, reported output and both sources unchanged"
+    ],
+    "scope": "Temporary DOCX/Markdown fixtures; no GUI activation, no network operation, no external document access"
+  }
+}

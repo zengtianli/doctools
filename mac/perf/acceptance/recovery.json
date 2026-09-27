@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "name": "recovery",
+  "app_id": "doc-tools-doctools",
+  "command": "~/Dev/.venv/bin/python scripts/accept/recovery.py",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-09-28T02:14:24.817211+08:00",
+  "finished_at": "2026-09-28T02:14:25.872721+08:00",
+  "input_sha256": "af6ddc3218a1995b17b2834403d8c4e30862fae219f2195be2dee868d3d5c2b0",
+  "log": "perf/acceptance/recovery.log",
+  "log_sha256": "e551e5ebd4b8f63fa1434a6e37cac7de03a30e6491fc9d7761793394b9cc20c4",
+  "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
+  "detail": {
+    "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
+    "cases": [
+      "unknown_operation",
+      "unknown_option",
+      "invalid_bool",
+      "malformed_option",
+      "missing_conversion_target",
+      "missing_required_template",
+      "missing_file",
+      "corrupt_file_failure",
+      "mixed_batch_continues_after_failure",
+      "next_request_recovers",
+      "all_source_hashes_preserved"
+    ],
+    "case_count": 11,
+    "scope": "临时 DOCX 输入；不涵盖进程强杀、系统断电或磁盘故障恢复"
+  }
+}

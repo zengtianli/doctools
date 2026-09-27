@@ -1,0 +1,60 @@
+{
+  "captures" : [
+    {
+      "file" : "native-main.png",
+      "height" : 680,
+      "opaque" : true,
+      "png_bytes" : 132964,
+      "sampled_colors" : 270,
+      "width" : 1000
+    },
+    {
+      "file" : "native-compact.png",
+      "height" : 640,
+      "opaque" : true,
+      "png_bytes" : 118619,
+      "sampled_colors" : 239,
+      "width" : 900
+    },
+    {
+      "file" : "native-palette.png",
+      "height" : 500,
+      "opaque" : true,
+      "png_bytes" : 93213,
+      "sampled_colors" : 221,
+      "width" : 640
+    },
+    {
+      "file" : "native-privacy.png",
+      "height" : 680,
+      "opaque" : true,
+      "png_bytes" : 116477,
+      "sampled_colors" : 234,
+      "width" : 1000
+    }
+  ],
+  "checks" : {
+    "backend_refresh" : true,
+    "banner_close" : true,
+    "clear_files" : true,
+    "file_deduplication" : true,
+    "no_activation" : true,
+    "no_visible_or_key_window" : true,
+    "palette_covers_operations" : true,
+    "palette_empty_result" : true,
+    "palette_navigation_return" : true,
+    "palette_navigation_wrap" : true,
+    "palette_search" : true,
+    "palette_selection" : true,
+    "privacy_default_off" : true,
+    "privacy_opt_in_forwarded" : true,
+    "privacy_restore_default_off" : true,
+    "privacy_selection_resets_consent" : true,
+    "refresh_preserves_selection" : true,
+    "rendered_four_views" : true
+  },
+  "ok" : true,
+  "rendering_limit" : "Hidden non-key windows; key-window focused selection appearance is not covered. PNG is composited on the system window background without altering selection state.",
+  "scope" : "In-process rendering and state assertions, including backend-declared privacy consent defaults\/reset; scan is never executed. No synthetic input, window activation, installed app or document mutation.",
+  "summary" : "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
+}

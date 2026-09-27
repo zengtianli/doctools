@@ -9,6 +9,17 @@ bundle_id: cyou.tianli.DocTools
 sop:
   promo: false
   test: ./build.sh --check
+  accept:
+    functionality: ~/Dev/.venv/bin/python scripts/accept/functionality.py
+    recovery: ~/Dev/.venv/bin/python scripts/accept/recovery.py
+    privacy: ~/Dev/.venv/bin/python scripts/accept/privacy.py
+    native_ui: bash scripts/accept/native_ui.sh
+  test_extra_files:
+  - scripts/accept/**
+  source_extra_files:
+  - ../scripts/document/doc_gui_backend.py
+  - ../scripts/document/doc_dispatch.py
+  - ../scripts/document/docx_fmt.py
   ui:
   - Sources/**
   - icon/**

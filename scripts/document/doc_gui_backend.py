@@ -265,10 +265,16 @@ OPS = [
         "aliases": "scan sensitive detect audit 敏感词",
         "verb": "scan",
         "title": "敏感词扫描",
-        "subtitle": "扫一个目录里的 md/docx(竞品名/过硬措辞)",
+        "subtitle": "云端扫描 md/docx：文件名与内容发送至 Claude，需先明确同意",
         "icon": "magnifyingglass",
         "exts": [],
         "kind": "dir",
+        "option_groups": [{"id": "privacy", "title": "外发授权"}],
+        "options": [
+            {"id": "privacy.cloud_consent", "group": "privacy", "type": "bool",
+             "default": False, "title": "同意将所选目录内文件名与内容发送至 Claude",
+             "note": "敏感词扫描使用云端模型；规范化与引号统一在本机处理。"},
+        ],
     },
     {
         "id": "view",
@@ -409,6 +415,14 @@ def gui_run(op_id: str, files: list[str], target: str | None, opts: dict | None 
         if o.get("required") and not str((opts or {}).get(o["id"], "")).strip():
             return {"ok": False,
                     "error": f"请先选择「{o['title']}」—— {op['title']} 没有它无法进行"}
+
+    # 在枚举目录、读取内容或启动扫描引擎之前，要求单独的明确外发授权。
+    # 仅 GUI 适配器负责这条边界，终端 scan-sensitive 的原契约保持不变。
+    if op_id == "scan" and str((opts or {}).get("privacy.cloud_consent", "0")).strip().lower() not in (
+        "1", "true", "yes", "on"
+    ):
+        return {"ok": False,
+                "error": "敏感词扫描会将所选目录内文件名与内容发送至 Claude；请先明确勾选外发授权。"}
 
     if op["kind"] == "dir":
         # scan:吃一个目录

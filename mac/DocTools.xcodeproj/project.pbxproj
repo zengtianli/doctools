@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BF0000000000000000000107 /* UISelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000207 /* UISelfTest.swift */; };
 		BF0000000000000000000101 /* DocToolsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000201 /* DocToolsApp.swift */; };
 		BF0000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000202 /* ContentView.swift */; };
 		BF0000000000000000000103 /* ViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000203 /* ViewModel.swift */; };
@@ -17,6 +18,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		BF0000000000000000000207 /* UISelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UISelfTest.swift; sourceTree = "<group>"; };
 		BF0000000000000000000201 /* DocToolsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocToolsApp.swift; sourceTree = "<group>"; };
 		BF0000000000000000000202 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		BF0000000000000000000203 /* ViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModel.swift; sourceTree = "<group>"; };
@@ -61,6 +63,7 @@
 			isa = PBXGroup;
 			children = (
 				BF0000000000000000000201 /* DocToolsApp.swift */,
+				BF0000000000000000000207 /* UISelfTest.swift */,
 				BF0000000000000000000202 /* ContentView.swift */,
 				BF0000000000000000000203 /* ViewModel.swift */,
 				BF0000000000000000000204 /* BackendClient.swift */,
@@ -140,6 +143,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF0000000000000000000101 /* DocToolsApp.swift in Sources */,
+				BF0000000000000000000107 /* UISelfTest.swift in Sources */,
 				BF0000000000000000000102 /* ContentView.swift in Sources */,
 				BF0000000000000000000103 /* ViewModel.swift in Sources */,
 				BF0000000000000000000104 /* BackendClient.swift in Sources */,

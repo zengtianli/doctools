@@ -1,0 +1,12 @@
+{
+  "summary": "云端扫描需明确同意；本机处理通过操作系统禁网验收",
+  "cloud_consent_default": false,
+  "rejected_consent_cases": 4,
+  "network_sandbox": "macOS sandbox-exec, deny network*, negative control passed",
+  "local_operations": [
+    "clean Markdown",
+    "quotes Markdown"
+  ],
+  "canary": "Synthetic document text preserved only in output, absent from GUI envelope/log",
+  "scope": "No real cloud request or account data used; this checks the GUI scan consent boundary and two local paths, not all engines or third-party provider retention"
+}

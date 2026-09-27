@@ -12,6 +12,16 @@
 
 显示名取自 catalog，bundle ID 保持 `cyou.tianli.DocTools`。构建使用共享 Xcode 选择器。JSON 与客户端开发约定见 [CLAUDE.md](CLAUDE.md)。
 
+固定验收在 `scripts/accept/`，通过 Chapter 运行并由其写入证据：
+
+```sh
+~/Dev/.venv/bin/python ~/Apps/chapter/engine/app_sop.py accept --app doc-tools-doctools --check functionality --check recovery --check privacy --check native_ui --json
+```
+
+功能与恢复测试只使用临时文档。原生界面验收会构建当前源码，并调用 App 的 `--ui-self-test` 离屏渲染真实视图；不装机、不抢焦点，也不操作剪贴板。它证明本地构建的行为，装机图标仍需本人在 Chapter 确认。
+
+规范化、引号等操作由本机文档引擎执行。“敏感词扫描”使用外部 Claude 服务，会发送扫描目录中文档的文件名与正文；每次选择该操作时须明确勾选外发同意。验收只检查拒绝路径与本地处理，不发送文档，也不证明外部服务可用。
+
 <!-- lightweight:start -->
 ## 资源占用
 

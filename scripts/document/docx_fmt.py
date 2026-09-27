@@ -1558,7 +1558,7 @@ def text_main(argv):
 
     与旧实现的唯一结构差异：不再改写模块级 DO_* 全局，每次调用从模块默认值
     从头构造冻结 FormatConfig —— 同进程连跑两组配置不串味（docx_cli 连发场景）。
-    stdout / 报错文案 / 退出码逐字保留。
+    每个文件继续独立处理；任一处理失败最终返回 1，让 GUI 能报告真实失败。
     """
     # 摘选择性 flag（在 get_input_files 前），剩余为文件参数
     _argv = list(argv)
@@ -1635,6 +1635,7 @@ def text_main(argv):
     print("=" * 50)
 
     tracker = ProgressTracker()
+    failed = False
 
     for file_path in files:
         print(f"\n处理文件: {Path(file_path).name}")
@@ -1643,9 +1644,11 @@ def text_main(argv):
             tracker.add_success()
         else:
             tracker.add_failure()
+            failed = True
 
     print("\n" + "=" * 50)
     tracker.show_summary("文件处理")
+    return 1 if failed else 0
 
 
 # ════════════════════════════════════════════════════════════════════════════

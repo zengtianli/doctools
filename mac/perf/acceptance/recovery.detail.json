@@ -1,0 +1,18 @@
+{
+  "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
+  "cases": [
+    "unknown_operation",
+    "unknown_option",
+    "invalid_bool",
+    "malformed_option",
+    "missing_conversion_target",
+    "missing_required_template",
+    "missing_file",
+    "corrupt_file_failure",
+    "mixed_batch_continues_after_failure",
+    "next_request_recovers",
+    "all_source_hashes_preserved"
+  ],
+  "case_count": 11,
+  "scope": "临时 DOCX 输入；不涵盖进程强杀、系统断电或磁盘故障恢复"
+}

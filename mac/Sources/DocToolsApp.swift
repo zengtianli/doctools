@@ -18,7 +18,6 @@ extension Notification.Name {
     static let consoleRefresh = Notification.Name("consoleRefresh")
 }
 
-@main
 struct DocToolsApp: App {
     var body: some Scene {
         WindowGroup {
@@ -36,6 +35,21 @@ struct DocToolsApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
+        }
+    }
+}
+
+/// Self-test starts AppKit without a WindowGroup, menu or activation.
+@main
+enum DocToolsMain {
+    @MainActor static func main() {
+        if CommandLine.arguments.contains("--ui-self-test") {
+            let application = NSApplication.shared
+            application.setActivationPolicy(.prohibited)
+            Task { await UISelfTest.run() }
+            application.run()
+        } else {
+            DocToolsApp.main()
         }
     }
 }
