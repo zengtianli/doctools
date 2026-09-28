@@ -5,11 +5,11 @@
   "command": "bash scripts/accept/native_ui.sh",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-09-28T02:14:04.040268+08:00",
-  "finished_at": "2026-09-28T02:14:19.476844+08:00",
-  "input_sha256": "c499bff8db273288f533060d00e935dd5dbb3126c150b0d1594dc2de51096e4e",
+  "started_at": "2026-09-28T13:31:14.388349+08:00",
+  "finished_at": "2026-09-28T13:32:53.780446+08:00",
+  "input_sha256": "743479befdf0f1a8119dbf9bff2517e17dadb8051f2249f636ac7c3ec52c888e",
   "log": "perf/acceptance/native_ui.log",
-  "log_sha256": "9937303064e1b41381fc88b4d3efd90bbbae2b61554304251a9349681543a67e",
+  "log_sha256": "b006a8a9dfc999125ca120a43d3b6532dad55e361e0485620653ce57f1b5ad12",
   "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检",
   "detail": {
     "captures": [

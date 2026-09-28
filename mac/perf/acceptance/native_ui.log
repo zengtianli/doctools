@@ -1,5 +1,4 @@
 [xcode_env] Xcode.app (Xcode 27.0, macosx SDK 27.0)
-sandbox_extension_issue_file_to_process failed for /var/folders/x7/qptxw08j00v__67yzr3gcd000000gp/T//dockit-native-accept.yTcePW/Build/Products/Release/DocTools.app: 1 (Operation not permitted)
 {
   "captures" : [
     {
@@ -60,3 +59,4 @@ sandbox_extension_issue_file_to_process failed for /var/folders/x7/qptxw08j00v__
   "scope" : "In-process rendering and state assertions, including backend-declared privacy consent defaults\/reset; scan is never executed. No synthetic input, window activation, installed app or document mutation.",
   "summary" : "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
 }
+sandbox_extension_issue_file_to_process failed for <scratch>/Build/Products/Release/DocTools.app: 1 (Operation not permitted)

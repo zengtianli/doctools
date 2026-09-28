@@ -13,9 +13,35 @@ if ! xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Rele
 fi
 export SOP_OUT_DIR="${SOP_OUT_DIR:-$TASK_BUILD/results}"
 mkdir -p "$SOP_OUT_DIR"
-"$HOME/Dev/.venv/bin/python" - "$TASK_BUILD/Build/Products/Release/DocTools.app/Contents/MacOS/DocTools" <<'PY'
+"$HOME/Dev/.venv/bin/python" - "$TASK_BUILD/Build/Products/Release/DocTools.app/Contents/MacOS/DocTools" "$TASK_BUILD" <<'PY'
+import os
 import subprocess
 import sys
-result = subprocess.run([sys.argv[1], "--ui-self-test"], timeout=60)
+import traceback
+
+scratch_paths = sorted({sys.argv[2], os.path.normpath(sys.argv[2]), os.path.realpath(sys.argv[2])}, key=len, reverse=True)
+
+def emit(value, stream):
+    if not value:
+        return
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    for path in scratch_paths:
+        value = value.replace(path, "<scratch>")
+    stream.write(value.replace(os.path.expanduser("~"), "~"))
+    stream.flush()
+
+try:
+    result = subprocess.run([sys.argv[1], "--ui-self-test"], timeout=60, capture_output=True, text=True)
+except subprocess.TimeoutExpired as error:
+    emit(error.stdout, sys.stdout)
+    emit(error.stderr, sys.stderr)
+    emit(traceback.format_exc(), sys.stderr)
+    raise SystemExit(1)
+except OSError:
+    emit(traceback.format_exc(), sys.stderr)
+    raise SystemExit(1)
+emit(result.stdout, sys.stdout)
+emit(result.stderr, sys.stderr)
 raise SystemExit(result.returncode)
 PY
