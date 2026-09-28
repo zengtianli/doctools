@@ -1,53 +1,127 @@
 {
   "product": "doc-tools",
-  "version": "1.0 (298)",
+  "version": "1.0 (304)",
   "compare": [],
-  "idle": {
-    "footprint_mb": 46.0,
-    "main_footprint_mb": 46.0,
-    "cpu_pct": 0.05,
-    "main_cpu_pct": 0.05,
-    "processes": [
-      {
-        "pid": 9889,
-        "name": "main",
-        "cpu_pct": 0.049,
-        "footprint_peak_mb": 46.0
-      }
-    ],
-    "process": "DocKit.app",
-    "window_s": 60,
-    "settle_s": 45,
-    "scope": "主进程 + XPC 辅助进程 + 子进程合计",
-    "measured_at": "2026-09-26",
-    "load": "{ 4.30 6.95 9.22 }",
-    "method": "本轮有源码receipt的实际装机版；open -g -j 后台隐藏，静置45秒后复用measure.py idle_with_helpers采样60秒CPU，之后采3次同时刻phys_footprint合计取峰值。"
-  },
-  "measured_at": "2026-09-26",
+  "measured_at": "2026-09-29",
   "device": "Mac16,12 / Apple M4 / macOS 27.2",
   "size": {
-    "installed_bytes": 2326528,
-    "installed_mb": 2.22
+    "installed_bytes": 2412544,
+    "installed_mb": 2.3
   },
   "data": "已安装自用版首页，载入 14 项真实操作与动态选项；未打开或处理用户文档。",
-  "background": [],
   "measured_artifact": {
     "version": "1.0",
-    "build": "298",
-    "executable_sha256": "6dbd0a8b1f1eea28af7caf7f86b0127805aada5626a80ad552a5f08b5f379fd1"
+    "build": "304",
+    "executable_sha256": "a6c3aae1a50ec614ae669effba7775baebf64043148f7c278d5562e892b91fb4"
   },
-  "speed_cli": [
-    {
-      "key": "production_readonly_operation",
-      "label": "读取操作列表（生产后端，含 Python 进程启动）",
-      "label_en": "Read operation list (production backend, including Python process start)",
-      "median_ms": 29.0,
-      "runs": 7,
-      "raw": "perf/raw/operation-20260926.json",
-      "method": "真实生产命令，1次预热、7次取中位；每次验证退出码0与JSON可解析，不保存业务响应内容。"
-    }
-  ],
   "why": "原生 SwiftUI 客户端，文档能力复用本机共享 Python 引擎；空闲时后端进程退出。",
   "why_en": "Native SwiftUI client reusing the local shared Python document engine; backend processes exit when idle.",
-  "data_en": "Installed personal app with 14 real operations and dynamic options loaded; no user document opened or modified."
+  "data_en": "Installed personal app with 14 real operations and dynamic options loaded; no user document opened or modified.",
+  "history": [
+    {
+      "section": "version",
+      "replaced_on": "2026-09-29",
+      "reason": "装机：安装了轻量化后的新构建",
+      "value": "1.0 (298)"
+    },
+    {
+      "section": "idle",
+      "version": "1.0 (298)",
+      "replaced_on": "2026-09-29",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": {
+        "footprint_mb": 46.0,
+        "main_footprint_mb": 46.0,
+        "cpu_pct": 0.05,
+        "main_cpu_pct": 0.05,
+        "processes": [
+          {
+            "pid": 9889,
+            "name": "main",
+            "cpu_pct": 0.049,
+            "footprint_peak_mb": 46.0
+          }
+        ],
+        "process": "DocKit.app",
+        "window_s": 60,
+        "settle_s": 45,
+        "scope": "主进程 + XPC 辅助进程 + 子进程合计",
+        "measured_at": "2026-09-26",
+        "load": "{ 4.30 6.95 9.22 }",
+        "method": "本轮有源码receipt的实际装机版；open -g -j 后台隐藏，静置45秒后复用measure.py idle_with_helpers采样60秒CPU，之后采3次同时刻phys_footprint合计取峰值。"
+      }
+    },
+    {
+      "section": "speed_cli",
+      "version": "1.0 (298)",
+      "replaced_on": "2026-09-29",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": [
+        {
+          "key": "production_readonly_operation",
+          "label": "读取操作列表（生产后端，含 Python 进程启动）",
+          "label_en": "Read operation list (production backend, including Python process start)",
+          "median_ms": 29.0,
+          "runs": 7,
+          "raw": "perf/raw/operation-20260926.json",
+          "method": "真实生产命令，1次预热、7次取中位；每次验证退出码0与JSON可解析，不保存业务响应内容。"
+        }
+      ]
+    },
+    {
+      "section": "background",
+      "version": "1.0 (298)",
+      "replaced_on": "2026-09-29",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": []
+    },
+    {
+      "section": "size",
+      "version": "1.0 (298)",
+      "replaced_on": "2026-09-29",
+      "reason": "版本变化；旧安装包大小不沿用",
+      "value": {
+        "installed_bytes": 2326528,
+        "installed_mb": 2.22
+      }
+    }
+  ],
+  "speed_gui": [
+    {
+      "key": "cold_launch_to_window",
+      "label": "冷启动到窗口出现",
+      "median_ms": 369,
+      "runs": 5,
+      "headline": true,
+      "raw_ms": [
+        400,
+        369,
+        372,
+        368,
+        364
+      ],
+      "method": "open -g -j 后台隐藏启动，被动读取窗口列表直到主窗口出现；不点击、不激活；5 次取中位",
+      "load": "负载均值 4.75 4.22 5.26；total = 6144.00M  used = 5272.38M  free = 871.62M"
+    }
+  ],
+  "idle": {
+    "process": "/Applications/DocKit.app",
+    "footprint_mb": 51.0,
+    "main_footprint_mb": 51.0,
+    "cpu_pct": 0.0,
+    "main_cpu_pct": 0.0,
+    "processes": [
+      {
+        "name": "main",
+        "cpu_pct": 0.0,
+        "footprint_peak_mb": 51.0
+      }
+    ],
+    "window_s": 60,
+    "settle_s": 45,
+    "measured_at": "2026-09-29",
+    "method": "open -g -j 后台启动，静置 45 秒后 measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟",
+    "load": "负载均值 4.50 4.38 5.20；total = 6144.00M  used = 5272.38M  free = 871.62M"
+  },
+  "env_note": "2026-09-29 主会话逐个顺序测量，负载均值 4.15 4.08 5.23；total = 6144.00M  used = 5272.38M  free = 871.62M（开始时）；启动时间受负载影响，内存与 CPU 为进程自身数值"
 }
