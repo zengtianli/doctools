@@ -24,3 +24,10 @@
 已入队的两项只读重检交由 Chapter 执行，不重复操作；装机图标仍由本人在 Chapter 确认，当前安装、正式图标及既有四张界面截图已经备齐。
 
 本轮仅新增本交接文件，不改业务、性能数字、测试证据或安装。若同步到既有远端，main 推送只触发原 gates 闸门 CI，不发版、不部署、不改变公开范围。
+
+## 2026-09-29 03:48 复查
+
+- `app_sop.py run --stage perf --retry` 返回 `busy`：另一轮 app_sop（unrevoke-mac 检查）持有全局锁；同时另一会话在跑 notifhub 模拟器测量。
+- 直接调用 `app_sop.steady()`：`(False, '负载 11.0 ≥ 10')`（5/15 分钟负载 73.7/62.1），接电源满足。
+- 未采样、未改性能数字、未构建装机；`perf/lightweight.json` 仍为 1.0 (298) 的真实测量。接手命令同上，由 Chapter 在空闲门满足后自动补测。
+- 工作区里 `perf/acceptance/icon_review.*`、`perf/delivery-evidence.json`、`perf/installed-icon-review.json` 为 Chapter 写入的未跟踪证据，本轮未改、未提交。
