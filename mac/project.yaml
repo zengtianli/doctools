@@ -14,12 +14,13 @@ sop:
     recovery: ~/Dev/.venv/bin/python scripts/accept/recovery.py
     privacy: ~/Dev/.venv/bin/python scripts/accept/privacy.py
     native_ui: bash scripts/accept/native_ui.sh
-  test_extra_files:
+  test_inputs:
+  - tests/**
   - scripts/accept/**
   source_extra_files:
-  - ../scripts/document/doc_gui_backend.py
-  - ../scripts/document/doc_dispatch.py
-  - ../scripts/document/docx_fmt.py
+  - /Users/tianli/Dev/tools/doctools/scripts/document/doc_gui_backend.py
+  - /Users/tianli/Dev/tools/doctools/scripts/document/doc_dispatch.py
+  - /Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py
   ui:
   - Sources/**
   - icon/**
@@ -32,6 +33,7 @@ sop:
   - Info.plist
   - DocTools.xcodeproj/project.pbxproj
   - build.sh
+  - catalog.yaml
   product:
     distribution: personal
     source_visibility: private
