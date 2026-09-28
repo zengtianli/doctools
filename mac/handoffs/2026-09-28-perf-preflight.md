@@ -31,3 +31,9 @@
 - 直接调用 `app_sop.steady()`：`(False, '负载 11.0 ≥ 10')`（5/15 分钟负载 73.7/62.1），接电源满足。
 - 未采样、未改性能数字、未构建装机；`perf/lightweight.json` 仍为 1.0 (298) 的真实测量。接手命令同上，由 Chapter 在空闲门满足后自动补测。
 - 工作区里 `perf/acceptance/icon_review.*`、`perf/delivery-evidence.json`、`perf/installed-icon-review.json` 为 Chapter 写入的未跟踪证据，本轮未改、未提交。
+
+## 2026-09-29 05:40 已补测（闭环）
+
+- 空闲门通过（`steady()`：空闲 13915 秒、负载 4.4、接电源），无其他 app_sop 持锁。
+- `app_sop.py run --app doc-tools-doctools --stage perf --retry --json` rc=0：perf `1.0 (304) · 2026-09-29` ok；安装体积 2.41 MB；空闲 CPU 0.0%、内存 51 MB；冷启动到窗口出现 369 ms。
+- app_sop 自动提交 `perf/lightweight.json`（4b16a7e）；随后由主 agent 连同本交接推送 origin/main，只触发 `gates.yml` 闸门 CI（push main），不发版、不部署、不改公开范围。
