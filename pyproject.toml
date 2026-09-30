@@ -68,6 +68,7 @@ dependencies = [
     "streamlit>=1.56.0",
     "uvicorn>=0.44.0",
     "xlrd>=2.0.2",
+    "reportlab>=5.0.1",
 ]
 
 # `doctools <sub> …` —— 与 `python3 <abs>/scripts/document/docx_cli.py <sub> …`
