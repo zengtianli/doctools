@@ -1,0 +1,16 @@
+#!/bin/sh
+# dockit: DocKit 的命令行入口（ops / run / doctor），给 agent 用；与 DocKit.app 同一个业务层。
+# 本文件由 mac/build.sh 复制进 DocKit.app/Contents/Resources/bin/，--install 时链到 ~/.local/bin/dockit。
+# 它只 exec 共享 venv 与工作树里的后端 doc_gui_backend.py（GUI 经 uv run 调的同一个文件），
+# 所以后端改动不用重建 App 即生效；不带参数只打印帮助，不打开窗口。
+set -eu
+BACKEND="$HOME/Dev/tools/doctools/scripts/document/doc_gui_backend.py"
+PY="$HOME/Dev/.venv/bin/python"
+if [ ! -x "$PY" ] || [ ! -f "$BACKEND" ]; then
+  echo "dockit: DocKit 后端未连接：需要 ${PY} 与 ${BACKEND}（cd ~/Dev && uv sync --all-packages）" >&2
+  exit 69
+fi
+if [ "$#" -eq 0 ]; then set -- --help; fi
+# 常用工具目录追加在调用方 PATH 之后:极简 PATH(launchd/cron)也能找到 soffice、markitdown、claude,
+# 调用方自己的 PATH 仍然优先(测试可用桩替换 claude 等外部命令)。
+PATH="${PATH:-/usr/bin:/bin}:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin" exec "$PY" "$BACKEND" "$@"

@@ -3,7 +3,7 @@ set -euo pipefail
 MODE="${1:---build}"
 case "$MODE" in
   --build|--check|--install) [ "$#" -le 1 ] || exit 2 ;;
-  --help) echo "Usage: $0 [--build|--check|--install] (default: build only)"; exit 0 ;;
+  --help) echo "Usage: $0 [--build|--check|--install] (default: build only; --install also links ~/.local/bin/dockit)"; exit 0 ;;
   *) echo "Unknown option: $MODE" >&2; exit 2 ;;
 esac
 DIR="$(cd "$(dirname "$0")" && pwd -P)"
@@ -20,6 +20,9 @@ cp tests/decode_check.swift "$CHECK_DIR/main.swift"
 "$PYTHON" "$BACKEND" gui-ops > "$CHECK_DIR/ops.json"
 swiftc -O -o "$CHECK_DIR/decode_check" "$CHECK_DIR/main.swift" Sources/Models.swift
 "$CHECK_DIR/decode_check" "$CHECK_DIR/ops.json"
+# agent CLI:包装脚本语法 + 真实后端 --help(与装进 App 的是同一个文件)
+sh -n bin/dockit
+bin/dockit --help > /dev/null
 [ "$MODE" != --check ] || exit 0
 DISPLAY_NAME="$("$PYTHON" -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["display_name"])' "$DIR/catalog.yaml")"
 xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release build | tail -3
@@ -31,6 +34,9 @@ plutil -replace CFBundleDisplayName -string "$DISPLAY_NAME" "$APP/Contents/Info.
 plutil -replace CFBundleIconFile -string AppIcon "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$(git -C "$DIR" rev-list --count HEAD)" "$APP/Contents/Info.plist"
 cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# dockit 进包(签名前),Contents/Resources/bin/dockit exec 共享 venv 里的同一个后端
+mkdir -p "$APP/Contents/Resources/bin"
+install -m 755 bin/dockit "$APP/Contents/Resources/bin/dockit"
 codesign --force -s - "$APP"
 echo "Built: $APP"
 [ "$MODE" = --install ] || exit 0
@@ -42,3 +48,7 @@ if [ -e "$DEST" ]; then
 fi
 cp -R "$APP" "$DEST"
 echo "Installed: $DEST"
+# agent 入口:~/.local/bin/dockit → 已装 App 包内的包装脚本(Chapter cli_entry 验这条链接)
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$DEST/Contents/Resources/bin/dockit" "$HOME/.local/bin/dockit"
+echo "Linked: $HOME/.local/bin/dockit"

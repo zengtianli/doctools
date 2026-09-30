@@ -13,6 +13,7 @@ MAC_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = MAC_ROOT.parent
 BACKEND = REPO_ROOT / "scripts/document/doc_gui_backend.py"
 PYTHON = Path.home() / "Dev/.venv/bin/python"
+DOCKIT = MAC_ROOT / "bin/dockit"
 
 
 def workspace(name: str):
@@ -28,6 +29,18 @@ def backend(*args: str, timeout: float = 60) -> dict:
     value = json.loads(result.stdout)
     assert isinstance(value, dict) and isinstance(value.get("ok"), bool), value
     return value
+
+
+def cli(*args: str, timeout: float = 120) -> tuple[int, dict]:
+    """Run the agent CLI wrapper that build.sh copies into Contents/Resources/bin; always asks for --json."""
+    env = {**os.environ, "BROWSER": "/usr/bin/true"}
+    result = subprocess.run(
+        [str(DOCKIT), *map(str, args), "--json"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout, env=env,
+    )
+    value = json.loads(result.stdout)
+    assert isinstance(value, dict) and isinstance(value.get("ok"), bool), value
+    return result.returncode, value
 
 
 def sha256(path: Path) -> str:

@@ -1,7 +1,7 @@
 name: doctools
 domain: dev-infra
 function: 统一维护文档处理 CLI 与 DocKit 桌面端，共用现有文档引擎
-public_api: doctools CLI；mac/build.sh；doc_gui_backend.py gui-ops/gui-run
+public_api: doctools CLI；mac/build.sh；doc_gui_backend.py gui-ops/gui-run；dockit ops/run/status/doctor（DocKit 包内 agent CLI）
 key_scripts:
 - scripts/document/docx_cli.py
 - scripts/document/typeset_apply.py

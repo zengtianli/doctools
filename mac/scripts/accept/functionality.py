@@ -7,7 +7,7 @@ from pathlib import Path
 from docx import Document
 from docx.oxml.ns import qn
 
-from _common import backend, finish, sha256, workspace
+from _common import backend, cli, finish, sha256, workspace
 
 
 def successful(payload: dict, source: Path, root: Path) -> list[Path]:
@@ -108,7 +108,33 @@ def main() -> None:
         assert (sha256(first), sha256(second)) == hashes
         checked.append("Markdown merge: ordered content, reported output and both sources unchanged")
 
-    finish("functionality", "真实 GUI 后端目录及 4 条文件处理链通过", catalog_operations=len(ops),
+        # Agent CLI: `dockit run` is the same gui_run; the exit code carries the outcome.
+        agent = root / "agent 输入.docx"
+        agent.write_bytes(source.read_bytes())
+        code, payload = cli("run", "clean", "--opt", "scope.table=0", agent)
+        assert code == 0, payload
+        outputs = successful(payload, agent, root)
+        assert Document(next(p for p in outputs if p.suffix == ".docx")).tables[0].cell(0, 0).text == table
+        assert sha256(agent) == original
+        listing = sorted(path.name for path in root.iterdir())
+        for args, expected in ((["run", "convert", "--to", "bogus", agent], "bad_target"),
+                               (["run", "renum", "--to", "bogus", agent], "bad_target"),
+                               (["run", "stripchrome", agent], "confirm_required"),
+                               (["run", "scan", root], "consent_required"),
+                               # merged.md 已由上面的 GUI 合并写出:再合并不许静默覆盖
+                               (["run", "merge", first, second], "would_overwrite")):
+            code, payload = cli(*args)
+            assert code == 2 and payload["error_code"] == expected, (args, code, payload)
+            assert sorted(path.name for path in root.iterdir()) == listing, args
+        code, payload = cli("run", "clean", agent, root / "absent.docx")
+        assert code == 1 and payload["skipped_missing"] == ["absent.docx"], payload
+        code, catalog_cli = cli("ops")
+        assert code == 0 and catalog_cli == catalog
+        checked.append("dockit CLI: run clean exit 0 with GUI envelope; invalid target, missing --yes, "
+                       "scan without consent and overwriting an existing merged.md exit 2 before writing; "
+                       "skipped input exit 1; ops equals gui-ops")
+
+    finish("functionality", "真实 GUI 后端目录、4 条文件处理链及 dockit 命令行退出码通过", catalog_operations=len(ops),
            catalog_options=option_count, checks=checked,
            scope="Temporary DOCX/Markdown fixtures; no GUI activation, no network operation, no external document access")
 
