@@ -176,7 +176,7 @@ def edges(nodes: dict[str, dict]) -> list[tuple[str, str, str]]:
 DOC_ROOTS = [
     Path.home() / "Dev" / "tools" / "cc-home" / "skills",
     Path.home() / "Dev" / "tools" / "cc-home" / "commands",
-    ROOT / "README.md", ROOT / "README_CN.md", ROOT / "CLAUDE.md",
+    ROOT / "README.md", ROOT / "CLAUDE.md",
 ]
 
 

@@ -371,7 +371,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="docx_cli",
         description=(
-            "doctools 文档处理统一 CLI (45 subcommands · 2026-07-30 计数核对)\n"
+            "doctools 文档处理统一 CLI(子命令清单与数量以 `doctools verbs --json` 为准)\n"
             "Legacy (13 旧族): extract / check / snapshot / compare / track /\n"
             "  image-caption / template / renumber-fig / text-fmt / fix-ref / md-to-docx /\n"
             "  scan-sensitive / md\n"

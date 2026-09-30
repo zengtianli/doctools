@@ -73,6 +73,7 @@ docs/                 # 从本文外迁的长叙事
 | `scripts/document/docx_revise.py` | **修订注入：意见=ops.yaml 数据，禁在项目里现编注入脚本**（锚点唯一命中 fail-closed；引擎 `lib/docx_revise.py`） | `docx_revise.py <ops.yaml> [--dry-run]`（写法 `config/spec-examples/revise-ops-example.yaml`） |
 | `scripts/document/renum.py` | 编号/题注位移与重排族。`chapter`=md 侧章号位移（/renumber skill 指向）· `tabfig`=md 侧表/图题注号对齐（--check 门 exit 2）· `figures`=docx 图号重排+引用同步（= docx_cli `renumber-fig`）。**三个子命令统一 exit 3 = 枚举为空**，见下节 | `renum.py chapter <chapters.yaml> [--apply]`；`tabfig <yaml\|目录> [--apply\|--check]`；`figures <docx> [--cn-section --kind 图\|表] [--dry-run\|--inplace]` |
 | `scripts/document/docx_fmt.py` | docx 版式/字体/文本规范化族。`template`=套模板（docx_cli `template`）· `clone`=版式克隆（docx_cli `format`）· `fonts`=去等线 · `text`=引号/标点/单位规范化（docx_cli `text-fmt`） | `docx_fmt.py template <docx> [-t 模板]`；`clone extract\|apply …`；`fonts <docx...> --check\|--apply`；`text [flags] <docx...>` |
+| `mac/bin/dockit` | DocKit 的 agent 命令行（`build.sh` 复制进 `DocKit.app/Contents/Resources/bin/`，`--install` 链 `~/.local/bin/dockit`）；POSIX sh 只 exec `~/Dev/.venv` + `doc_gui_backend.py`，与 GUI 同一个 `gui_run`。缺 venv/后端 exit 69 | `dockit ops [<op>] [--json]`；`dockit run <op> [--to T] [--opt K=V]… [--dry-run] [--yes] [--open] [--background] [--json] <paths>`；`dockit status [<job>] [--json]`；`dockit doctor [--json]` |
 
 **加新的独立入口脚本 → 必须在这张表里加一行**，否则 `script_graph` 判孤儿，下次清理就清了。
 
@@ -253,8 +254,14 @@ bak = _cc.find_next_backup(path)   # 只算路径；_cc.make_backup 才 copy2
 
 GUI 勾选框由 `doc_gui_backend.OPS[<op>]["options"]` 声明，Swift 只按 `type` 泛化渲染，
 **Sources/ 里不许出现任何 option id 字面量**。契约铁律：未知 key / 非法值走信封
-`{"ok": false, "error": …}` 且 **exit 0**（argparse 的 exit 2 + 空 stdout = Swift 只看到
-「后端崩了」）。引擎配置走 `FormatConfig` 冻结 dataclass 显式穿参，**禁模块级可变全局**。
+`{"ok": false, "error": …, "error_code": …}` 且 `gui-*` **exit 0**（argparse 的 exit 2 + 空 stdout = Swift 只看到
+「后端崩了」）。`dockit run` 走同一个 `gui_run`，只在出口按 `error_code` 映射退出码
+（校验类 2 · `busy` 75 · `interrupted` 128+信号 · 其余 1）；加新校验 = 给 `_err()` 一个码，校验类的码同时进 `USAGE_ERRORS`。
+诊断型操作声明 `"produces": "verdict"`（成败看引擎原始 rc，不看有无产出）；回归门 `test_dockit_cli.py`。
+覆盖门：会写出「与源同名换后缀 / merged.* / 按 sheet 命名」产出的操作声明 `output.overwrite` 选项，
+产出名由 `doc_dispatch.planned_outputs()` / `merge_outputs()` 与路由同源给出；目标已存在又没勾选（CLI `--yes`）
+→ `would_overwrite`。**新增会覆盖式写同名文件的路由，必须同步补 `planned_outputs`**，否则覆盖门看不见它。
+目录锁分层（监控根 EX + 每级上级 SH），父子目录的运行互斥；引擎各自一个进程组，SIGTERM/SIGINT 时整组终止。引擎配置走 `FormatConfig` 冻结 dataclass 显式穿参，**禁模块级可变全局**。
 GUI 未勾的选项 = 「没传 = 保持默认」，只有显式 `=0` 才关。
 ⚠ 域过滤与引号规则不正交：被跳过的 run 仍要推进引号奇偶 counter 但不写回。回归门
 `test_docx_text_formatter_safety.py::test_skipped_scope_does_not_flip_quote_direction`。

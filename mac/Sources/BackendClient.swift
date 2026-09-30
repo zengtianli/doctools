@@ -4,7 +4,7 @@ import Foundation
 // BackendClient — 外部 Python CLI 的薄封装
 //
 // 核心蒸馏自 ssot-console BackendClient 2026-06-11，升级时 diff 对齐范本
-// （~/Apps/mac/ssot-console/Sources/BackendClient.swift）。
+// （范本已归档：~/Apps/_archive/ssot-console/Sources/BackendClient.swift）。
 //
 // Swift 层只是 GUI 壳：不解析 YAML、不写 SQL、不重写业务逻辑。一切真实工作经
 // `Foundation.Process` 委托给后端，stdout 按 JSON (Decodable) 解码。

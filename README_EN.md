@@ -2,7 +2,7 @@
 
 [中文](README.md) | **English**
 
-A document-processing and data-conversion toolkit that maintains both command-line engines and the [DocKit desktop client](mac/README.md). Both entry points reuse the same processing capabilities. Desktop builds and JSON contracts are documented in its directory; CLI entry points are listed below.
+A document-processing and data-conversion toolkit that maintains both command-line engines and the [DocKit desktop client](mac/README.md). Both entry points reuse the same processing capabilities. Desktop builds and JSON contracts are documented in its directory; the docx engine entry points are listed below. The 14 operations in the DocKit window (normalization, conversion, template typesetting, renumbering, bid gate checks and more) are available to agents through the bundled `dockit` command; see [DocKit · Command line](mac/README_EN.md#command-line-for-agents).
 
 - Current inventory (script counts / how docx files are changed / gates): [`handoffs/_archive/2026-08-04-docx-scripts-inventory.md`](handoffs/_archive/2026-08-04-docx-scripts-inventory.md)
 - Refactoring roadmap and closure ledger: [`handoffs/_archive/2026-08-04-docx-refactor-roadmap.md`](handoffs/_archive/2026-08-04-docx-refactor-roadmap.md)
@@ -29,7 +29,7 @@ A document-processing and data-conversion toolkit that maintains both command-li
 | `md_to_audiobook.py` | md → audiobook (concurrent edge-tts chapters; dependencies declared with PEP-723) |
 | `chart.py` | Data-driven chart generation (bar / gantt / flow / insert, JSON → PNG) |
 | `doc_dispatch.py` | Unified dispatcher routed by file extension (commands express only verbs; formats are identified at runtime) |
-| `doc_gui_backend.py` | Wraps `doc_dispatch` in a JSON envelope for the SwiftUI app |
+| `doc_gui_backend.py` | DocKit backend: the GUI JSON envelope (`gui-ops`/`gui-run`, always exit 0) and the agent CLI `dockit` (`ops`/`run`/`status`/`doctor`, exit codes carry the outcome), sharing one `gui_run` |
 | `docx_write_gate.py` | In-place writeback concurrency gate (compares md5/mtime baselines before writing) |
 | `bid_residue_lib.py` | SSOT for tender-residue detection (imported by `bid_gate`, not invoked directly) |
 
@@ -103,7 +103,7 @@ merely because the version number changed).
 ## docx_cli Subcommand Families
 
 **Main entry**: `python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py <subcommand>`
-(equivalent after package installation: `doctools <subcommand>`)
+(equivalent entry: `~/Dev/.venv/bin/doctools <subcommand>`; it is not on PATH, so call it by absolute path)
 
 All declarations live in the `GROUPS` table in `scripts/document/sub/_groups.py`: **adding a subcommand means adding a data row, not a file**.
 

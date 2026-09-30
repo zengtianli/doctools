@@ -2,7 +2,7 @@
 
 **中文** | [English](README_EN.md)
 
-文档处理与数据转换工具集，统一维护命令行引擎与 [DocKit 桌面端](mac/README.md)。两种入口复用同一处理能力；桌面端构建与 JSON 契约见其目录，CLI 入口如下。
+文档处理与数据转换工具集，统一维护命令行引擎与 [DocKit 桌面端](mac/README.md)。两种入口复用同一处理能力；桌面端构建与 JSON 契约见其目录，下面列的是 docx 引擎入口。DocKit 界面里的 14 个操作（规范化、格式转换、套模板、序号修正、标书门检等）由 App 包内的 agent 命令行 `dockit` 提供，用法见 [DocKit · 命令行](mac/README.md#命令行给-agent-用)。
 
 - 现状盘点（有几个脚本 / docx 怎么被改 / 闸门）：[`handoffs/_archive/2026-08-04-docx-scripts-inventory.md`](handoffs/_archive/2026-08-04-docx-scripts-inventory.md)
 - 改造路线图与销项账：[`handoffs/_archive/2026-08-04-docx-refactor-roadmap.md`](handoffs/_archive/2026-08-04-docx-refactor-roadmap.md)
@@ -29,7 +29,7 @@
 | `md_to_audiobook.py` | md → 有声书（edge-tts 章节并发；PEP-723 自带依赖） |
 | `chart.py` | 数据驱动图表生成（bar / gantt / flow / insert，JSON → PNG） |
 | `doc_dispatch.py` | 按文件后缀路由的统一调度器（命令只表达动词，格式运行时认） |
-| `doc_gui_backend.py` | 给 `doc_dispatch` 套 JSON 信封，供 SwiftUI app 调用 |
+| `doc_gui_backend.py` | DocKit 后端：GUI 的 JSON 信封（`gui-ops`/`gui-run`，恒 exit 0）与 agent 命令行 `dockit`（`ops`/`run`/`status`/`doctor`，退出码承载成败），同一个 `gui_run` |
 | `docx_write_gate.py` | 原地写回并发门（写回前 md5/mtime 基线比对） |
 | `bid_residue_lib.py` | 标书残留检测逻辑 SSOT（被 `bid_gate` import，不单敲） |
 
@@ -103,7 +103,7 @@ cd ~/Dev && uv sync --all-packages
 ## docx_cli 子命令族
 
 **总入口**：`python3 ~/Dev/tools/doctools/scripts/document/docx_cli.py <subcommand>`
-（装包后等价：`doctools <subcommand>`）
+（等价入口：`~/Dev/.venv/bin/doctools <subcommand>`；它不在 PATH 上，按绝对路径调用）
 
 声明全在 `scripts/document/sub/_groups.py` 的 `GROUPS` 表 —— **加子命令 = 加一行数据，不是加一个文件**。
 
