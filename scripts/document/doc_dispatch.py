@@ -15,10 +15,10 @@
                                                      公文版式复刻(原件不动,产出 _成品.docx,永不覆盖)
   doc_dispatch.py convert  --to {md,word,xlsx,csv,txt} <files...>   转换(源自动认;老 .doc 经 textutil 升级)
   doc_dispatch.py typeset  <files...>                 md/docx/doc → 院模板成品 Word(套模板→修文本→图注)
-  doc_dispatch.py merge    <files...>                 合并(md/txt→csv/xlsx)
+  doc_dispatch.py merge    <files...>                 合并(多个 md → merged.md / 多个 txt 按列 → merged.csv)
   doc_dispatch.py split    <files...>                 拆分(md 按标题 / xlsx 按 sheet)
   doc_dispatch.py view     <files...>                 预览(md → HTML 浏览器)
-  doc_dispatch.py scan     <dir>                      敏感词扫描(目录里 md/docx)
+  doc_dispatch.py scan     <dir>                      敏感词扫描(目录里 .md;文件名与正文发送至 Claude)
   doc_dispatch.py renum    [--to all|tabfig|headings] <files...>   序号修正(docx 标题/图/表编号重排,产出 _序号修正.docx)
   doc_dispatch.py bidfinal [--to pei|main] <files...>              标书终稿门检(残留/身份/打印就绪 三道门干跑,只诊断不改文件)
 
@@ -289,6 +289,64 @@ def route_split(f: str) -> tuple[list[str], str] | None:
     return None
 
 
+# ───────────────────────────────────────────── 会被覆盖的同名文件(与上面的路由同源)
+#
+# 产出名分两类:
+#   · 带 DocKit 后缀(_fixed / _styled / _序号修正 / _lower / _split/,formatclone 的 _成品 永不覆盖)
+#     —— DocKit 自己的命名空间,重跑覆盖上一次的产出,是既定行为,这里不列;
+#   · 与源同名换后缀(b.md → b.docx、b.pdf → b.md)、merged.md / merged.csv、按 sheet 命名
+#     (b_Sheet1.csv)—— 可能正是用户自己的文件,引擎会**直接覆盖且不留备份**。
+# gui_run 用下面两个函数在跑之前拦:已存在就要人明确同意(GUI 勾选 / CLI --yes)。
+# 只列「引擎真的会覆盖」的路径:docx → md 的 docx_to_md.sh 遇到已有 .md 自己会跳过,不列。
+
+def _sheet_names(f: str) -> list[str]:
+    """xlsx 的工作表名(只读 zip 里的 workbook.xml,不加载 openpyxl)。读不出来 → 空。"""
+    import xml.etree.ElementTree as ET
+    import zipfile
+    try:
+        with zipfile.ZipFile(f) as z:
+            root = ET.fromstring(z.read("xl/workbook.xml"))
+    except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+        return []
+    return [el.get("name", "") for el in root.iter() if el.tag.endswith("}sheet") and el.get("name")]
+
+
+def planned_outputs(verb: str, f: str, target: str | None = None) -> list[Path]:
+    """该输入跑 verb 时,引擎会**覆盖式**写出、且名字不带 DocKit 后缀的产出路径。"""
+    p, e = Path(f), _ext(f)
+    if verb == "convert":
+        target = {"markdown": "md", "docx": "word", "excel": "xlsx", "text": "txt"}.get(target, target)
+        if e == "doc":
+            return {"txt": [p.with_suffix(".txt")], "word": [p.with_suffix(".docx")],
+                    "md": [p.with_suffix(".docx")]}.get(target, [])   # md:docx 中间件留在原处,.md 引擎不覆盖
+        if (e, target) in (("docx", "md"), ("docx", "word")):
+            return []                                       # 跳过已有 .md / 产出 _styled.docx
+        if e in ("xlsx", "xlsm") and target in ("csv", "txt") and route_convert(f, target):
+            return [p.with_name(f"{p.stem}_{s}.{target}") for s in _sheet_names(f)]
+        if route_convert(f, target) is None:
+            return []
+        suffix = {"md": ".md", "word": ".docx", "xlsx": ".xlsx", "csv": ".csv", "txt": ".txt"}[target]
+        return [p.with_suffix(suffix)]
+    if verb == "typeset":
+        return [p.with_suffix(".docx")] if e in ("md", "doc") else []   # docx → _styled.docx
+    if verb == "split" and e in ("xlsx", "xlsm"):
+        return [p.with_name(f"{p.stem}_{s}.xlsx") for s in _sheet_names(f)]
+    return []
+
+
+def merge_outputs(files: list[str]) -> list[Path]:
+    """do_merge 各分组的产出:md → 第一份 md 旁的 merged.md;txt → 第一份 txt 旁的 merged.csv。"""
+    first: dict[str, str] = {}
+    for f in files:
+        first.setdefault(_ext(f), f)
+    out = []
+    if "md" in first:
+        out.append(Path(first["md"]).resolve().parent / "merged.md")
+    if "txt" in first:
+        out.append(Path(first["txt"]).parent / "merged.csv")
+    return out
+
+
 # ───────────────────────────────────────────── 动词实现
 
 def _per_file(files: list[str], router, verb: str, opts: dict | None = None) -> int:
@@ -402,20 +460,27 @@ def do_convert(files, target):
     return rc
 
 
-def do_view(files):
+def do_view(files, output_dir: str | None = None, open_browser: bool = True):
+    """md → HTML。output_dir=None 时引擎自用临时目录(终端原行为);
+    GUI/CLI 适配器传本次运行专用目录才能报告产出;open_browser=False 供 agent 调用(不抢焦点)。"""
     rc = 0
+    extra = (["-o", str(output_dir)] if output_dir else []) + ([] if open_browser else ["--no-open"])
     for f in files:
         if _ext(f) != "md":
             warn(f"{Path(f).name}: 预览目前只支持 md,跳过"); continue
         print(f"{GREEN}● {Path(f).name}{RST}")
-        rc |= _run(_py("md_tools.py", "to-html", f), "md → HTML 浏览器预览")
+        rc |= _run(_py("md_tools.py", "to-html", f, *extra),
+                   "md → HTML 浏览器预览" if open_browser else "md → HTML(不打开浏览器)")
     return rc
 
 
-def do_scan(target):
+def do_scan(target, json_out: bool = False):
+    """敏感词扫描(只收集目录内 .md,文件名与正文经 llm_client 发给 Claude)。
+    json_out=True 透传引擎的 --json,stdout 为发现项数组(供 dockit run scan --json)。"""
     d = target[0] if isinstance(target, list) else target
     print(f"{GREEN}● 扫描 {d}{RST}")
-    return _run(_py("sub/scan_sensitive_words.py", d), "敏感词扫描(竞品名/过硬措辞)")
+    return _run(_py("sub/scan_sensitive_words.py", d, *(["--json"] if json_out else [])),
+                "敏感词扫描(竞品名/过硬措辞)")
 
 
 def do_merge(files):
@@ -429,6 +494,7 @@ def do_merge(files):
             print(f"{GREEN}● 合并 {len(fs)} 个 md{RST}")
             rc |= _run(_py("md_tools.py", "merge", *fs), "md → 合并为一篇")
         elif e == "txt":
+            # 传的是选中的文件(convert.py 认得文件列表,只合并这几份;给目录才合并整个目录)
             print(f"{GREEN}● 合并 {len(fs)} 个 txt → CSV{RST}")
             rc |= _run(_data("convert.py", "csv-merge-txt", *fs), "txt 按列 → CSV")
         elif e in ("xlsx", "xlsm"):
@@ -572,7 +638,9 @@ def do_renum(files, target: str = "all") -> int:
             warn(f"{p.name}: 序号修正只吃 docx,跳过"); continue
         print(f"{GREEN}● {p.name}{RST}")
         out = p.with_name(f"{p.stem}_序号修正.docx")
-        shutil.copy2(p, out)
+        # copy 而非 copy2:产出要带本次的 mtime。copy2 沿用源件 mtime,文档无需重排时
+        # 重跑得到的 (mtime, size) 与上次产出一模一样,GUI/CLI 的快照差分就把成功报成「未产出」。
+        shutil.copy(p, out)
         failed = False
         if target in ("all", "headings"):
             if _run(_py("sub/renumber.py", "seq", str(out), "--no-backup"), "标题号重排(按现有深度)"):

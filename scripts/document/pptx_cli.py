@@ -143,8 +143,12 @@ def show_message(msg_type, message):
 
 
 def backup_file(file_path):
-    """备份原始文件"""
+    """备份原始文件。第一次写 <名>.backup;已有 .backup 时**不覆盖**,另存
+    <名>.bak-N-日期.pptx(_cli_common.find_next_backup)—— 否则第二次原地处理会用
+    已改过的文件顶掉唯一一份原件(DocKit/agent 重试时实际发生过)。"""
     backup_path = f"{file_path}.backup"
+    if Path(backup_path).exists():
+        backup_path = str(_cc.find_next_backup(Path(file_path)))
     try:
         shutil.copy2(file_path, backup_path)
         show_message("info", f"已备份原文件: {Path(backup_path).name}")

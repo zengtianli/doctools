@@ -2,7 +2,7 @@
 """
 AI 敏感词扫描器 (scan_sensitive_words.py)
 
-调用智谱 API 扫描标书 .md 文件，智能识别敏感词并维护敏感词列表。
+经 llm_client 调用 Claude（`claude -p`）扫描目录内标书 .md 文件（不读 docx），识别敏感词并维护敏感词列表。文件名与正文会发送至 Claude。
 
 识别类型：
   - 组织名称/公司名称（竞争对手或错误引用）
@@ -525,7 +525,7 @@ def interactive_update(findings: list[dict], config: dict, config_path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AI 敏感词扫描器 - 调用智谱 API 扫描标书文档识别敏感词",
+        description="AI 敏感词扫描器 - 经 Claude（claude -p）扫描目录内 .md 标书识别敏感词；文件名与正文发送至 Claude",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例：
@@ -576,6 +576,8 @@ def main():
     md_files = find_files_by_extension(scan_dir, "md", recursive=True)
     if not md_files:
         show_warning(f"目录中没有 .md 文件: {scan_dir}")
+        if args.json:
+            print_json([])  # --json 的调用方(dockit run scan)要能区分「没东西可扫」与「输出解析失败」
         sys.exit(0)
 
     if not args.json:

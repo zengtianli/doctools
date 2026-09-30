@@ -207,11 +207,13 @@ def _xlsx_to_txt(input_file: Path, output_file: Path | None = None, **_kw) -> bo
     return True
 
 
-def _csv_merge_txt(target_dir: Path, output_file: Path | None = None, **_kw) -> bool:
-    """合并目录中所有 TXT 文件为一个 CSV（按列拼接）"""
+def _csv_merge_txt(target_dir: Path, output_file: Path | None = None,
+                   files: list[Path] | None = None, **_kw) -> bool:
+    """合并 TXT 为一个 CSV（按列拼接）。files 给出时只合并这几份（DocKit 多选合并），
+    否则合并 target_dir 下全部 *.txt。默认产出 target_dir/merged.csv。"""
     if output_file is None:
         output_file = target_dir / "merged.csv"
-    txt_files = sorted(target_dir.glob("*.txt"))
+    txt_files = sorted(files) if files is not None else sorted(target_dir.glob("*.txt"))
     if not txt_files:
         show_error(f"目录 '{target_dir}' 中未找到 .txt 文件")
         return False
@@ -461,8 +463,11 @@ def main():
     if conv.get("deps") and not check_python_packages(*conv["deps"]):
         sys.exit(1)
 
-    # csv-merge-txt 特殊处理：输入是目录
+    # csv-merge-txt 特殊处理：输入是目录；或全是 .txt 文件时只合并这几份（产出在第一份旁的 merged.csv）
     if conv.get("special"):
+        picked = [Path(u) for u in unknown]
+        if picked and all(p.suffix.lower() == ".txt" and p.is_file() for p in picked):
+            sys.exit(0 if conv["fn"](picked[0].parent, None, files=picked) else 1)
         if unknown:
             target_dir = Path(unknown[0])
         else:
