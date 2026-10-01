@@ -5,11 +5,11 @@
   "command": "bash scripts/accept/native_ui.sh",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-09-28T13:31:14.388349+08:00",
-  "finished_at": "2026-09-28T13:32:53.780446+08:00",
-  "input_sha256": "743479befdf0f1a8119dbf9bff2517e17dadb8051f2249f636ac7c3ec52c888e",
+  "started_at": "2026-10-01T00:28:19.459770+08:00",
+  "finished_at": "2026-10-01T00:29:10.842517+08:00",
+  "input_sha256": "fcfd27e1c0dff223f73a5c42fc0e0d52838b0f5641b9fb7a35c3b2996f21c658",
   "log": "perf/acceptance/native_ui.log",
-  "log_sha256": "b006a8a9dfc999125ca120a43d3b6532dad55e361e0485620653ce57f1b5ad12",
+  "log_sha256": "1beeda8fb39d86d26e11d603e80bf5a438f018ffc6dc339600fa58540e9f6935",
   "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检",
   "detail": {
     "captures": [
@@ -17,32 +17,32 @@
         "file": "native-main.png",
         "height": 680,
         "opaque": true,
-        "png_bytes": 132964,
-        "sampled_colors": 270,
+        "png_bytes": 134604,
+        "sampled_colors": 277,
         "width": 1000
       },
       {
         "file": "native-compact.png",
         "height": 640,
         "opaque": true,
-        "png_bytes": 118619,
-        "sampled_colors": 239,
+        "png_bytes": 120560,
+        "sampled_colors": 241,
         "width": 900
       },
       {
         "file": "native-palette.png",
         "height": 500,
         "opaque": true,
-        "png_bytes": 93213,
-        "sampled_colors": 221,
+        "png_bytes": 95622,
+        "sampled_colors": 229,
         "width": 640
       },
       {
         "file": "native-privacy.png",
         "height": 680,
         "opaque": true,
-        "png_bytes": 116477,
-        "sampled_colors": 234,
+        "png_bytes": 119596,
+        "sampled_colors": 242,
         "width": 1000
       }
     ],

@@ -4,32 +4,32 @@
       "file" : "native-main.png",
       "height" : 680,
       "opaque" : true,
-      "png_bytes" : 132964,
-      "sampled_colors" : 270,
+      "png_bytes" : 134604,
+      "sampled_colors" : 277,
       "width" : 1000
     },
     {
       "file" : "native-compact.png",
       "height" : 640,
       "opaque" : true,
-      "png_bytes" : 118619,
-      "sampled_colors" : 239,
+      "png_bytes" : 120560,
+      "sampled_colors" : 241,
       "width" : 900
     },
     {
       "file" : "native-palette.png",
       "height" : 500,
       "opaque" : true,
-      "png_bytes" : 93213,
-      "sampled_colors" : 221,
+      "png_bytes" : 95622,
+      "sampled_colors" : 229,
       "width" : 640
     },
     {
       "file" : "native-privacy.png",
       "height" : 680,
       "opaque" : true,
-      "png_bytes" : 116477,
-      "sampled_colors" : 234,
+      "png_bytes" : 119596,
+      "sampled_colors" : 242,
       "width" : 1000
     }
   ],

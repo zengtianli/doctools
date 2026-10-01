@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "built_at": "2026-09-28T13:30:33+08:00",
+  "built_at": "2026-10-01T10:58:41+08:00",
   "artifact": {
     "bundle_id": "cyou.tianli.DocTools",
     "version": "1.0",
-    "build": "304",
+    "build": "313",
     "executable": "Contents/MacOS/DocTools",
-    "sha256": "a6c3aae1a50ec614ae669effba7775baebf64043148f7c278d5562e892b91fb4",
+    "sha256": "e0053a4dde7546cdf9fbeac0bcc378a3a2dab6401a9d5d0464cc009da10b4485",
     "icon": {
       "path": "Contents/Resources/AppIcon.icns",
       "sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b"
@@ -19,11 +19,12 @@
       "Info.plist",
       "DocTools.xcodeproj/project.pbxproj",
       "build.sh",
+      "bin/**",
       "catalog.yaml"
     ],
-    "sha256": "c3474699e54d143aa908841429c48ef073a069dabe7b9ad2bf0b464ee43f8ee5",
-    "file_count": 15,
-    "commit": "1a91e1511e5b6c24353b2727746c7b439af1471e",
+    "sha256": "8a7cf017143a7c4fcbe6f0c19af7f6ec034fe251a2908a4bd4d267a21ab2c408",
+    "file_count": 16,
+    "commit": "0a35493c589e2da40826ddfc71cdfffc85fa7113",
     "dirty_scope": "组件当前 Git 工作树；跨仓/软链输入的实际内容由 sha256 核验",
     "dirty": false
   },

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "checks": {
+    "icon_review": {
+      "result": "passed",
+      "scope": "icon",
+      "method": "ui_automation",
+      "checked_at": "2026-10-01T11:00:43.941061+08:00",
+      "input_sha256": "2780ef3fb6dd41aa8b2692251d7fad4f5920fc6c537b3dac61e4804a002768b3",
+      "evidence": "perf/acceptance/icon_review.json",
+      "evidence_sha256": "96744705fafb051cea89f4ceee8bbd309c61f32beec1ab184640c7bfc0dbdac1",
+      "detail": "builtin:icon_review：~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/icon_review.py → 机器审阅：尺寸齐全、非空白（16–1024 px 共 10 个表示，浅色/深色底拼图已存）"
+    },
+    "functionality": {
+      "result": "passed",
+      "scope": "code",
+      "method": "real_product",
+      "checked_at": "2026-10-01T00:28:25.119313+08:00",
+      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
+      "evidence": "perf/acceptance/functionality.json",
+      "evidence_sha256": "54a204f6c56c801fa6dda588a74d807e2360405f78899c39068058ad1151d335",
+      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/functionality.py → 真实 GUI 后端目录、4 条文件处理链及 dockit 命令行退出码通过"
+    },
+    "recovery": {
+      "result": "passed",
+      "scope": "code",
+      "method": "real_product",
+      "checked_at": "2026-10-01T00:28:24.066733+08:00",
+      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
+      "evidence": "perf/acceptance/recovery.json",
+      "evidence_sha256": "1f800564e26a9bb49946c3936c749a7c9cb85b30fc8470d28a17a82cb6dba0ff",
+      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/recovery.py → 真实 gui-run 错误信封、批次隔离及失败后恢复通过"
+    },
+    "privacy": {
+      "result": "passed",
+      "scope": "code",
+      "method": "real_product",
+      "checked_at": "2026-10-01T00:28:22.268139+08:00",
+      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
+      "evidence": "perf/acceptance/privacy.json",
+      "evidence_sha256": "3fe9a4ed15664850db3445766b8bef2c08f76801dcaa83b302802207a1525389",
+      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/privacy.py → 云端扫描需明确同意；本机处理通过操作系统禁网验收"
+    },
+    "native_ui": {
+      "result": "passed",
+      "scope": "ui",
+      "method": "ui_automation",
+      "checked_at": "2026-10-01T00:29:10.842517+08:00",
+      "input_sha256": "fcfd27e1c0dff223f73a5c42fc0e0d52838b0f5641b9fb7a35c3b2996f21c658",
+      "evidence": "perf/acceptance/native_ui.json",
+      "evidence_sha256": "0d4a1be3ac3ab61fa8740940261db2059d9b9b170d666ef869699fa20296582b",
+      "detail": "sop.accept：bash scripts/accept/native_ui.sh → App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
+    },
+    "installed_icon": {
+      "result": "passed",
+      "scope": "installed_icon",
+      "method": "ui_automation",
+      "checked_at": "2026-10-01T10:58:59.745143+08:00",
+      "input_sha256": "925a3cc314b2d261d73698f8cb3dad50587eb40c2aba038fabdd09ee43cce628",
+      "evidence": "perf/acceptance/installed_icon.json",
+      "evidence_sha256": "037ae7660d8b808351cb9123e6241a0aca320ea5bff97a9968e5b81de842bd6f",
+      "detail": "builtin:installed_icon：~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/installed_icon.py → 系统实际显示的装机图标与源图标一致（DocKit.app 1.0 (313)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）"
+    },
+    "cli_entry": {
+      "result": "passed",
+      "scope": "cli_entry",
+      "method": "real_product",
+      "checked_at": "2026-10-01T10:58:58.461487+08:00",
+      "input_sha256": "258d6b2d7341b5395778b6acab38e24e5707d9ce2e8bdbdd24a46ebacaed0f37",
+      "evidence": "perf/acceptance/cli_entry.json",
+      "evidence_sha256": "85b816b169cedad1f72518a9c572bc855097b9c5ea729c6243b7c9db71998c33",
+      "detail": "builtin:cli_entry：~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/cli_entry.py → 命令行在 App 里：dockit — DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。"
+    }
+  },
+  "updated_at": "2026-10-01T11:00:44.000757+08:00"
+}
