@@ -1,18 +1,18 @@
 {
   "product": "doc-tools",
-  "version": "1.0 (304)",
+  "version": "1.0 (313)",
   "compare": [],
-  "measured_at": "2026-09-29",
+  "measured_at": "2026-10-01",
   "device": "Mac16,12 / Apple M4 / macOS 27.2",
   "size": {
-    "installed_bytes": 2412544,
+    "installed_bytes": 2416640,
     "installed_mb": 2.3
   },
   "data": "已安装自用版首页，载入 14 项真实操作与动态选项；未打开或处理用户文档。",
   "measured_artifact": {
     "version": "1.0",
-    "build": "304",
-    "executable_sha256": "a6c3aae1a50ec614ae669effba7775baebf64043148f7c278d5562e892b91fb4"
+    "build": "313",
+    "executable_sha256": "e0053a4dde7546cdf9fbeac0bcc378a3a2dab6401a9d5d0464cc009da10b4485"
   },
   "why": "原生 SwiftUI 客户端，文档能力复用本机共享 Python 引擎；空闲时后端进程退出。",
   "why_en": "Native SwiftUI client reusing the local shared Python document engine; backend processes exit when idle.",
@@ -84,24 +84,90 @@
         "installed_bytes": 2326528,
         "installed_mb": 2.22
       }
+    },
+    {
+      "section": "version",
+      "replaced_on": "2026-10-01",
+      "reason": "装机：安装了轻量化后的新构建",
+      "value": "1.0 (304)"
+    },
+    {
+      "section": "idle",
+      "version": "1.0 (304)",
+      "replaced_on": "2026-10-01",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": {
+        "process": "/Applications/DocKit.app",
+        "footprint_mb": 51.0,
+        "main_footprint_mb": 51.0,
+        "cpu_pct": 0.0,
+        "main_cpu_pct": 0.0,
+        "processes": [
+          {
+            "name": "main",
+            "cpu_pct": 0.0,
+            "footprint_peak_mb": 51.0
+          }
+        ],
+        "window_s": 60,
+        "settle_s": 45,
+        "measured_at": "2026-09-29",
+        "method": "open -g -j 后台启动，静置 45 秒后 measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟",
+        "load": "负载均值 4.50 4.38 5.20；total = 6144.00M  used = 5272.38M  free = 871.62M"
+      }
+    },
+    {
+      "section": "speed_gui",
+      "version": "1.0 (304)",
+      "replaced_on": "2026-10-01",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": [
+        {
+          "key": "cold_launch_to_window",
+          "label": "冷启动到窗口出现",
+          "median_ms": 369,
+          "runs": 5,
+          "headline": true,
+          "raw_ms": [
+            400,
+            369,
+            372,
+            368,
+            364
+          ],
+          "method": "open -g -j 后台隐藏启动，被动读取窗口列表直到主窗口出现；不点击、不激活；5 次取中位",
+          "load": "负载均值 4.75 4.22 5.26；total = 6144.00M  used = 5272.38M  free = 871.62M"
+        }
+      ]
+    },
+    {
+      "section": "size",
+      "version": "1.0 (304)",
+      "replaced_on": "2026-10-01",
+      "reason": "版本变化；旧安装包大小不沿用",
+      "value": {
+        "installed_bytes": 2412544,
+        "installed_mb": 2.3
+      }
     }
   ],
+  "env_note": "2026-10-01 主会话逐个顺序测量，负载均值 3.07 4.06 4.82；total = 9216.00M  used = 7896.38M  free = 1319.62M（开始时）；启动时间受负载影响，内存与 CPU 为进程自身数值",
   "speed_gui": [
     {
       "key": "cold_launch_to_window",
       "label": "冷启动到窗口出现",
-      "median_ms": 369,
+      "median_ms": 383,
       "runs": 5,
       "headline": true,
       "raw_ms": [
-        400,
-        369,
+        829,
+        383,
         372,
-        368,
-        364
+        386,
+        381
       ],
       "method": "open -g -j 后台隐藏启动，被动读取窗口列表直到主窗口出现；不点击、不激活；5 次取中位",
-      "load": "负载均值 4.75 4.22 5.26；total = 6144.00M  used = 5272.38M  free = 871.62M"
+      "load": "负载均值 5.66 4.59 5.00；total = 9216.00M  used = 7896.38M  free = 1319.62M"
     }
   ],
   "idle": {
@@ -119,9 +185,9 @@
     ],
     "window_s": 60,
     "settle_s": 45,
-    "measured_at": "2026-09-29",
+    "measured_at": "2026-10-01",
     "method": "open -g -j 后台启动，静置 45 秒后 measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟",
-    "load": "负载均值 4.50 4.38 5.20；total = 6144.00M  used = 5272.38M  free = 871.62M"
-  },
-  "env_note": "2026-09-29 主会话逐个顺序测量，负载均值 4.15 4.08 5.23；total = 6144.00M  used = 5272.38M  free = 871.62M（开始时）；启动时间受负载影响，内存与 CPU 为进程自身数值"
+    "load": "负载均值 3.14 4.08 4.75；total = 9216.00M  used = 7896.38M  free = 1319.62M",
+    "owner_idle_s_at_start": 9502
+  }
 }
