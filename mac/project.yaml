@@ -7,6 +7,16 @@ form: mac
 lifecycle: active
 bundle_id: cyou.tianli.DocTools
 sop:
+  platforms:
+    mac: {}
+    iphone:
+      not_applicable: 当前桌面端用 Foundation.Process 调本机 Python doctools 引擎并处理 Mac 文件路径；iOS 不允许运行这套桌面子进程与工作区。
+    ipad:
+      not_applicable: 当前桌面端用 Foundation.Process 调本机 Python doctools 引擎并处理 Mac 文件路径；iPadOS 不允许运行这套桌面子进程与工作区。
+    watch:
+      not_applicable: 当前功能依赖 Mac 本机 Python 文档引擎、子进程及 AppKit 文件选择器；watchOS 不提供这套桌面执行环境。
+    vision:
+      not_applicable: 当前桌面端依赖 Mac 本机 Python doctools 引擎、Foundation.Process 和 AppKit 文件选择器；visionOS 不提供这套桌面执行环境。
   promo: false
   test: ./build.sh --check
   accept:
