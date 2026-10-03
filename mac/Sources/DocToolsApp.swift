@@ -16,9 +16,20 @@ import AppKit
 
 extension Notification.Name {
     static let consoleRefresh = Notification.Name("consoleRefresh")
+    static let dockitPreferencesChanged = Notification.Name("dockitPreferencesChanged")
 }
 
 struct DocToolsApp: App {
+    init() {
+        let configuration = AppConfiguration(productID: "cyou.tianli.DocTools",
+            defaultsKeys: AppViewModel.portablePreferenceKeys)
+        configuration.onChange = {
+            NotificationCenter.default.post(name: .dockitPreferencesChanged, object: nil)
+        }
+        AppLifecycleUI.install(name: "DocKit", configuration: configuration,
+                               updateSource: .privateCloud(channel: "private"))
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

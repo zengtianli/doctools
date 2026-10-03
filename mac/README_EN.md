@@ -2,6 +2,8 @@
 
 [中文](README.md)
 
+The app menu adds configuration import/export, optional iCloud sync (off by default), and update checks. It remembers the last operation and target formats. Rule toggles, external-service consent, template paths, documents and task history remain local to each task. This edition reads updates from your private iCloud release folder.
+
 SwiftUI client inside [doctools](../README.md), maintained in the parent repository with its existing document backend. Operations and options come from `gui-ops`; the local `~/Dev/.venv` environment is required.
 
 Run `./build.sh --check` for the real backend decoding gate, or `./build.sh` for a signed Release build without installation. Only `./build.sh --install` replaces `/Applications/DocKit.app`.

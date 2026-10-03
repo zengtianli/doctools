@@ -20,10 +20,17 @@ cp tests/decode_check.swift "$CHECK_DIR/main.swift"
 "$PYTHON" "$BACKEND" gui-ops > "$CHECK_DIR/ops.json"
 swiftc -O -o "$CHECK_DIR/decode_check" "$CHECK_DIR/main.swift" Sources/Models.swift
 "$CHECK_DIR/decode_check" "$CHECK_DIR/ops.json"
+swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
+  tests/PreferencesCheck.swift -o "$CHECK_DIR/preferences_check"
+"$CHECK_DIR/preferences_check"
 # agent CLI:包装脚本语法 + 真实后端 --help(与装进 App 的是同一个文件)
 sh -n bin/dockit
 bin/dockit --help > /dev/null
 [ "$MODE" != --check ] || exit 0
+LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
+if [ -f "$LIFECYCLE_VENDOR" ]; then
+  python3 "$LIFECYCLE_VENDOR" --platform mac --target-source-dir "$DIR/Sources"
+fi
 DISPLAY_NAME="$("$PYTHON" -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["display_name"])' "$DIR/catalog.yaml")"
 xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release build | tail -3
 BUILT="$(xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR =/{print $2; exit}')"

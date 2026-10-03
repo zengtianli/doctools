@@ -39,11 +39,15 @@ struct InputFile: Identifiable, Hashable {
 final class AppViewModel: ObservableObject {
     @Published var banner: BannerMsg?
     @Published var isLoadingOps = false
-    @Published var isRunning = false
+    @Published var isRunning = false {
+        didSet { if !isRunning && pendingPreferenceRestore { reloadPortablePreferences() } }
+    }
 
     @Published var ops: [DocOp] = []
     @Published var selectedOpID: String?
-    @Published var selectedTargetID: String?     // 单选槽（convert/renum/bidfinal）
+    @Published var selectedTargetID: String? {
+        didSet { rememberTarget() }
+    }
 
     /// per-op 勾选项状态：option id → 开/关。切操作时按后端声明的 default 复位。
     /// key 全部来自后端声明，Swift 不认识任何具体 id。
@@ -61,6 +65,41 @@ final class AppViewModel: ObservableObject {
     @Published var statusText: String = "拖入文件或点「选择文件」，再挑一个操作。"
 
     private let backend = BackendClient()
+    static let portablePreferenceKeys = ["dockit.lastOperation", "dockit.targetFormats"]
+    private let preferences: UserDefaults?
+    private var restoringPreferences = false
+    private var preferencesLoaded = false
+    private var pendingPreferenceRestore = false
+
+    init(preferences: UserDefaults? = nil) {
+        self.preferences = preferences ?? Self.runtimePreferences
+    }
+
+    private static var runtimePreferences: UserDefaults? {
+        guard Bundle.main.bundleIdentifier == "cyou.tianli.DocTools",
+              !CommandLine.arguments.contains("--ui-self-test") else { return nil }
+        return .standard
+    }
+
+    func reloadPortablePreferences() {
+        guard let preferences else { return }
+        pendingPreferenceRestore = true
+        guard !isRunning, !isLoadingOps, !ops.isEmpty else { return }
+        restoringPreferences = true
+        defer { restoringPreferences = false; pendingPreferenceRestore = false }
+        if let operation = preferences.string(forKey: Self.portablePreferenceKeys[0]),
+           ops.contains(where: { $0.id == operation }) { selectedOpID = operation }
+        syncTargetDefault()
+        resetOptionsToDefaults()
+    }
+
+    private func rememberTarget() {
+        guard !restoringPreferences, let preferences, let op = selectedOp, op.needsTarget,
+              let target = selectedTargetID, op.targets.contains(where: { $0.id == target }) else { return }
+        var formats = preferences.dictionary(forKey: Self.portablePreferenceKeys[1]) as? [String: String] ?? [:]
+        formats[op.id] = target
+        preferences.set(formats, forKey: Self.portablePreferenceKeys[1])
+    }
 
     func dismissBanner() { banner = nil }
 
@@ -82,11 +121,17 @@ final class AppViewModel: ObservableObject {
 
     func loadOps() async {
         isLoadingOps = true
-        defer { isLoadingOps = false }
+        defer {
+            isLoadingOps = false
+            if !preferencesLoaded || pendingPreferenceRestore {
+                reloadPortablePreferences()
+                preferencesLoaded = true
+            }
+        }
         do {
             let r = try await backend.ops()
             ops = r.ops
-            if selectedOpID == nil { selectedOpID = ops.first?.id }
+            if !ops.contains(where: { $0.id == selectedOpID }) { selectedOpID = ops.first?.id }
             syncTargetDefault()
             if banner?.kind == .error { banner = nil }
             statusText = "已就绪 · 共 \(ops.count) 个操作。拖入文件开始。"
@@ -102,6 +147,10 @@ final class AppViewModel: ObservableObject {
         results = []; lastLog = ""; summary = ""
         syncTargetDefault()
         resetOptionsToDefaults()
+        if !restoringPreferences, let op = selectedOp {
+            preferences?.set(op.id, forKey: Self.portablePreferenceKeys[0])
+            rememberTarget()
+        }
     }
 
     /// 把勾选项复位成后端声明的默认值（切操作、以及「恢复默认」按钮都走这里）。
@@ -130,9 +179,13 @@ final class AppViewModel: ObservableObject {
 
     private func syncTargetDefault() {
         guard let op = selectedOp, op.needsTarget else { selectedTargetID = nil; return }
-        if selectedTargetID == nil || !op.targets.contains(where: { $0.id == selectedTargetID }) {
-            selectedTargetID = op.targets.first?.id
-        }
+        let saved = (preferences?.dictionary(forKey: Self.portablePreferenceKeys[1]) as? [String: String])?[op.id]
+        let target = saved.flatMap { id in op.targets.contains(where: { $0.id == id }) ? id : nil }
+            ?? (op.targets.contains(where: { $0.id == selectedTargetID }) ? selectedTargetID : op.targets.first?.id)
+        let wasRestoring = restoringPreferences
+        restoringPreferences = true
+        selectedTargetID = target
+        restoringPreferences = wasRestoring
     }
 
     // MARK: - 文件增删
