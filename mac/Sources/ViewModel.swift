@@ -71,8 +71,8 @@ final class AppViewModel: ObservableObject {
     private var preferencesLoaded = false
     private var pendingPreferenceRestore = false
 
-    init(preferences: UserDefaults? = nil) {
-        self.preferences = preferences ?? Self.runtimePreferences
+    init(preferences: UserDefaults? = nil, usesPortablePreferences: Bool = true) {
+        self.preferences = usesPortablePreferences ? (preferences ?? Self.runtimePreferences) : nil
     }
 
     private static var runtimePreferences: UserDefaults? {

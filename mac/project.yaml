@@ -42,6 +42,9 @@ sop:
   - Info.plist
   measure:
     app: installed
+    ready_signal: os_log
+    quiet_launch: [--background]
+    data: 静默只读加载既有 doctools 后端真实操作目录并离屏绘制初始界面；输入文件为空，不处理文档，不写本人偏好。
   source:
   - Sources/**
   - icon/AppIcon.icns
