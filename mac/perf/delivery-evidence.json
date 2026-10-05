@@ -15,40 +15,40 @@
       "result": "passed",
       "scope": "code",
       "method": "real_product",
-      "checked_at": "2026-10-01T00:28:25.119313+08:00",
-      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
-      "evidence": "perf/acceptance/functionality.json",
-      "evidence_sha256": "54a204f6c56c801fa6dda588a74d807e2360405f78899c39068058ad1151d335",
+      "checked_at": "2026-10-05T12:10:12.055064+08:00",
+      "input_sha256": "b24993d539d17ccd30c2353c169587340d306ccb9f8c0966b3af97051837301b",
+      "evidence": "perf/acceptance/run-32rt9x_8/functionality.json",
+      "evidence_sha256": "f7190fbea4ba71b0d5396b5245ce067b41db4e3b60a49f62a04cb8eec34712c3",
       "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/functionality.py → 真实 GUI 后端目录、4 条文件处理链及 dockit 命令行退出码通过"
     },
     "recovery": {
       "result": "passed",
       "scope": "code",
       "method": "real_product",
-      "checked_at": "2026-10-01T00:28:24.066733+08:00",
-      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
-      "evidence": "perf/acceptance/recovery.json",
-      "evidence_sha256": "1f800564e26a9bb49946c3936c749a7c9cb85b30fc8470d28a17a82cb6dba0ff",
+      "checked_at": "2026-10-05T12:10:21.465469+08:00",
+      "input_sha256": "b24993d539d17ccd30c2353c169587340d306ccb9f8c0966b3af97051837301b",
+      "evidence": "perf/acceptance/run-m12racdg/recovery.json",
+      "evidence_sha256": "69cbdc5e120739396e6c9b3fd7b6ecc9ef2d64363654b638f9cc742f7cad7eb7",
       "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/recovery.py → 真实 gui-run 错误信封、批次隔离及失败后恢复通过"
     },
     "privacy": {
       "result": "passed",
       "scope": "code",
       "method": "real_product",
-      "checked_at": "2026-10-01T00:28:22.268139+08:00",
-      "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
-      "evidence": "perf/acceptance/privacy.json",
-      "evidence_sha256": "3fe9a4ed15664850db3445766b8bef2c08f76801dcaa83b302802207a1525389",
+      "checked_at": "2026-10-05T12:10:28.295951+08:00",
+      "input_sha256": "b24993d539d17ccd30c2353c169587340d306ccb9f8c0966b3af97051837301b",
+      "evidence": "perf/acceptance/run-orbcrfbv/privacy.json",
+      "evidence_sha256": "c6413dc6738e324ef88ecb5f0906e440402373b0db1caf17147beb84aa23aa58",
       "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/privacy.py → 云端扫描需明确同意；本机处理通过操作系统禁网验收"
     },
     "native_ui": {
       "result": "passed",
       "scope": "ui",
       "method": "ui_automation",
-      "checked_at": "2026-10-01T11:14:59.567377+08:00",
-      "input_sha256": "f5609dca8d9dee3574dafa0770b7753749f3f9087d60e24ba3fc9de7906aed0b",
-      "evidence": "perf/acceptance/native_ui.json",
-      "evidence_sha256": "f594f153076f0e5a99af729444252f93e0f83fb334730554f8032b12ac2cd865",
+      "checked_at": "2026-10-05T12:11:12.128064+08:00",
+      "input_sha256": "78461b036015d41554411717a8f1332bfe2437bf0cfc849509332232a787e43c",
+      "evidence": "perf/acceptance/run-od1xkz5r/native_ui.json",
+      "evidence_sha256": "b6760ca1cf8120066a3ef31eb2c24b203249a34e20d90bbfa105b42abb7d78d5",
       "detail": "sop.accept：bash scripts/accept/native_ui.sh → App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
     },
     "installed_icon": {
@@ -65,12 +65,12 @@
       "result": "passed",
       "scope": "cli_entry",
       "method": "real_product",
-      "checked_at": "2026-10-01T10:58:58.461487+08:00",
-      "input_sha256": "258d6b2d7341b5395778b6acab38e24e5707d9ce2e8bdbdd24a46ebacaed0f37",
-      "evidence": "perf/acceptance/cli_entry.json",
-      "evidence_sha256": "85b816b169cedad1f72518a9c572bc855097b9c5ea729c6243b7c9db71998c33",
+      "checked_at": "2026-10-05T12:11:17.843866+08:00",
+      "input_sha256": "273ebe8b7e558d3065f59221d83ab72bc9618b33ea1a86dad8896498a6e49bce",
+      "evidence": "perf/acceptance/run-5d9foabx/cli_entry.json",
+      "evidence_sha256": "d71c0bae4a1642e64830ecd30dc7e4015f9c4e864c68734c4f0c01df81b93840",
       "detail": "builtin:cli_entry：~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/cli_entry.py → 命令行在 App 里：dockit — DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。"
     }
   },
-  "updated_at": "2026-10-01T11:14:59.624916+08:00"
+  "updated_at": "2026-10-05T12:11:17.882046+08:00"
 }

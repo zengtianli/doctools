@@ -5,10 +5,10 @@
   "command": "~/Dev/.venv/bin/python scripts/accept/recovery.py",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-10-01T00:28:19.451358+08:00",
-  "finished_at": "2026-10-01T00:28:24.066733+08:00",
-  "input_sha256": "1023927023f47d2df14337a459405c3bd49907a807778b18be423f568f1903e6",
-  "log": "perf/acceptance/recovery.log",
+  "started_at": "2026-10-05T12:10:18.159133+08:00",
+  "finished_at": "2026-10-05T12:10:21.465469+08:00",
+  "input_sha256": "b24993d539d17ccd30c2353c169587340d306ccb9f8c0966b3af97051837301b",
+  "log": "perf/acceptance/run-m12racdg/recovery.log",
   "log_sha256": "e551e5ebd4b8f63fa1434a6e37cac7de03a30e6491fc9d7761793394b9cc20c4",
   "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
   "detail": {
@@ -28,5 +28,11 @@
     ],
     "case_count": 11,
     "scope": "临时 DOCX 输入；不涵盖进程强杀、系统断电或磁盘故障恢复"
-  }
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/recovery/20261005T121018156803+0800-1rnb2b8p",
+    "manifest_sha256": "e6dc086f778df64b15b64ca572e6eda1478a82ec30be97db909c12e071e25c06"
+  },
+  "run_id": "run-m12racdg",
+  "evidence_file": "perf/acceptance/run-m12racdg/recovery.json"
 }

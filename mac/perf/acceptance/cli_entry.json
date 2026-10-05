@@ -5,10 +5,10 @@
   "command": "~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/cli_entry.py",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-10-01T10:58:58.051409+08:00",
-  "finished_at": "2026-10-01T10:58:58.461487+08:00",
-  "input_sha256": "258d6b2d7341b5395778b6acab38e24e5707d9ce2e8bdbdd24a46ebacaed0f37",
-  "log": "perf/acceptance/cli_entry.log",
+  "started_at": "2026-10-05T12:11:17.376776+08:00",
+  "finished_at": "2026-10-05T12:11:17.843866+08:00",
+  "input_sha256": "273ebe8b7e558d3065f59221d83ab72bc9618b33ea1a86dad8896498a6e49bce",
+  "log": "perf/acceptance/run-5d9foabx/cli_entry.log",
   "log_sha256": "6912a3035a068e794e1a73218ab637a4503856cd00fe1bd2c077ebee6465e752",
   "summary": "命令行在 App 里：dockit — DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。",
   "detail": {
@@ -34,5 +34,11 @@
         "error": null
       }
     ]
-  }
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/cli_entry/20261005T121117374209+0800-6zvn92do",
+    "manifest_sha256": "a18e9c249285a41b55395ade038b5e457bb745e680eb393212b3db20cd3ad8d6"
+  },
+  "run_id": "run-5d9foabx",
+  "evidence_file": "perf/acceptance/run-5d9foabx/cli_entry.json"
 }

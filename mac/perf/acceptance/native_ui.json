@@ -5,10 +5,10 @@
   "command": "bash scripts/accept/native_ui.sh",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-10-01T11:14:24.909878+08:00",
-  "finished_at": "2026-10-01T11:14:59.567377+08:00",
-  "input_sha256": "f5609dca8d9dee3574dafa0770b7753749f3f9087d60e24ba3fc9de7906aed0b",
-  "log": "perf/acceptance/native_ui.log",
+  "started_at": "2026-10-05T12:10:33.331642+08:00",
+  "finished_at": "2026-10-05T12:11:12.128064+08:00",
+  "input_sha256": "78461b036015d41554411717a8f1332bfe2437bf0cfc849509332232a787e43c",
+  "log": "perf/acceptance/run-od1xkz5r/native_ui.log",
   "log_sha256": "1beeda8fb39d86d26e11d603e80bf5a438f018ffc6dc339600fa58540e9f6935",
   "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检",
   "detail": {
@@ -70,5 +70,11 @@
     "rendering_limit": "Hidden non-key windows; key-window focused selection appearance is not covered. PNG is composited on the system window background without altering selection state.",
     "scope": "In-process rendering and state assertions, including backend-declared privacy consent defaults/reset; scan is never executed. No synthetic input, window activation, installed app or document mutation.",
     "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
-  }
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/native_ui/20261005T121033329222+0800-9pacu6cr",
+    "manifest_sha256": "bf41c121df5e12ec0d412aadb1a05a191b2d1842b3a1ed6cbcc378b6c9428bfc"
+  },
+  "run_id": "run-od1xkz5r",
+  "evidence_file": "perf/acceptance/run-od1xkz5r/native_ui.json"
 }
