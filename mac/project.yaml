@@ -46,6 +46,8 @@ sop:
       command: dockit ops
     - name: 刷新操作列表
       command: dockit ops
+    - name: 侧栏点选操作
+      command: dockit run
     - name: 搜索功能面板
       human: 只在窗口里有意义；命令用 dockit ops 列出全部操作
     - name: 选择文件或目录

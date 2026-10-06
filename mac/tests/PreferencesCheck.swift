@@ -3,9 +3,17 @@ import Foundation
 @main
 enum PreferencesCheck {
     @MainActor static func main() throws {
-        let domain = "dockit-fixture-" + UUID().uuidString
+        // 偏好域放在临时目录里的文件上,用完连目录删掉:只给域名的话,removePersistentDomain 之后
+        // ~/Library/Preferences 里仍会留下一份空的 dockit-fixture-*.plist,每跑一次多一份。
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("dockit-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let domain = directory.appendingPathComponent("prefs").path
         let preferences = UserDefaults(suiteName: domain)!
-        defer { preferences.removePersistentDomain(forName: domain) }
+        defer {
+            preferences.removePersistentDomain(forName: domain)
+            preferences.synchronize()
+            try? FileManager.default.removeItem(at: directory)
+        }
         let fixture = """
         [{"id":"fixtureA","targets":[{"id":"a1"},{"id":"a2"}],
           "options":[{"id":"fixtureConsent","type":"bool","group":"privacy","default":false}]},

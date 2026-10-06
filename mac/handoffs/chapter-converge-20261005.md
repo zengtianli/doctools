@@ -42,3 +42,43 @@
 - 五项共享生命周期功能的命令没做。
 - `scripts/accept/` 的功能、恢复、隐私、原生界面四项固定验收没有重跑；后端改动后它们的证据需要 Chapter 按新输入重跑。
 - Chapter 这次写的 `perf/acceptance/agent_cli.*` 与 `perf/delivery-evidence.json` 没有提交。
+
+## 2026-10-07 追加（二）：核验意见、装机判断与离屏核对
+
+上一节的结果经独立核验，这一轮逐条处理，并判断要不要装机。
+
+没有装机，已装的 `/Applications/DocKit.app` 一个字节没动：
+
+- 装着的是私有 Homebrew 发行的公证版 1.0.1 (323)：`spctl -a -vv` 报 `Notarized Developer ID`，`codesign -dv` 见 Developer ID 与 `Notarization Ticket=stapled`，记录在 `build/notarized/private-brew-20261006/`。
+- `build.sh` 只做临时签名，`--install` 会把这份公证版移进废纸篓、换成临时签名的包，签名等级变低。本轮不许公证和发行，做不到同等级，所以不装。
+- 也不需要装：323 之后进包的输入只有 `catalog.yaml` 的一行说明变了，`Sources/` 和 `bin/dockit` 没变，包内包装脚本与源文件逐字节相同。它执行工作树里的后端，上一节的 `status`、`settings` 对已装的 `dockit` 早已生效。
+- 没有另做一份构建留在 `build/`：构建会先跑生命周期 vendor，而共享模块的 `AppLifecycleUI.swift` 已比本仓副本新（`vendor-lifecycle.py --check` 报 drift），构建会把别的单元还在改的原版拷进 `Sources/`。
+
+核验意见的处理：
+
+- 对照补了一行「侧栏点选操作」→ `dockit run`（操作就是 `run` 的 `<op>` 参数）。现在 28 项：命令 14、只在窗口 9、暂缺 5。
+- 失败输出仍是平铺的 `{"ok":false,"error":…,"error_code":…}`，没有改成嵌套的 error 对象：这是 dockit 既有的稳定形状，帮助里写明了，界面的 Swift 解码也读它，约定允许保持。
+- 五项共享生命周期功能仍记暂缺，原因不变。共享模块源目录里已有命令层 `AppLifecycleCLI.swift`，本组件还没接；接入要改 Swift 并重新发行。
+
+新增的离屏核对（`./build.sh --check` 里多一步，`tests/SettingsFollowCheck.swift`）：
+
+- `dockit settings set` 写进临时偏好文件，真实 `AppViewModel` 新开一次就按它选中；界面改了目标和操作，`dockit settings` 读到新值；命令改回去，下一次打开的界面跟着变；不认识的值以 2 退出且偏好不变。操作与目标取自真实 `gui-ops`，不写死 id。
+- 每次「打开界面」另起一个进程。试过放在同一进程里：`UserDefaults` 读过一次就看不到别的进程后来写的值。这也说明窗口开着时命令改的设置不会即时反映，要到下次启动才选中。
+- `tests/PreferencesCheck.swift` 原来每跑一次在 `~/Library/Preferences` 留一份空的 `dockit-fixture-<UUID>.plist`，本机已有 10 份。改成把偏好域放在临时目录的文件上，用完删目录；改后跑了三次 `--check`，没有再多。旧的 10 份没有删，留给本人决定。
+
+怎么验的：
+
+- `./build.sh --check` 通过，含新的一步。`python3 -m pytest -q scripts/document/tests`：327 通过、1 跳过。`script_graph.py` 退出 0，`git diff --check` 干净。
+- 只用已装的 `dockit` 做完一项界面功能并读回：scratchpad 里的样例 Markdown，`run convert --to word --dry-run`，再 `--background` 执行，`status <job>` 从 running 读到 done、`all_ok` 为真、产出 docx 在盘上；重跑按覆盖门以 2 退出（`would_overwrite`）。锁和任务记录指到了 scratchpad。
+- 错误参数 7 种都以 2 退出，`--json` 输出带 `error` 与 `error_code`：未知选项（status、settings、doctor）、未知操作、未知目标、未知设置项、未知任务。
+- `chapter sop accept --app doc-tools-doctools --check agent_cli` 再跑，`chapter agent-cli --json` 读到：28 项、命令 14、只在窗口 9、暂缺 5，problems 为空，状态仍是暂缺。
+- 前后各导出一次 `cyou.tianli.DocTools` 与 `io.github.zengtianli.DocTools` 偏好，逐字节相同；缓存目录清单、两个已装 App 与 `~/.local/bin/dockit` 链接的修改时间都没变；没有留下进程，没有监听端口。
+
+没做的：
+
+- 没有装机，也没有新构建（原因见上）。下次随正常发行流程重新签名公证时再带上。
+- 窗口开着时不会即时跟随命令写的设置。要改得在 Swift 里加跨进程通知，改完要重新发行，这轮没动。
+- 五项共享生命周期功能的命令没接。
+- `build.sh`、`tests/*.swift`、`catalog.yaml` 都在构建回执的输入里，回执已与当前源码不一致；已装可执行文件在公证时重新签名，哈希也与回执里的不同。要等下一次发行构建刷新。
+- `scripts/accept/` 四项固定验收没有重跑。
+- Chapter 写的 `perf/acceptance/agent_cli.*` 与 `perf/delivery-evidence.json` 没有提交。

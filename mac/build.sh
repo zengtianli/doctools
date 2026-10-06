@@ -23,6 +23,10 @@ swiftc -O -o "$CHECK_DIR/decode_check" "$CHECK_DIR/main.swift" Sources/Models.sw
 swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
   tests/PreferencesCheck.swift -o "$CHECK_DIR/preferences_check"
 "$CHECK_DIR/preferences_check"
+# 命令与界面共用设置:dockit settings 写进临时偏好文件,真实 AppViewModel 按它选中;界面改了,命令读得到(离屏,不碰本人偏好)
+swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
+  tests/SettingsFollowCheck.swift -o "$CHECK_DIR/settings_follow_check"
+"$CHECK_DIR/settings_follow_check" "$DIR/bin/dockit" "$CHECK_DIR/ops.json" "$CHECK_DIR/follow"
 # agent CLI:包装脚本语法 + 真实后端 --help(与装进 App 的是同一个文件)
 sh -n bin/dockit
 bin/dockit --help > /dev/null
