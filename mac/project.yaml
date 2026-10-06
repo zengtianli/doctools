@@ -33,9 +33,69 @@ sop:
   - /Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py
   cli:
     # App 包内 Contents/Resources/bin/dockit（源 bin/dockit），exec ~/Dev/.venv 与父仓 doc_gui_backend.py，
-    # 与 GUI 同一个 gui_run；子命令 ops / run / doctor，见 dockit --help。build.sh --install 链到 ~/.local/bin/dockit
+    # 与 GUI 同一个 gui_run；子命令 ops / run / status / doctor / settings，见 dockit --help。build.sh --install 链到 ~/.local/bin/dockit
     commands: [dockit]
     app: cyou.tianli.DocTools
+  # 界面功能对照（写法见 ~/Dev/tools/cc-home/skills/app/references/agent-cli.md）。功能从 Sources/ContentView.swift、
+  # DocToolsApp.swift、ViewModel.swift、CommandPalette.swift、AppLifecycleUI.swift 逐项列出；human 项的名字与
+  # dockit --help「仅在窗口中」一节逐字对应（test_dockit_cli.py 守着），改名两处一起改。
+  agent_cli:
+    readback: dockit status
+    features:
+    - name: 操作列表与说明（标题、副标题、支持源格式、破坏性标记）
+      command: dockit ops
+    - name: 刷新操作列表
+      command: dockit ops
+    - name: 搜索功能面板
+      human: 只在窗口里有意义；命令用 dockit ops 列出全部操作
+    - name: 选择文件或目录
+      command: dockit run
+    - name: 拖入文件或目录
+      human: 拖拽是真人动作；命令把绝对路径直接写在 dockit run 后面
+    - name: 逐个移除待处理文件
+      human: 只在窗口里有意义；命令每次自带文件清单，没有待处理列表
+    - name: 清空待处理文件
+      human: 只在窗口里有意义；命令每次自带文件清单，没有待处理列表
+    - name: 目标格式
+      command: dockit run
+    - name: 选项勾选（含允许覆盖已有同名文件、外发同意）
+      command: dockit run
+    - name: 选项里选择参考文件
+      command: dockit run
+    - name: 清除已选参考文件
+      human: 只在窗口里有意义；命令不传该选项就是没选
+    - name: 恢复默认选项
+      human: 只在窗口里有意义；命令每次从默认值起，不记上次勾选
+    - name: 执行
+      command: dockit run
+    - name: 执行中的等待
+      command: dockit status
+    - name: 结果（逐份成败、产出、成功 N/M）与错误原因
+      command: dockit run
+    - name: 后端日志
+      command: dockit run
+    - name: 在 Finder 显示产出
+      human: 只在窗口里有意义；产出路径在 dockit run 的 results[].outputs
+    - name: 关闭提示条
+      human: 只在窗口里有意义；命令的错误原因在 error 与退出码里
+    - name: 状态行（已就绪 / 后端不可达）
+      command: dockit doctor
+    - name: 记住上次操作与各操作的目标格式
+      command: dockit settings
+    - name: 打开「配置与更新…」窗口
+      human: 打开窗口本身只在界面里有意义；版本看 dockit status，记住的设置看 dockit settings
+    - name: 版本与构建号
+      command: dockit status
+    - name: 使用 iCloud 记住配置
+      missing: 共享生命周期模块暂无命令入口
+    - name: 导出配置
+      missing: 共享生命周期模块暂无命令入口
+    - name: 导入配置
+      missing: 共享生命周期模块暂无命令入口
+    - name: 检查更新
+      missing: 共享生命周期模块暂无命令入口
+    - name: 升级到新版
+      missing: 共享生命周期模块暂无命令入口
   ui:
   - Sources/**
   - icon/**

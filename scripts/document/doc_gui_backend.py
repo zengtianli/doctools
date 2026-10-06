@@ -16,8 +16,10 @@ agent 契约(App 包内 Contents/Resources/bin/dockit → 本文件;退出码承
   ops [<op>] [--json]            操作目录 / 单个操作的目标、选项与默认值
   run <op> [--to T] [--opt K=V]... [--dry-run] [--yes] [--open] [--background] [--json] <paths...>
                                  与 GUI「执行」同一条 gui_run 路径;--background 返回 job id
-  status [<job>] [--json]        后台任务的状态与结果
+  status [<job>] [--json]        已装版本、界面记住的设置、后台任务;给 job id 时看该任务的状态与结果
   doctor [--json]                依赖就绪检查(对应 GUI 的「已就绪 / 后端不可达」)
+  settings [--json]              界面记住的上次操作与各操作的目标格式(与 App 同一份偏好)
+  settings set <键> <值>          改其中一项:last_operation <op> / target_formats.<op> <目标>
   退出码 0 成功 · 1 业务失败 · 2 用法/校验错误 · 75 同一目录树另有 DocKit 操作在跑
          · 128+N 被信号 N 中断(引擎子进程已一并终止)
 
@@ -33,6 +35,7 @@ import importlib.util
 import io
 import json
 import os
+import plistlib
 import re
 import secrets
 import shutil
@@ -522,7 +525,7 @@ USAGE_ERRORS = frozenset({
     "usage", "unknown_op", "unknown_option", "bad_option_value", "bad_opt_form",
     "option_file_missing", "missing_required", "consent_required", "confirm_required",
     "missing_target", "bad_target", "no_input", "not_a_dir", "no_valid_files",
-    "would_overwrite", "unknown_job",
+    "would_overwrite", "unknown_job", "unknown_setting",
 })
 CONSENT_OPT = "privacy.cloud_consent"
 _TRUE = ("1", "true", "yes", "on")
@@ -924,6 +927,57 @@ def _wrap(op_id: str, results: list[dict], missing: list[str], log: str) -> dict
     for r in results:
         r.pop("_rc", None)          # 内部字段,不进对外信封
     return out
+
+
+# ───────────────────────────────────────────── 已装版本与界面记住的设置(status / settings)
+#
+# 界面记住两样:上次选的操作、各操作上次选的目标格式(ViewModel.portablePreferenceKeys)。
+# 它们存在 App 的偏好域里;这里经 /usr/bin/defaults 读写同一个域,不另存一份。
+# 写入只改这两个键,值先按操作目录校验;界面在下次启动时按新值选中。
+# DOCKIT_DEFAULTS_DOMAIN / DOCKIT_APP_BUNDLE 只给测试用:指到临时 plist 与临时包,不碰本人偏好。
+
+PREFS_DOMAIN = os.environ.get("DOCKIT_DEFAULTS_DOMAIN") or "cyou.tianli.DocTools"
+PREF_LAST_OP, PREF_TARGETS = "dockit.lastOperation", "dockit.targetFormats"
+APP_BUNDLE = Path(os.environ.get("DOCKIT_APP_BUNDLE") or "/Applications/DocKit.app")
+_DEFAULTS = "/usr/bin/defaults"
+
+
+def _defaults(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([_DEFAULTS, *args], stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+
+
+def read_settings() -> dict:
+    """只读:导出偏好域,只取界面记住的两个键(域里的窗口位置、最近目录等一概不外带)。"""
+    proc = _defaults("export", PREFS_DOMAIN, "-")
+    if proc.returncode != 0:
+        raise RuntimeError("读不到 DocKit 偏好: " + proc.stderr.decode("utf-8", "replace").strip()[:200])
+    prefs = plistlib.loads(proc.stdout) if proc.stdout.strip() else {}
+    last, targets = prefs.get(PREF_LAST_OP), prefs.get(PREF_TARGETS)
+    return {
+        "last_operation": last if isinstance(last, str) and last else None,
+        "target_formats": {k: v for k, v in sorted(targets.items()) if isinstance(k, str) and isinstance(v, str)}
+        if isinstance(targets, dict) else {},
+    }
+
+
+def app_info() -> dict:
+    """只读:已装 DocKit.app 的版本与构建号(「配置与更新」窗口标题里那一行)。"""
+    out = {"path": str(APP_BUNDLE), "installed": False, "bundle_id": None, "version": None, "build": None}
+    try:
+        info = plistlib.loads((APP_BUNDLE / "Contents" / "Info.plist").read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return out
+    out.update(installed=True, bundle_id=info.get("CFBundleIdentifier"),
+               version=info.get("CFBundleShortVersionString"), build=info.get("CFBundleVersion"))
+    return out
+
+
+def settings_text(settings: dict) -> str:
+    last = settings.get("last_operation")
+    title = _OPS_BY_ID.get(last, {}).get("title") if last else None
+    targets = settings.get("target_formats") or {}
+    return ("上次操作:" + (f"{last}" + (f"({title})" if title else "(操作目录里已没有)") if last else "未记录")
+            + " · 目标格式:" + ("、".join(f"{k}={v}" for k, v in targets.items()) or "未记录"))
 
 
 # ───────────────────────────────────────────── doctor(对应 GUI 的「已就绪 / 后端不可达」)
@@ -1338,14 +1392,64 @@ def cmd_status(a) -> int:
                 res = job.pop("result", None) or {}
                 job.update({k: res[k] for k in ("succeeded", "total", "error_code") if k in res})
                 jobs.append(job)
+    app = app_info()
+    try:
+        settings = read_settings()
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+        settings = None      # 读不到偏好不影响任务列表;settings 命令会给出原因
     if a.json:
-        _emit({"ok": True, "jobs": jobs})
+        _emit({"ok": True, "app": app, "settings": settings, "jobs": jobs})
     else:
+        print((f"DocKit {app['version']} ({app['build']}) · {app['path']}" if app["installed"]
+               else f"DocKit.app 未安装在 {app['path']}") + f" · 后端 {len(OPS)} 个操作")
+        print("界面记住的设置 · " + (settings_text(settings) if settings is not None else "读不到(dockit settings 看原因)"))
         for j in jobs:
             print(f"{j['id']}  {_pad(j['op'], 12)}{_pad(j['status'], 12)}"
                   + (f"退出码 {j['exit_code']}" if "exit_code" in j else ""))
         if not jobs:
             print(f"没有后台任务(保留最近 {JOB_KEEP_DAYS} 天)")
+    return EXIT_OK
+
+
+def cmd_settings(a) -> int:
+    if getattr(a, "settings_cmd", None) != "set":
+        settings = read_settings()
+        if a.json:
+            _emit({"ok": True, "domain": PREFS_DOMAIN, "settings": settings})
+        else:
+            print(settings_text(settings))
+        return EXIT_OK
+    key, value = a.key.strip(), a.value.strip()
+    before = read_settings()
+    if key == "last_operation":
+        if value not in _OPS_BY_ID:
+            return _fail(a, _err("unknown_op", f"未知操作: {value}(支持 {', '.join(_OPS_BY_ID)})"))
+        old, write = before["last_operation"], (PREF_LAST_OP, "-string", value)
+    elif key.startswith("target_formats."):
+        op = _OPS_BY_ID.get(key.split(".", 1)[1])
+        if op is None:
+            return _fail(a, _err("unknown_op", f"未知操作: {key.split('.', 1)[1]}(支持 {', '.join(_OPS_BY_ID)})"))
+        ids = [t["id"] for t in op.get("targets", [])]
+        if value not in ids:
+            return _fail(a, _err("bad_target", f"「{op['title']}」" + (f"的目标只有 {', '.join(ids)}" if ids
+                                                                      else "没有目标可选") + f",不能记成 {value}"))
+        old, write = before["target_formats"].get(op["id"]), (PREF_TARGETS, "-dict-add", op["id"], "-string", value)
+    else:
+        return _fail(a, _err("unknown_setting",
+                             f"没有这项设置: {key}(可改 last_operation <op>、target_formats.<op> <目标>)"))
+    proc = _defaults("write", PREFS_DOMAIN, *write)
+    after = read_settings() if proc.returncode == 0 else before
+    now = after["last_operation"] if key == "last_operation" else after["target_formats"].get(key.split(".", 1)[1])
+    if proc.returncode != 0 or now != value:
+        return _fail(a, _err("settings_write_failed", "偏好没有写进去: "
+                             + (proc.stderr.decode("utf-8", "replace").strip()[:200] or "写后读回的值不一致")))
+    payload = {"ok": True, "domain": PREFS_DOMAIN, "settings": after,
+               "changed": {"key": key, "from": old, "to": value}}
+    if a.json:
+        _emit(payload)
+    else:
+        print(f"已记住 {key} = {value}(原为 {old or '未记录'});DocKit 下次启动时按它选中")
+        print(settings_text(after))
     return EXIT_OK
 
 
@@ -1384,7 +1488,22 @@ def _gui_main(a) -> int:
 
 
 _DESCRIPTION = """DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。
-GUI 给人用,dockit 给 agent 用;拖拽、⌘K 面板、在 Finder 中显示这类纯界面动作只在 App 里。"""
+GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份偏好。不带参数只打印本帮助,不打开窗口。
+
+读命令(不写任何文件、偏好或任务记录):
+  dockit ops [<op>] [--json]         操作目录;给出 <op> 时是它的输入格式、目标、选项与默认值
+  dockit status [<job>] [--json]     读回当前状态:已装版本与构建号、界面记住的设置、最近的后台任务;
+                                     给 job id 时是该任务的状态与结果
+  dockit doctor [--json]             依赖是否就绪(界面状态行的「已就绪 / 后端不可达」)
+  dockit settings [--json]           界面记住的上次操作与各操作的目标格式
+  dockit run <op> --dry-run <path>…  只校验:列出将处理的输入与将覆盖的已有文件,不执行
+
+写命令:
+  dockit run <op> [--to T] [--opt K=V]… [--yes] [--background] [--json] <path>…
+                                     执行一个操作(界面的「执行」);产出写在源文件旁,
+                                     fontunify 与 pptx 的 clean 原地改写;--background 另记一条后台任务
+  dockit settings set <键> <值> [--json]
+                                     改界面记住的设置:last_operation <op> 或 target_formats.<op> <目标>"""
 
 _EPILOG = """示例:
   dockit ops                                   列出 14 个操作
@@ -1397,14 +1516,44 @@ _EPILOG = """示例:
   dockit run typeset --background --json /abs/报告.md   长任务:立刻返回 job id
   dockit status <job> --json                   查询后台任务;结束后附完整结果信封
   dockit run scan --opt privacy.cloud_consent=1 /abs/标书目录   外发 Claude,须本人同意后才加
+  dockit settings set target_formats.convert md   界面下次打开「格式转换」时默认选 Markdown
   dockit doctor
 
-退出码:0 成功 · 1 业务失败(有输入失败/被跳过、门检有红门、doctor 有缺项)
-        2 用法或校验错误(未知操作/选项/目标、缺必填、缺外发同意、破坏性操作缺 --yes、
-          会覆盖已有同名文件却没给 --yes、没有有效文件)
-        75 同一目录树(含上级/下级目录)正有另一个 DocKit 操作在运行,稍后重试
-        128+N 被信号 N 中断(引擎进程组一并终止) · 69 包装脚本找不到 ~/Dev/.venv 或后端
---json 信封里 ok 是请求级(请求被处理即 true);逐个输入看 results[].ok,整体看 all_ok 或退出码。
+--json 输出形状(每条命令一个 JSON 对象,snake_case):
+  ops       {"ok":true,"ops":[{id,title,subtitle,kind,exts,danger,targets,option_groups,options,…}]}
+            ops <op> 为 {"ok":true,"op":{…}}
+  run       {"ok":true,"all_ok":bool,"op","results":[{name,ok,message,outputs,modified_in_place,…}],
+             "succeeded","total","skipped_missing","log"};--dry-run 另带 "dry_run":true 与 overwrites;
+            --background 为 {"ok":true,"job":{id,op,inputs,pid,status,…},"status_cmd"}
+  status    {"ok":true,"app":{path,installed,bundle_id,version,build},
+             "settings":{last_operation,target_formats}|null,"jobs":[{id,op,status,exit_code,…}]}
+            status <job> 为 {"ok":true,"job":{id,op,status,exit_code,result}}
+  doctor    {"ok":bool,"ready","total","checks":[{id,ok,detail,affects}]}
+  settings  {"ok":true,"domain","settings":{"last_operation":op|null,"target_formats":{op:目标}}}
+            settings set 另带 "changed":{key,from,to}
+  失败      {"ok":false,"error":"给人看的原因","error_code":"稳定短码"},退出码非零;用法错误加 --json 时同样是这个对象。
+  run 的 ok 是请求级(请求被处理即 true);逐个输入看 results[].ok,整体看 all_ok 或退出码。
+
+退出码:
+  0      成功(ops / status / settings 查无内容也算成功)
+  1      业务失败:有输入失败或被跳过、门检有红门、doctor 有缺项、后台任务丢失、偏好没写进去
+  2      用法或校验错误:未知操作/选项/目标/设置项/任务 id、缺必填、缺外发同意、破坏性操作缺 --yes、
+         会覆盖已有同名文件却没给 --yes、没有有效文件
+  69     包装脚本找不到 ~/Dev/.venv 或后端
+  75     同一目录树(含上级/下级目录)正有另一个 DocKit 操作在运行,稍后重试
+  128+N  被信号 N 中断(引擎进程组一并终止)
+
+仅在窗口中(界面动作,括号里是命令这边的做法):
+  拖入文件或目录(把绝对路径写在 dockit run 后面)
+  清空待处理文件、逐个移除待处理文件(命令每次自带文件清单,没有待处理列表)
+  恢复默认选项、清除已选参考文件(命令每次从默认值起,不传 --opt 就是默认)
+  在 Finder 显示产出(路径在 run 的 results[].outputs)
+  关闭提示条(命令的错误原因在 error 与退出码里,没有常驻提示条)
+  搜索功能面板 ⌘K(dockit ops 列出全部操作)
+  打开「配置与更新…」窗口(版本看 dockit status,记住的设置看 dockit settings)
+  公开版的「DocKit 使用教程」(打开帮助网页)
+暂无命令(共享生命周期模块还没有命令入口):使用 iCloud 记住配置、导出配置、导入配置、检查更新、升级到新版。
+
 产出写在源文件旁:_fixed / _styled / _序号修正 / _lower 等 DocKit 后缀的产出重跑时覆盖上一次;
 与源同名换后缀(b.md → b.docx)、merged.md、按 sheet 命名的产出已存在时默认拒绝(would_overwrite),
 确认覆盖加 --yes。fontunify 与 pptx 的 clean 原地改写(已有 .backup 时另存编号备份,不顶掉原件)。
@@ -1445,18 +1594,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="输出与 GUI 相同的 JSON 结果信封")
     p.add_argument("-v", "--verbose", action="store_true", help="文本模式下把引擎日志打到 stderr")
 
-    p = sub.add_parser("status", help="查询后台任务(run --background)的状态与结果",
-                       description="不带参数列出最近 20 个后台任务;带 job id 给出该任务状态"
-                                   "(running / done / interrupted / lost),结束后附完整结果信封。",
+    p = sub.add_parser("status", help="读回当前状态:已装版本、界面记住的设置、后台任务(run --background)",
+                       description="不带参数读回当前状态:已装 DocKit.app 的版本与构建号、界面记住的设置、"
+                                   "最近 20 个后台任务;带 job id 给出该任务状态"
+                                   "(running / done / interrupted / lost),结束后附完整结果信封。只读。",
                        epilog="退出码:running 为 0;结束后与该任务同步运行时的退出码相同;lost 为 1;未知 id 为 2。",
                        formatter_class=fmt)
     p.add_argument("job_id", nargs="?", metavar="job", help="run --background 返回的 id")
     p.add_argument("--json", action="store_true",
-                   help='输出 JSON:{"ok":true,"job":{...}} 或 {"ok":true,"jobs":[...]}')
+                   help='输出 JSON:{"ok":true,"job":{...}} 或 {"ok":true,"app":{...},"settings":{...},"jobs":[...]}')
 
     p = sub.add_parser("doctor", help="检查依赖是否就绪(venv、uv、soffice、markitdown、pdftotext、claude 等)",
                        description="只做存在与可导入检查,不启动转换、不联网、不读文档。有缺项 exit 1。")
     p.add_argument("--json", action="store_true", help='输出 JSON:{"ok","ready","total","checks":[...]}')
+
+    p = sub.add_parser("settings", help="读或改界面记住的设置(上次操作、各操作的目标格式)",
+                       description="不带参数只读:界面记住的上次操作与各操作的目标格式(与 App 同一份偏好)。"
+                                   "settings set 改其中一项,值先按操作目录校验;DocKit 下次启动时按新值选中。"
+                                   "界面的选项勾选不记,每次从操作默认值起。",
+                       epilog="可改的键:last_operation <op> · target_formats.<op> <目标>(目标见 dockit ops <op>)\n"
+                              "退出码:0 成功 · 1 偏好没写进去 · 2 未知设置项/操作/目标",
+                       formatter_class=fmt)
+    p.add_argument("--json", action="store_true",
+                   help='输出 JSON:{"ok":true,"domain","settings":{"last_operation","target_formats"}}')
+    ssub = p.add_subparsers(dest="settings_cmd", metavar="<action>")
+    q = ssub.add_parser("set", help="改一项:last_operation <op> 或 target_formats.<op> <目标>",
+                        description="改界面记住的一项设置并读回;只写这一个键,不动偏好域里的其他内容。")
+    q.add_argument("key", metavar="键", help="last_operation 或 target_formats.<op>")
+    q.add_argument("value", metavar="值", help="操作 id 或该操作的目标 id")
+    q.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                   help='输出 JSON:另带 "changed":{key,from,to}')
 
     sub.add_parser("gui-ops", help="GUI 内部契约:{ok, ops} JSON,总是 exit 0")
     p = sub.add_parser("gui-run", help="GUI 内部契约:成败只在 JSON 信封里,总是 exit 0(agent 用 run)")
@@ -1483,6 +1650,8 @@ def main() -> int:
             return cmd_status(a)
         if a.cmd == "doctor":
             return cmd_doctor(a)
+        if a.cmd == "settings":
+            return cmd_settings(a)
     except _Interrupted as i:
         return _fail(a, _interrupted(i))
     except Exception as e:  # noqa: BLE001 — agent 拿信封与退出码,不拿 traceback

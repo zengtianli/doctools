@@ -6,7 +6,7 @@ icon_png: icon/AppIcon.png
 function: doctools 内部 SwiftUI 文档处理客户端，动态消费 gui-ops 与 gui-run JSON 接口。
 public_api: DocKit.app(GUI) → doc_gui_backend.py {gui-ops, gui-run --op <verb> [--to
   T] [--opt K=V]... --files ...} (JSON 信封契约,经 uv run --project ~/Dev 调用;复用 doc_dispatch.py
-  路由,零重写业务);dockit {ops, run, status, doctor}(包内 Resources/bin/dockit,agent CLI,同一个 gui_run,退出码承载成败)
+  路由,零重写业务);dockit {ops, run, status, doctor, settings}(包内 Resources/bin/dockit,agent CLI,同一个 gui_run,退出码承载成败)
 key_scripts:
 - Sources/DocToolsApp.swift
 - Sources/ContentView.swift

@@ -38,6 +38,9 @@ dockit run view /abs/notes.md                        # reports the HTML path; --
 dockit run lowercase --dry-run /abs/data.xlsx        # preview destructive operations, then add --yes
 dockit run typeset --background --json /abs/report.md   # long task: returns a job id at once
 dockit status <job> --json                          # running / done / interrupted / lost, full result when finished
+dockit status --json                                # read back current state: installed version and build, remembered settings, recent background jobs
+dockit settings --json                              # the last operation and per-operation target format the app remembers
+dockit settings set target_formats.convert md       # change one of them; the other key is last_operation <op>
 dockit doctor                                       # venv, uv, soffice, markitdown, pdftotext, claude and more
 ```
 
@@ -64,8 +67,16 @@ Coverage:
 | Waiting while an operation runs | `run --background` and `dockit status <id>` |
 | "Ready / backend unreachable" | `dockit doctor [--json]` |
 | Cloud consent for sensitive-word scanning | `--opt privacy.cloud_consent=1` (the same gate) |
+| Remembered last operation and per-operation target format | `dockit settings [--json]`; `dockit settings set <key> <value>` |
+| Version and build shown in the "Settings and Updates" window | `app` in `dockit status [--json]` |
 
-GUI only: dropping files or folders, the file picker, the ⌘K command palette, ⌘R refresh, "Restore defaults", revealing outputs in Finder, and the `--ui-self-test` offscreen check. The command line uses absolute path arguments, the defaults listed by `ops`, and the output paths in its JSON instead.
+The read commands are `ops`, `status`, `doctor`, `settings` and `run --dry-run`; they write no files, preferences or job records. The write commands are `run` and `settings set`. `dockit --help` lists both groups, the `--json` shape of every command, the exit code table and the window-only actions.
+
+`settings` reads and writes the app's own two preference keys (`dockit.lastOperation`, `dockit.targetFormats`) rather than keeping a second copy. Values are validated against the operation catalog first; an unknown operation or target exits 2 and writes nothing. DocKit selects the new values the next time it starts. Other content in the preference domain, such as window positions and recent folders, is neither printed by the read command nor changed by the write command.
+
+Window only: dropping files or folders, clearing the pending files, removing a single pending file, restoring default options, clearing a chosen reference file, revealing outputs in Finder, dismissing the banner, the ⌘K search palette, opening the "Settings and Updates" window, and the `--ui-self-test` offscreen check. The command line uses absolute path arguments, the defaults listed by `ops`, and the output paths in its JSON instead.
+
+No command yet: remembering settings in iCloud, exporting settings, importing settings, checking for updates, and upgrading. These five live in the lifecycle module shared across products, which has no command entry yet. The item-by-item mapping is registered under `sop.agent_cli` in `project.yaml`.
 
 <!-- lightweight:start -->
 ## Resource use

@@ -8,3 +8,37 @@
 - 正式test9348dc7743ea49c0af00a34045479413与当前code_key一致。固定验收 functionality bda78c6ee41849869ca8ae82a7efbf01、recovery54768551889242f08d73a55ec1f1b76f、privacy9d8ed4d2561b422ba743d58e875d45a4、native_ui2e3a8962906f4e189af2ae2978403734、cli_entry2c75b26dc98f449fb3095f1f9ff4d1ce全部通过。既有图标有效证据复用。
 - perf e7f3e4d435e64575845f57ae1bc9b639实际通过：五次os_log首屏就绪[579,509,491,548,523]ms、中位数523ms；静置45秒后采60秒，50MiB、CPU0%；安装2,818,048 bytes。采样全程前台未变、无窗口与抢焦点。测量输入d45ce87b…，原件`~/Library/Caches/app-lightweight/measurement-candidates/323f847dccee476c9b96b446947cf08e.raw.json`、SHA a19f21b5…。
 - 最终 `sop run --check-only --retry`：current_passed、delivery_state=complete、coverage=[]、gaps=[]。未推送、发布、重录或重做推广。
+
+## 2026-10-07 追加：界面功能对照与命令补齐（agent_cli）
+
+约定见 app 技能 `references/agent-cli.md`，缺口清单见 Chapter 的 `docs/PRD-agent-cli.md`。
+
+做了什么：
+
+- 从 `Sources/` 五个界面文件逐项列出 27 项功能，登记在 `project.yaml` 的 `sop.agent_cli`：命令 13、只在窗口 9、暂缺 5。读回命令是 `dockit status`。
+- `dockit status` 不带参数时除后台任务外，另报已装 `DocKit.app` 的版本与构建号、界面记住的设置。原有的 `jobs` 字段没动，只多了 `app` 和 `settings`。
+- 新增 `dockit settings`（只读）和 `dockit settings set <键> <值>`。读写的就是界面那两个偏好键（`dockit.lastOperation`、`dockit.targetFormats`），经 `/usr/bin/defaults` 走同一个偏好域。值先按操作目录校验，未知操作、目标或设置项以 2 退出且不写入。偏好域里的窗口位置、最近目录等内容，读命令不输出，写命令不改。
+- `dockit --help` 补齐四样：读命令与写命令分节、每条命令的 `--json` 输出形状、退出码表、「仅在窗口中」清单。登记里每个 human 项的名字都在这一节里逐字出现，公开版登记的 10 个 human 项也在。
+- README 中英文、本目录与父仓 `CLAUDE.md`、`catalog.yaml` 同步了新命令。
+
+对照结果：
+
+- 命令 13 项：操作列表与说明、刷新、选择文件或目录、目标格式、选项勾选、选项里选择参考文件、执行、执行中的等待、结果与错误原因、后端日志、状态行、记住上次操作与目标格式、版本与构建号。
+- 只在窗口 9 项：搜索功能面板、拖入文件或目录、逐个移除待处理文件、清空待处理文件、清除已选参考文件、恢复默认选项、在 Finder 显示产出、关闭提示条、打开「配置与更新…」窗口。
+- 暂缺 5 项：使用 iCloud 记住配置、导出配置、导入配置、检查更新、升级到新版。原因都是共享生命周期模块暂无命令入口，由管该模块的单元统一做，本组件没有各自实现。
+
+怎么验的：
+
+- `python3 -m pytest -q scripts/document/tests`：327 通过、1 跳过。其中 `test_dockit_cli.py` 50 项，新增 5 个用例，另给帮助用例加了 3 组参数。新用例把偏好指到临时 plist、把已装版本指到临时包，不碰本人偏好和已装 App；其中一条钉住登记里的 human 项必须出现在帮助的「仅在窗口中」。共享 `~/Dev/.venv` 没有 pytest，沿用系统 `python3`。
+- `./build.sh --check` 通过（14 个操作解码、偏好隔离检查、包装脚本帮助）。
+- 已装的 `dockit` 实跑：`dockit status --json` 退出 0，读到 1.0.1 (323)；`dockit settings --no-such-flag --json` 退出 2 并带 `error`。实跑前后导出本人偏好域逐字节比对，没有变化；缓存目录文件清单没有变化。
+- 用临时目录里的样例 Markdown 实跑 `dockit run convert --to word`：先 `--dry-run`，再执行得到 docx，重跑按覆盖门以 `would_overwrite` 拒绝。
+- `chapter sop accept --app doc-tools-doctools --check agent_cli`：登记与帮助没有问题（problems 为空），因暂缺 5 项判未通过。
+
+没做的：
+
+- 没有重新构建和装机。`bin/dockit` 没改，它直接执行工作树里的后端，所以新命令对已装的 `dockit` 立即生效；App 包本身没有变化。
+- 没有对本人真实偏好运行 `settings set`，写入只在临时 plist 上验过。界面在运行中不会即时反映命令写入的值，要到下次启动才按新值选中，这一点没有开窗口验证。
+- 五项共享生命周期功能的命令没做。
+- `scripts/accept/` 的功能、恢复、隐私、原生界面四项固定验收没有重跑；后端改动后它们的证据需要 Chapter 按新输入重跑。
+- Chapter 这次写的 `perf/acceptance/agent_cli.*` 与 `perf/delivery-evidence.json` 没有提交。

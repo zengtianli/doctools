@@ -15,8 +15,12 @@ DocKit 的 GUI 给人用,`dockit` 给 agent 用,两者必须走同一个 gui_run
      已存在时默认拒绝(would_overwrite),--yes / 勾选才覆盖;分层目录锁让父子目录的操作互斥;
      后台任务可查询;被 SIGTERM 时引擎进程组一起结束、锁文件清掉。
 
+  5. (2026-10-07)顶层帮助的四样(读/写命令、--json 形状、退出码表、「仅在窗口中」)与登记对得上;
+     status 读回已装版本与界面记住的设置;settings 读写的是 App 那两个偏好键,值先校验。
+
 全部输入都是本测试现造的临时文件;不碰用户文档、不联网、不打开浏览器。
 锁与后台任务写进 DOCKIT_CACHE_DIR 指向的临时目录,不碰 ~/Library/Caches。
+偏好读写指到 DOCKIT_DEFAULTS_DOMAIN 的临时 plist,已装版本读 DOCKIT_APP_BUNDLE 的临时包,不碰本人偏好与已装 App。
 """
 from __future__ import annotations
 
@@ -24,6 +28,8 @@ import fcntl
 import hashlib
 import json
 import os
+import plistlib
+import re
 import shutil
 import signal
 import subprocess
@@ -45,7 +51,9 @@ CACHE = Path(tempfile.mkdtemp(prefix="dockit-cache-"))   # 锁与后台任务的
 
 def _env(**extra) -> dict:
     # BROWSER=true:即使回归把 --no-open 弄丢,也只会调到 /usr/bin/true,不会弹浏览器抢焦点
-    return {**os.environ, "BROWSER": "/usr/bin/true", "DOCKIT_CACHE_DIR": str(CACHE), **extra}
+    return {**os.environ, "BROWSER": "/usr/bin/true", "DOCKIT_CACHE_DIR": str(CACHE),
+            "DOCKIT_DEFAULTS_DOMAIN": str(CACHE / "prefs.plist"),      # 不读写本人的 DocKit 偏好
+            "DOCKIT_APP_BUNDLE": str(CACHE / "DocKit.app"), **extra}   # 不读已装的 DocKit.app
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -82,7 +90,8 @@ def docx_file(tmp_path: Path) -> Path:
 
 # ─────────────────────────────── help / ops
 
-@pytest.mark.parametrize("args", [["--help"], ["ops", "--help"], ["run", "--help"], ["doctor", "--help"]])
+@pytest.mark.parametrize("args", [["--help"], ["ops", "--help"], ["run", "--help"], ["doctor", "--help"],
+                                  ["status", "--help"], ["settings", "--help"], ["settings", "set", "--help"]])
 def test_help_exits_zero(args):
     proc = dockit(*args)
     assert proc.returncode == 0, proc.stderr
@@ -460,3 +469,120 @@ def test_scan_consent_on_folder_without_markdown_sends_nothing(tmp_path: Path):
     row = as_json(proc)["results"][0]
     assert proc.returncode == 0 and row["findings"] == [] and row["md_files"] == 0
     assert "没有 .md" in row["message"]
+
+
+# ─────────────────────────────── 帮助四样 / 读回 / 界面记住的设置(2026-10-07)
+
+def _section(text: str, title: str) -> str:
+    """帮助里以 title 起头的那一节(到下一个空行为止)。"""
+    m = re.search(r"(?m)^" + re.escape(title) + r".*\n(?:.+\n?)*", text)
+    assert m, f"顶层帮助缺「{title}」一节"
+    return m.group(0)
+
+
+def test_top_level_help_has_read_write_json_exit_and_window_only():
+    text = dockit("--help").stdout
+    reads, writes = _section(text, "读命令"), _section(text, "写命令")
+    for sub in ("ops", "status", "doctor", "settings"):
+        assert re.search(rf"(?m)^\s+dockit {sub}\b", reads), f"读命令没列 {sub}"
+    assert re.search(r"(?m)^\s+dockit run\b", writes) and re.search(r"(?m)^\s+dockit settings set\b", writes)
+    shapes = _section(text, "--json 输出形状")
+    for sub in ("ops", "run", "status", "doctor", "settings"):
+        assert re.search(rf"(?m)^\s+{sub}\s+\{{", shapes), f"--json 形状没写 {sub}"
+    assert '"error_code"' in shapes
+    codes = _section(text, "退出码")
+    for code in ("0", "1", "2", "69", "75", "128+N"):
+        assert re.search(rf"(?m)^\s+{re.escape(code)}\s", codes), f"退出码表缺 {code}"
+    _section(text, "仅在窗口中")
+
+
+def test_every_human_feature_is_listed_as_window_only():
+    """登记里每个 human 项都要出现在帮助的「仅在窗口中」;每个 command 的子命令都是真子命令。"""
+    import yaml
+    spec = yaml.safe_load((ROOT / "mac" / "project.yaml").read_text(encoding="utf-8"))["sop"]["agent_cli"]
+    text = dockit("--help").stdout
+    window = _section(text, "仅在窗口中")
+    features = spec["features"]
+    assert features and all(sum(k in f for k in ("command", "human", "missing")) == 1 for f in features)
+    absent = [f["name"] for f in features if "human" in f and f["name"] not in window]
+    assert not absent, f"帮助的「仅在窗口中」没列: {absent}"
+    for row in [spec["readback"], *(f["command"] for f in features if "command" in f)]:
+        words = row.split()
+        assert words[0] == "dockit" and dockit(*words[1:], "--help").returncode == 0, row
+    for f in features:   # 暂缺项在帮助里也要有去向,不能只在登记里
+        if "missing" in f:
+            assert f["name"].rstrip("…") in text, f["name"]
+
+
+def _fake_app(root: Path, version: str = "9.8.7", build: str = "654") -> Path:
+    app = root / "DocKit.app"
+    (app / "Contents").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({
+        "CFBundleIdentifier": "cyou.tianli.DocTools", "CFBundleShortVersionString": version, "CFBundleVersion": build}))
+    return app
+
+
+def _tree(root: Path) -> dict:
+    return {str(p.relative_to(root)): (p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(root.rglob("*"))}
+
+
+def test_status_reads_back_version_settings_and_jobs_without_writing(tmp_path: Path):
+    app = _fake_app(tmp_path)
+    env = _env(DOCKIT_CACHE_DIR=str(tmp_path / "cache"), DOCKIT_DEFAULTS_DOMAIN=str(tmp_path / "prefs.plist"),
+               DOCKIT_APP_BUNDLE=str(app))
+    before = _tree(tmp_path)
+    proc = dockit("status", "--json", env=env)
+    payload = as_json(proc)
+    assert proc.returncode == 0 and payload["ok"] and payload["jobs"] == []
+    assert payload["app"] == {"path": str(app), "installed": True, "bundle_id": "cyou.tianli.DocTools",
+                              "version": "9.8.7", "build": "654"}
+    assert payload["settings"] == {"last_operation": None, "target_formats": {}}
+    assert "9.8.7 (654)" in dockit("status", env=env).stdout
+    for args in (["settings", "--json"], ["ops", "--json"], ["ops", "convert"], ["status"]):
+        assert dockit(*args, env=env).returncode == 0
+    assert _tree(tmp_path) == before, "读命令写了文件"      # 读命令不建缓存目录、不建偏好文件
+    gone = as_json(dockit("status", "--json", env={**env, "DOCKIT_APP_BUNDLE": str(tmp_path / "none.app")}))
+    assert gone["app"]["installed"] is False and gone["app"]["version"] is None
+
+
+def test_settings_set_validates_then_reads_back_only_its_two_keys(tmp_path: Path):
+    prefs = tmp_path / "prefs.plist"
+    # 域里已有界面自己的其他内容:写命令不许动它,读命令不许外带
+    prefs.write_bytes(plistlib.dumps({"NSWindow Frame Main": "1 2 3 4", "dockit.targetFormats": {"renum": "tabfig"}}))
+    env = _env(DOCKIT_DEFAULTS_DOMAIN=str(prefs))
+    first = as_json(dockit("settings", "--json", env=env))
+    assert first["settings"] == {"last_operation": None, "target_formats": {"renum": "tabfig"}}
+    assert "NSWindow" not in json.dumps(first)
+    for args, code in ([["last_operation", "no-such-op"], "unknown_op"],
+                       [["target_formats.no-such-op", "md"], "unknown_op"],
+                       [["target_formats.convert", "no-such-target"], "bad_target"],
+                       [["target_formats.clean", "md"], "bad_target"],      # 规范化没有目标可选
+                       [["window_frame", "0 0 1 1"], "unknown_setting"]):
+        bad = dockit("settings", "set", *args, "--json", env=env)
+        assert bad.returncode == 2 and as_json(bad)["error_code"] == code, (args, bad.stdout)
+    assert plistlib.loads(prefs.read_bytes()) == {"NSWindow Frame Main": "1 2 3 4",
+                                                  "dockit.targetFormats": {"renum": "tabfig"}}, "校验失败却写了偏好"
+    usage = dockit("settings", "set", "last_operation", "--json", env=env)       # 缺值:用法错误也给 JSON
+    assert usage.returncode == 2 and as_json(usage)["error_code"] == "usage"
+    done = as_json(dockit("settings", "set", "last_operation", "convert", "--json", env=env))
+    assert done["changed"] == {"key": "last_operation", "from": None, "to": "convert"}
+    done = as_json(dockit("settings", "--json", "set", "target_formats.convert", "md", env=env))   # --json 在前也认
+    assert done["changed"] == {"key": "target_formats.convert", "from": None, "to": "md"}
+    again = as_json(dockit("settings", "set", "target_formats.convert", "word", "--json", env=env))
+    assert again["changed"]["from"] == "md" and again["settings"]["target_formats"] == {"convert": "word", "renum": "tabfig"}
+    text = dockit("settings", env=env)
+    assert text.returncode == 0 and "convert" in text.stdout and "renum=tabfig" in text.stdout
+    assert as_json(dockit("status", "--json", env=env))["settings"] == again["settings"]      # status 读到同一份
+    # App 读的就是这两个键(ViewModel.portablePreferenceKeys);别的键原样留着
+    assert plistlib.loads(prefs.read_bytes()) == {
+        "NSWindow Frame Main": "1 2 3 4", "dockit.lastOperation": "convert",
+        "dockit.targetFormats": {"convert": "word", "renum": "tabfig"}}
+
+
+def test_settings_keys_match_the_app_preference_keys():
+    """settings 写的键名必须是界面读的那两个;Swift 侧改名而这里没跟,命令就成了写给空气。"""
+    swift = (ROOT / "mac" / "Sources" / "ViewModel.swift").read_text(encoding="utf-8")
+    assert 'portablePreferenceKeys = ["dockit.lastOperation", "dockit.targetFormats"]' in swift
+    backend = BACKEND.read_text(encoding="utf-8")
+    assert 'PREF_LAST_OP, PREF_TARGETS = "dockit.lastOperation", "dockit.targetFormats"' in backend
+    assert 'or "cyou.tianli.DocTools"' in backend      # 默认域 = App 的 bundle id

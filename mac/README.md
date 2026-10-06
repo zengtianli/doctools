@@ -42,8 +42,13 @@ dockit run view /abs/说明.md                         # 报告 HTML 路径；�
 dockit run lowercase --dry-run /abs/数据.xlsx        # 破坏性操作先看计划，确认后再加 --yes
 dockit run typeset --background --json /abs/报告.md  # 长任务立刻返回 job id
 dockit status <job> --json                          # running / done / interrupted / lost，结束后附完整结果
+dockit status --json                                # 读回当前状态：已装版本与构建号、界面记住的设置、最近的后台任务
+dockit settings --json                              # 界面记住的上次操作与各操作的目标格式
+dockit settings set target_formats.convert md       # 改其中一项；另一个键是 last_operation <op>
 dockit doctor                                       # venv、uv、soffice、markitdown、pdftotext、claude 等依赖
 ```
+
+读命令是 `ops`、`status`、`doctor`、`settings` 和 `run --dry-run`，不写任何文件、偏好或任务记录；写命令是 `run` 和 `settings set`。`dockit --help` 列出这两组命令、每条命令的 `--json` 输出形状、退出码表和只在窗口里的动作。
 
 退出码：0 表示成功；1 表示业务失败（有输入失败或被跳过、门检有红门、doctor 有缺项）；2 表示用法或校验错误（未知操作、选项或目标，缺必填项，缺外发同意，破坏性操作缺 `--yes`，会覆盖已有同名文件却没给 `--yes`，没有有效文件）；75 表示同一目录树（含上级或下级目录）正有另一个 DocKit 操作在运行，稍后重试即可；128+N 表示被信号 N 中断（例如 agent 超时发出的 SIGTERM 得到 143），正在运行的引擎进程组会一并终止；69 表示找不到 venv 或后端。
 
@@ -68,8 +73,14 @@ dockit doctor                                       # venv、uv、soffice、mark
 | 执行中的等待 | `run --background` 与 `dockit status <id>` |
 | 「已就绪 / 后端不可达」 | `dockit doctor [--json]` |
 | 敏感词扫描的外发同意 | `--opt privacy.cloud_consent=1`（同一道门） |
+| 记住上次操作与各操作的目标格式 | `dockit settings [--json]`；`dockit settings set <键> <值>` |
+| 「配置与更新」窗口里的版本与构建号 | `dockit status [--json]` 的 `app` |
 
-只在 GUI 里：拖入文件或目录、文件选择面板、⌘K 命令面板、⌘R 刷新、「恢复默认」、在 Finder 中显示产出，以及 `--ui-self-test` 离屏自检。命令行分别用绝对路径参数、`ops` 列出的默认值和 JSON 里的产出路径替代。
+`settings` 读写的就是 App 的那两个偏好键（`dockit.lastOperation`、`dockit.targetFormats`），不另存一份；值先按操作目录校验，未知操作或目标以 2 退出、不写入。DocKit 在下次启动时按新值选中。偏好域里的窗口位置、最近目录等其他内容，读命令不输出，写命令不改动。
+
+只在窗口里：拖入文件或目录、清空待处理文件、逐个移除待处理文件、恢复默认选项、清除已选参考文件、在 Finder 显示产出、关闭提示条、搜索功能面板（⌘K）、打开「配置与更新…」窗口，以及 `--ui-self-test` 离屏自检。命令行分别用绝对路径参数、`ops` 列出的默认值和 JSON 里的产出路径替代。
+
+暂无命令：使用 iCloud 记住配置、导出配置、导入配置、检查更新、升级到新版。这五项在各产品共用的生命周期模块里，该模块还没有命令入口。逐项对照登记在 `project.yaml` 的 `sop.agent_cli`。
 
 <!-- lightweight:start -->
 ## 资源占用
