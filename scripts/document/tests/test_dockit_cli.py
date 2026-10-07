@@ -491,6 +491,7 @@ def test_top_level_help_has_read_write_json_exit_and_window_only():
     assert re.search(r"(?m)^\s+dockit run\b", writes) and re.search(r"(?m)^\s+dockit settings set\b", writes)
     for line in ("config status", "update check"):          # 「配置与更新…」窗口的读两项:行首列出
         assert re.search(rf"(?m)^\s+{line}\s", reads), f"读命令没列 {line}"
+    assert re.search(r"(?m)^\s+dockit public status\b", reads) and re.search(r"(?m)^\s+dockit public settings set\b", writes)
     for line in ("config export", "config import", "config sync"):
         assert re.search(rf"(?m)^\s+{line}\s", writes), f"写命令没列 {line}"
     assert "config export" not in reads, "导出会写出指定的文件,不能列在「不写任何文件」的读命令里"
@@ -603,14 +604,15 @@ def test_settings_keys_match_the_app_preference_keys():
 
 # ─────────────────────────────── 「配置与更新…」窗口的几项:config / update 转调 App 可执行文件
 
-def _stub_app(root: Path, script: str, verbs=("config", "update"), name: str = "Stub.app") -> Path:
+def _stub_app(root: Path, script: str, verbs=("config", "update"), name: str = "Stub.app",
+              bundle_id: str = "test.dockit.stub") -> Path:
     """一个假的 App 包:可执行文件是 sh 桩;verbs 为 None 时 Info.plist 不声明命令字(= 旧版)。"""
     app = root / name
     (app / "Contents" / "MacOS").mkdir(parents=True)
     exe = app / "Contents" / "MacOS" / "Stub"
     exe.write_text("#!/bin/sh\n" + script, encoding="utf-8")
     exe.chmod(0o755)
-    info = {"CFBundleIdentifier": "test.dockit.stub", "CFBundleExecutable": "Stub",
+    info = {"CFBundleIdentifier": bundle_id, "CFBundleExecutable": "Stub",
             "CFBundleShortVersionString": "9.8.7", "CFBundleVersion": "654"}
     if verbs is not None:
         info["DocKitCommandVerbs"] = list(verbs)
@@ -705,3 +707,55 @@ def test_lifecycle_help_lines_are_listed_from_one_place():
     cli = (ROOT / "mac" / "Sources" / "AppLifecycleCLI.swift").read_text(encoding="utf-8")
     for line in reads + writes:                      # 与共用层源码里的帮助行逐字相同(命令名代入后)
         assert line.replace("dockit config status", "\\(command) config status") in cli, line
+
+
+# ─────────────────────────────── 公开版自己的状态与设置:dockit public 转调公开包的可执行文件
+
+PUBLIC_ID = "io.github.zengtianli.DocTools"
+
+
+def test_public_words_go_to_the_public_bundle_unchanged(tmp_path: Path):
+    seen = tmp_path / "argv"
+    script = f"""printf '%s\\n' "$DOCKIT_CLI_NAME" "$@" > '{seen}'
+printf '{{"ok":true,"command":"status"}}\\n'; printf 'note\\n' >&2; exit 0
+"""
+    app = _stub_app(tmp_path, script, ("status", "settings", "config", "update", "help"), "Public.app", PUBLIC_ID)
+    env = _env(DOCKIT_PUBLIC_APP=str(app))
+    done = dockit("public", "status", "--json", env=env)
+    assert done.returncode == 0 and as_json(done) == {"ok": True, "command": "status"} and done.stderr == "note\n"
+    assert seen.read_text(encoding="utf-8").splitlines() == ["dockit public", "status", "--json"]   # 命令怎么敲的告诉它
+    dockit("public", "settings", "set", "target_formats.convert", "md", "--json", env=env)
+    assert seen.read_text(encoding="utf-8").splitlines()[1:] == ["settings", "set", "target_formats.convert", "md", "--json"]
+    dockit("public", "config", "sync", "on", "--yes", env=env)
+    assert seen.read_text(encoding="utf-8").splitlines()[1:] == ["config", "sync", "on", "--yes"]
+    for words in (["public"], ["public", "--help"], ["public", "-h"], ["public", "help"]):     # 装了新版:完整帮助由它自己给
+        seen.unlink()
+        assert dockit(*words, env=env).returncode == 0 and seen.read_text(encoding="utf-8").splitlines() == ["dockit public", "help"]
+    # 同一个测试域的自用版命令不受影响:config 仍交给自用版那个包,不是公开包
+    own = dockit("config", "status", "--json", env=env)
+    assert own.returncode == 1 and as_json(own)["error"]["code"] == "app_missing"
+
+
+def test_public_never_starts_a_bundle_that_does_not_declare_the_word(tmp_path: Path):
+    marker = tmp_path / "started"
+    cases = (("Old.app", None, PUBLIC_ID, "app_outdated"),                   # 现装的旧公开版:不认命令字,会开窗口
+             ("Partial.app", ("config", "update"), PUBLIC_ID, "app_outdated"),
+             ("Private.app", ("status",), "cyou.tianli.DocTools", "app_missing"),   # 那个位置上不是公开版
+             ("Lookalike.app", ("status",), PUBLIC_ID + "Evil", "app_missing"))
+    for name, verbs, bundle_id, code in cases:
+        env = _env(DOCKIT_PUBLIC_APP=str(_stub_app(tmp_path, f"touch '{marker}'\n", verbs, name, bundle_id)))
+        refused = dockit("public", "status", "--json", env=env)
+        assert refused.returncode == 1 and as_json(refused)["error"]["code"] == code, (name, refused.stdout)
+        assert as_json(refused)["command"] == "status"
+        text = dockit("public", "status", env=env)
+        assert text.returncode == 1 and text.stdout == "" and text.stderr.startswith("dockit: ")
+        for words in (["public"], ["public", "--help"], ["public", "help"]):      # 帮助不启动它,给这一层自己的说明
+            shown = dockit(*words, env=env)
+            assert shown.returncode == 0 and "usage: dockit public" in shown.stdout and "app_outdated" in shown.stdout
+        assert not marker.exists(), f"{name} 被启动了"
+    absent = dockit("public", "status", "--json", env=_env(DOCKIT_PUBLIC_APP=str(tmp_path / "Absent.app")))
+    assert absent.returncode == 1 and as_json(absent)["error"]["code"] == "app_missing"
+    # 测试用的换了 bundle id 的公开包(…DocTools.<后缀>)认
+    suffixed = _env(DOCKIT_PUBLIC_APP=str(_stub_app(tmp_path, "printf '{\"ok\":true}\\n'\n", ("status",), "Test.app",
+                                                    PUBLIC_ID + ".LifecycleTest")))
+    assert as_json(dockit("public", "status", "--json", env=suffixed))["ok"] is True

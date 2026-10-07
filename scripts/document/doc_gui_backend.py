@@ -1087,6 +1087,25 @@ def lifecycle_failure(words: list[str], code: str, message: str) -> int:
     return EXIT_FAILED
 
 
+def forward(binary: Path, words: list[str], readback: str, extra_env: dict | None = None) -> int:
+    """整段参数原样交给 App 可执行文件,stdout、stderr、退出码原样带回;转调本身失败才由这里说明。"""
+    env = {**os.environ, **extra_env} if extra_env else None
+    try:
+        done = subprocess.run([str(binary), *words], stdin=subprocess.DEVNULL, capture_output=True,
+                              timeout=LIFECYCLE_SECONDS, env=env)
+    except subprocess.TimeoutExpired:
+        return lifecycle_failure(words, "timeout",
+                                 f"{LIFECYCLE_SECONDS} 秒内没有结束,已终止;先用 {readback} 读回当前状态,不要直接重发")
+    except OSError as exc:
+        return lifecycle_failure(words, "app_missing", f"无法运行 {binary}: {exc}")
+    if done.returncode < 0:
+        return lifecycle_failure(words, "app_failed",
+                                 f"App 可执行文件被信号 {-done.returncode} 终止,没有结果;先用 {readback} 读回当前状态")
+    _relay(sys.stdout, done.stdout)
+    _relay(sys.stderr, done.stderr)
+    return done.returncode
+
+
 def lifecycle_command(words: list[str]) -> int:
     """`dockit config …` 与 `dockit update …`:「配置与更新…」窗口里的几项,由 App 可执行文件执行。
 
@@ -1102,20 +1121,57 @@ def lifecycle_command(words: list[str]) -> int:
                                      f"{app} 是还不带 {words[0]} 命令的旧版(Info.plist 没有 {COMMAND_VERBS_KEY}),没有转调;装上新版 DocKit.app 后再用")
         return lifecycle_failure(words, "app_missing",
                                  f"找不到 DocKit 的 App 可执行文件({app}):config / update 由它执行,请从已安装的 DocKit.app 运行 dockit")
+    return forward(binary, words, "dockit config status")
+
+
+# ───────────────────────────────────────────── 公开版 DocKit 自己的状态与设置(public):转调公开包的可执行文件
+#
+# 公开版(bundle id io.github.zengtianli.DocTools,本机装成 DocKit Public.app)有自己的包内引擎、自己的偏好域、
+# 自己的版本与 GitHub 发行渠道,上面那些命令读写的都是自用版,够不到它。公开包的可执行文件自己回答一组命令字
+# (status / settings / config … / update check / help,源在公开仓 Sources/DocKitCLI.swift);这里只把
+# `dockit public` 后面的词原样交过去,并经 DOCKIT_CLI_NAME 告诉它命令是怎么敲的。门与上面相同:
+# 词没列在包的 DocKitCommandVerbs 里就不启动。DOCKIT_PUBLIC_APP 只给测试用。
+
+PUBLIC_VERB = "public"
+PUBLIC_BUNDLE_ID = "io.github.zengtianli.DocTools"
+PUBLIC_CLI_NAME = "dockit public"
+PUBLIC_HELP = """usage: dockit public <命令> [参数…]
+公开版 DocKit(bundle id io.github.zengtianli.DocTools,本机装在 /Applications/DocKit Public.app)自己的
+版本与状态行、记住的设置、「配置与更新…」窗口里的几项。public 后面的词原样交给公开包的可执行文件,由它执行,
+输出与退出码原样带回;不开窗口、不进 Dock。它认哪些命令、各自的 --json 形状与退出码:dockit public help。
+没能交给公开包时退出 1(--json 为 {"ok":false,"command":…,"error":{"code","message"}}):
+  app_missing   没有装公开版,或那个位置上不是公开版 DocKit
+  app_outdated  装着的公开版还不带这条命令(Info.plist 的 DocKitCommandVerbs 没列这个词),没有启动它
+  app_failed    可执行文件被信号终止 · timeout  60 秒未结束
+文档处理仍用 dockit run(自用版引擎);公开版的 9 个操作都在 dockit ops 里。"""
+
+
+def public_app() -> Path:
+    return Path(os.environ.get("DOCKIT_PUBLIC_APP") or "/Applications/DocKit Public.app")
+
+
+def public_command(words: list[str]) -> int:
+    """`dockit public <词…>`:words 从 public 后面的第一个词起。"""
+    app = public_app()
+    asks_help = not words or words[0] in ("--help", "-h", "help")
+    verb = "help" if asks_help else words[0]
     try:
-        done = subprocess.run([str(binary), *words], stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=LIFECYCLE_SECONDS)
-    except subprocess.TimeoutExpired:
-        return lifecycle_failure(words, "timeout",
-                                 f"{LIFECYCLE_SECONDS} 秒内没有结束,已终止;先用 dockit config status 读回当前状态,不要直接重发")
-    except OSError as exc:
-        return lifecycle_failure(words, "app_missing", f"无法运行 {binary}: {exc}")
-    if done.returncode < 0:
-        return lifecycle_failure(words, "app_failed",
-                                 f"App 可执行文件被信号 {-done.returncode} 终止,没有结果;先用 dockit config status 读回当前状态")
-    _relay(sys.stdout, done.stdout)
-    _relay(sys.stderr, done.stderr)
-    return done.returncode
+        bundle_id = plistlib.loads((app / "Contents" / "Info.plist").read_bytes()).get("CFBundleIdentifier")
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        bundle_id = None
+    is_public = isinstance(bundle_id, str) and (bundle_id == PUBLIC_BUNDLE_ID or bundle_id.startswith(PUBLIC_BUNDLE_ID + "."))
+    binary, reason = app_executable(app, verb) if is_public else (None, "app_missing")
+    if binary is None:
+        if asks_help:
+            print(PUBLIC_HELP)       # 没装或是旧版也看得到这层的说明;装了新版就由它自己给出完整帮助
+            return EXIT_OK
+        if reason == "app_outdated":
+            return lifecycle_failure(words, "app_outdated",
+                                     f"{app} 还不带 {verb} 命令(Info.plist 的 {COMMAND_VERBS_KEY} 没列它),没有启动它;装上带命令入口的公开版后再用")
+        return lifecycle_failure(words, "app_missing",
+                                 f"{app} 不是公开版 DocKit(要求 bundle id {PUBLIC_BUNDLE_ID}):"
+                                 + ("没有这个包或包不完整" if bundle_id is None else f"它是 {bundle_id}"))
+    return forward(binary, ["help"] if asks_help else words, "dockit public status", {"DOCKIT_CLI_NAME": PUBLIC_CLI_NAME})
 
 
 # ───────────────────────────────────────────── doctor(对应 GUI 的「已就绪 / 后端不可达」)
@@ -1637,6 +1693,8 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
   dockit run <op> --dry-run <path>…  只校验:列出将处理的输入与将覆盖的已有文件,不执行
   「配置与更新…」窗口里的两项(写在 dockit 后面,加 --json;由 App 可执行文件执行,全部用法 dockit config --help):
 @LIFECYCLE_READS@
+  dockit public status [--json]      公开版 DocKit(DocKit Public.app)自己的版本与构建号、状态行、记住的设置;
+                                     public 后面的词原样交给公开包的可执行文件,它认的全部命令见 dockit public help
 
 写命令:
   dockit run <op> [--to T] [--opt K=V]… [--yes] [--background] [--json] <path>…
@@ -1645,7 +1703,9 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
   dockit settings set <键> <值> [--json]
                                      改界面记住的设置:last_operation <op> 或 target_formats.<op> <目标>
   「配置与更新…」窗口里的三项(同上):
-@LIFECYCLE_WRITES@"""
+@LIFECYCLE_WRITES@
+  dockit public settings set … | public config import … | public config sync …
+                                     改公开版自己的设置(同样由公开包的可执行文件执行,见 dockit public help)"""
 _DESCRIPTION = (_DESCRIPTION.replace("@LIFECYCLE_READS@", "\n".join(LIFECYCLE_READS))
                 .replace("@LIFECYCLE_WRITES@", "\n".join(LIFECYCLE_WRITES)))
 
@@ -1678,6 +1738,7 @@ _EPILOG = """示例:
   失败      {"ok":false,"error":"给人看的原因","error_code":"稳定短码"},退出码非零;用法错误加 --json 时同样是这个对象。
   config / update 是共用命令层的形状(字段见 dockit config --help):成功 {"ok":true,"command":"config status",…};
             失败 {"ok":false,"command":…,"error":{"code","message"}},与上面平铺的 error / error_code 不同。
+  public …  公开包可执行文件自己的输出(字段见 dockit public help),失败也是 {"ok":false,"command":…,"error":{…}}。
   run 的 ok 是请求级(请求被处理即 true);逐个输入看 results[].ok,整体看 all_ok 或退出码。
 
 退出码:
@@ -1688,8 +1749,8 @@ _EPILOG = """示例:
   69     包装脚本找不到 ~/Dev/.venv 或后端
   75     同一目录树(含上级/下级目录)正有另一个 DocKit 操作在运行,稍后重试
   128+N  被信号 N 中断(引擎进程组一并终止)
-  config / update 只用 0、1、2,各自的 error.code 见 dockit config --help;没能交给 App 可执行文件时为 1:
-         app_missing(找不到 DocKit.app)· app_outdated(已装的是不带这组命令的旧版,没有转调)·
+  config / update / public 只用 0、1、2,各自的 error.code 见 dockit config --help 与 dockit public help;
+         没能交给 App 可执行文件时为 1:app_missing(找不到那个 App)· app_outdated(已装的是不带这条命令的旧版,没有转调)·
          app_failed(被信号终止)· timeout(60 秒未结束,先 dockit config status 读回再决定)
 
 仅在窗口中(界面动作,括号里是命令这边的做法):
@@ -1781,6 +1842,8 @@ def build_parser() -> argparse.ArgumentParser:
     for verb, what in (("config", "「配置与更新…」窗口的配置几项:status / export / import / sync"),
                        ("update", "「配置与更新…」窗口的检查更新:check")):
         sub.add_parser(verb, help=what + "(由 App 可执行文件执行,见 dockit config --help)", add_help=False)
+    sub.add_parser(PUBLIC_VERB, add_help=False,
+                   help="公开版 DocKit 自己的状态、记住的设置、配置与更新(交给公开包的可执行文件,见 dockit public help)")
 
     sub.add_parser("gui-ops", help="GUI 内部契约:{ok, ops} JSON,总是 exit 0")
     p = sub.add_parser("gui-run", help="GUI 内部契约:成败只在 JSON 信封里,总是 exit 0(agent 用 run)")
@@ -1795,6 +1858,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     if sys.argv[1:2] and sys.argv[1] in LIFECYCLE_VERBS:
         return lifecycle_command(sys.argv[1:])    # 整段转给 App 可执行文件,不经下面的解析
+    if sys.argv[1:2] == [PUBLIC_VERB]:
+        return public_command(sys.argv[2:])       # 同上,交给公开包的可执行文件
     a = build_parser().parse_args()
     if a.cmd in ("gui-run", "run"):
         _install_signal_handlers()

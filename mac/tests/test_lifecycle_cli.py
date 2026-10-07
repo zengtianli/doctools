@@ -14,6 +14,12 @@ dockit 是 POSIX sh 薄壳加 Python 后端;「配置与更新…」窗口里的
 
 全程隔离:程序拷进临时目录里一个换了 bundle id、带 LSUIElement 的 .app,一次性的具名偏好域,临时支持目录与
 "云"目录,私有通知频道。不出窗口、不进 Dock、不联网,不向已装的 DocKit 发信号,不打开本人的设置。
+
+    DOCKIT_NATIVE=<编好的程序> python tests/test_lifecycle_cli.py            build.sh --check 这样跑
+    DOCKIT_APP=<组装好的 .app> python tests/test_lifecycle_cli.py AssembledBundleTests   build.sh 组装后这样跑(只读命令)
+    DOCKIT_APP_IN_PLACE=<签过名的 .app> python tests/test_lifecycle_cli.py LifecycleCommandTests
+        签名(尤其是公证版)把程序和它的 Info.plist 绑在一起,拷进别的包会被系统直接终止。这个变量让整套用例
+        就地跑那个包本身:bundle id 是真的,其余隔离照旧(一次性偏好域、临时目录、私有频道),不读写本人的设置。
 """
 import json
 import os
@@ -30,6 +36,7 @@ import uuid
 MAC = Path(__file__).resolve().parents[1]
 WRAPPER = MAC / "bin" / "dockit"
 NATIVE = Path(os.environ.get("DOCKIT_NATIVE") or MAC / "build" / "native" / "DocTools")
+IN_PLACE = os.environ.get("DOCKIT_APP_IN_PLACE")
 BUNDLE = "test.tianli.dockit.lifecycle"
 PRODUCT = "cyou.tianli.DocTools"
 CHANNEL = "private"
@@ -58,14 +65,16 @@ def bundle(root, binary, name="DocKit.app", verbs=("config", "update")):
     return app
 
 
-@unittest.skipUnless(NATIVE.is_file(), "compiled app binary not found; build.sh sets DOCKIT_NATIVE")
+@unittest.skipUnless(IN_PLACE or NATIVE.is_file(), "compiled app binary not found; build.sh sets DOCKIT_NATIVE")
 class LifecycleCommandTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.folder = tempfile.TemporaryDirectory(prefix="dockit-lifecycle-")
         cls.root = Path(cls.folder.name).resolve()
-        cls.app = bundle(cls.root, NATIVE)
-        cls.binary = cls.app / "Contents/MacOS/DocTools"
+        cls.app = Path(IN_PLACE).resolve() if IN_PLACE else bundle(cls.root, NATIVE)
+        info = plistlib.loads((cls.app / "Contents/Info.plist").read_bytes())
+        cls.binary = cls.app / "Contents/MacOS" / info["CFBundleExecutable"]
+        cls.bundle_id, cls.version, cls.build = info["CFBundleIdentifier"], info["CFBundleShortVersionString"], info["CFBundleVersion"]
         cls.suite = BUNDLE + "." + uuid.uuid4().hex
         cls.support, cls.cloud = cls.root / "support", cls.root / "cloud"
         cls.env = dict(os.environ, APP_LIFECYCLE_SUPPORT_DIR=str(cls.support), APP_LIFECYCLE_CLOUD_DIR=str(cls.cloud),
@@ -241,22 +250,22 @@ class LifecycleCommandTests(unittest.TestCase):
     def test_update_check_reads_only_the_isolated_release_record(self):
         missing = self.call("update", "check", expect=1)
         self.assertEqual((missing["error"]["code"], missing["current"], missing["source"]),
-                         ("check_incomplete", {"version": "1.2", "build": "7"}, {"kind": "private_cloud", "channel": CHANNEL}))
-        feed = self.cloud / "TianliApps/Updates" / BUNDLE / CHANNEL
+                         ("check_incomplete", {"version": self.version, "build": self.build}, {"kind": "private_cloud", "channel": CHANNEL}))
+        feed = self.cloud / "TianliApps/Updates" / self.bundle_id / CHANNEL
         feed.mkdir(parents=True)
 
         def publish(version, build):
-            (feed / "release.json").write_text(json.dumps({"version": version, "build": build, "bundle_id": BUNDLE, "channel": CHANNEL,
+            (feed / "release.json").write_text(json.dumps({"version": version, "build": build, "bundle_id": self.bundle_id, "channel": CHANNEL,
                                                            "filename": f"DocKit-{version}.zip", "sha256": "a" * 64, "size_bytes": 10}))
             return self.call("update", "check")
 
-        newer = publish("2.0", "9")
-        self.assertEqual((newer["state"], newer["update_available"], newer["latest"]["version"]), ("update_available", True, "2.0"))
+        newer = publish("99.0", "9")
+        self.assertEqual((newer["state"], newer["update_available"], newer["latest"]["version"]), ("update_available", True, "99.0"))
         self.assertIn("配置与更新…", newer["upgrade"]["how"])
-        self.assertIn("有新版 2.0 (9)", self.dockit("update", "check").stdout)
-        same = publish("1.2", "7")
+        self.assertIn("有新版 99.0 (9)", self.dockit("update", "check").stdout)
+        same = publish(self.version, self.build)
         self.assertEqual((same["state"], same["update_available"], same["upgrade"]["button"]), ("up_to_date", False, None))
-        self.assertEqual(publish("1.0", "1")["state"], "ahead_of_channel")
+        self.assertEqual(publish("0.1", "1")["state"], "ahead_of_channel")
         self.assertEqual(sorted(path.name for path in feed.iterdir()), ["release.json"])  # 没有下载,没有安装
 
     def start_app(self, live):
@@ -352,7 +361,8 @@ class LifecycleCommandTests(unittest.TestCase):
         self.assertEqual((last["policy_prohibited"], last["windows_on_screen"]), (True, 0))
         self.assertGreater(last["tick"], first["tick"])
         self.stop_app(process)
-        self.assertIs(self.call("config", "status")["app_running"], False)
+        if not IN_PLACE:   # 就地跑时 bundle id 是真的,本人自己开着的 DocKit 也算"在运行"
+            self.assertIs(self.call("config", "status")["app_running"], False)
 
     def test_imports_made_while_sync_is_on_and_the_app_is_running_stay(self):
         live = dict(self.env, APP_LIFECYCLE_FOLLOW_CHANNEL="test." + uuid.uuid4().hex)
@@ -398,7 +408,7 @@ class LifecycleCommandTests(unittest.TestCase):
         # 隔离运行却没说产品自己的设置在哪:在读任何东西之前就拒绝。
         partial = {key: value for key, value in self.env.items() if key != "DOCKIT_LIFECYCLE_SUITE"}
         self.assertEqual(self.call("config", "status", expect=1, env=partial)["error"]["code"], "isolation_incomplete")
-        for suite in (PRODUCT, BUNDLE, str(self.root / "path-based-domain")):
+        for suite in (PRODUCT, self.bundle_id, str(self.root / "path-based-domain")):
             self.assertEqual(self.call("config", "status", expect=1, env=dict(self.env, DOCKIT_LIFECYCLE_SUITE=suite))["error"]["code"],
                              "isolation_incomplete", suite)
         # 探针只为本测试存在:隔离运行之外,程序在创建 NSApplication 之前就退出。
