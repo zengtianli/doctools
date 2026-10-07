@@ -1,18 +1,18 @@
 {
   "product": "doc-tools",
-  "version": "1.0.1 (323)",
+  "version": "1.0.1 (336)",
   "compare": [],
-  "measured_at": "2026-10-05",
+  "measured_at": "2026-10-08",
   "device": "Mac16,12 / Apple M4 / macOS 27.2",
   "size": {
-    "installed_bytes": 2818048,
-    "installed_mb": 2.69
+    "installed_bytes": 3035136,
+    "installed_mb": 2.89
   },
   "data": "静默只读加载既有 doctools 后端真实操作目录并离屏绘制初始界面；输入文件为空，不处理文档，不写本人偏好。",
   "measured_artifact": {
     "version": "1.0.1",
-    "build": "323",
-    "executable_sha256": "21e6207d3085fe733a5b9380fa7f8ce3855fcb1b14a03c0d28d3bb4b514e8b05"
+    "build": "336",
+    "executable_sha256": "95c5b183dae03c1f34cb45afdc2dab1d00eb1ddec20a1f7320d52da00f9d3540"
   },
   "why": "原生 SwiftUI 客户端，文档能力复用本机共享 Python 引擎；空闲时后端进程退出。",
   "why_en": "Native SwiftUI client reusing the local shared Python document engine; backend processes exit when idle.",
@@ -215,19 +215,118 @@
         "installed_bytes": 2416640,
         "installed_mb": 2.3
       }
+    },
+    {
+      "section": "version",
+      "replaced_on": "2026-10-08",
+      "reason": "装机：安装了轻量化后的新构建",
+      "value": "1.0.1 (323)"
+    },
+    {
+      "section": "idle",
+      "version": "1.0.1 (323)",
+      "replaced_on": "2026-10-08",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": {
+        "process": "/private/var/folders/x7/qptxw08j00v__67yzr3gcd000000gp/T/sim-lane-mac.qsl7kn3x/DocKit.app",
+        "footprint_mb": 50.0,
+        "main_footprint_mb": 50.0,
+        "cpu_pct": 0.0,
+        "main_cpu_pct": 0.0,
+        "processes": [
+          {
+            "name": "main",
+            "cpu_pct": 0.0,
+            "footprint_peak_mb": 50.0
+          }
+        ],
+        "window_s": 60,
+        "settle_s": 45,
+        "measured_at": "2026-10-05",
+        "method": "App os_log 首屏就绪后，LSUIElement 隔离副本静置 45 秒； measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟",
+        "load": "负载均值 2.76 3.85 4.60；total = 6144.00M  used = 4653.69M  free = 1490.31M",
+        "owner_idle_s_at_start": 686
+      }
+    },
+    {
+      "section": "speed_gui",
+      "version": "1.0.1 (323)",
+      "replaced_on": "2026-10-08",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": [
+        {
+          "key": "cold_launch_to_ready",
+          "label": "冷启动到首屏就绪",
+          "median_ms": 523.0,
+          "runs": 5,
+          "ready_signal": "os_log",
+          "headline": true,
+          "raw_ms": [
+            579.0,
+            509.0,
+            491.0,
+            548.0,
+            523.0
+          ],
+          "method": "sim_lane.run_mac_quiet：LSUIElement 隔离副本；open -g -j -n -> App os_log lane-ready（首屏数据与布局完成）；5 次中位数"
+        }
+      ]
+    },
+    {
+      "section": "runtime_measurement",
+      "version": "1.0.1 (323)",
+      "replaced_on": "2026-10-08",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": {
+        "environment": "native",
+        "evidence": "/Users/tianli/Library/Caches/app-lightweight/measurement-candidates/323f847dccee476c9b96b446947cf08e.raw.json",
+        "evidence_sha256": "a19f21b5f3f1c6c5b81280774bd9dc6ddb0957a6f16d9f84a5ac1e2390f8d652",
+        "input_sha256": "d45ce87bb9f428c7c121dc8c32d6a0b6d25a62a9f1095e3a5ba222ad5964e718",
+        "ready_signal": "os_log"
+      }
+    },
+    {
+      "section": "speed",
+      "version": "1.0.1 (323)",
+      "replaced_on": "2026-10-08",
+      "reason": "版本变化；仅本次实测可作为当前证据",
+      "value": {
+        "cold_launch_ms": 523.0,
+        "runs": 5,
+        "ready_signal": "os_log",
+        "raw_ms": [
+          579.0,
+          509.0,
+          491.0,
+          548.0,
+          523.0
+        ],
+        "method": "sim_lane.run_mac_quiet：LSUIElement 隔离副本；open -g -j -n -> App os_log lane-ready（首屏数据与布局完成）；5 次中位数"
+      }
+    },
+    {
+      "section": "size",
+      "version": "1.0.1 (323)",
+      "replaced_on": "2026-10-08",
+      "reason": "版本变化；旧安装包大小不沿用",
+      "value": {
+        "installed_bytes": 2818048,
+        "installed_mb": 2.69
+      }
     }
   ],
-  "env_note": "2026-10-05 主会话逐个顺序测量，负载均值 6.06 4.60 4.96；total = 6144.00M  used = 4653.69M  free = 1490.31M（开始时）；启动时间受负载影响，内存与 CPU 为进程自身数值",
+  "env_note": "2026-10-08 主会话逐个顺序测量，负载均值 3.49 16.22 30.02；total = 3072.00M  used = 2203.31M  free = 868.69M（开始时）；启动时间受负载影响，内存与 CPU 为进程自身数值",
+  "input_sha256": "0c76f667edfc2214f14d4288d4645aaf56b7d55487c4ba09638d4d84b951d5b7",
   "speed": {
-    "cold_launch_ms": 523.0,
+    "cold_launch_ms": 527.0,
     "runs": 5,
     "ready_signal": "os_log",
     "raw_ms": [
-      579.0,
-      509.0,
-      491.0,
-      548.0,
-      523.0
+      834.0,
+      527.0,
+      474.0,
+      456.0,
+      576.0
     ],
     "method": "sim_lane.run_mac_quiet：LSUIElement 隔离副本；open -g -j -n -> App os_log lane-ready（首屏数据与布局完成）；5 次中位数"
   },
@@ -235,46 +334,45 @@
     {
       "key": "cold_launch_to_ready",
       "label": "冷启动到首屏就绪",
-      "median_ms": 523.0,
+      "median_ms": 527.0,
       "runs": 5,
       "ready_signal": "os_log",
       "headline": true,
       "raw_ms": [
-        579.0,
-        509.0,
-        491.0,
-        548.0,
-        523.0
+        834.0,
+        527.0,
+        474.0,
+        456.0,
+        576.0
       ],
       "method": "sim_lane.run_mac_quiet：LSUIElement 隔离副本；open -g -j -n -> App os_log lane-ready（首屏数据与布局完成）；5 次中位数"
     }
   ],
   "idle": {
-    "process": "/private/var/folders/x7/qptxw08j00v__67yzr3gcd000000gp/T/sim-lane-mac.qsl7kn3x/DocKit.app",
-    "footprint_mb": 50.0,
-    "main_footprint_mb": 50.0,
+    "process": "/private/var/folders/x7/qptxw08j00v__67yzr3gcd000000gp/T/sim-lane-mac.lxt30h9b/DocKit.app",
+    "footprint_mb": 44.0,
+    "main_footprint_mb": 44.0,
     "cpu_pct": 0.0,
     "main_cpu_pct": 0.0,
     "processes": [
       {
         "name": "main",
         "cpu_pct": 0.0,
-        "footprint_peak_mb": 50.0
+        "footprint_peak_mb": 44.0
       }
     ],
     "window_s": 60,
     "settle_s": 45,
-    "measured_at": "2026-10-05",
-    "method": "App os_log 首屏就绪后，LSUIElement 隔离副本静置 45 秒； measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟",
-    "load": "负载均值 2.76 3.85 4.60；total = 6144.00M  used = 4653.69M  free = 1490.31M",
-    "owner_idle_s_at_start": 686
+    "measured_at": "2026-10-08",
+    "method": "App os_log 首屏就绪后，LSUIElement 隔离副本静置 45 秒； measure.py idle <PID> --seconds 60 --with-helpers：内存为主进程 + WebKit/XPC 辅助进程 + 子进程同一时刻 phys_footprint 之和的峰值（活动监视器「内存」列同口径），CPU 为这些进程窗口内 CPU 时间增量之和 ÷ 墙钟；采样时本人在用电脑（被测 App 未在前台被使用，否则丢弃重采）",
+    "load": "负载均值 2.44 11.40 26.13；total = 3072.00M  used = 2187.31M  free = 884.69M",
+    "owner_idle_s_at_start": 0
   },
-  "input_sha256": "d45ce87bb9f428c7c121dc8c32d6a0b6d25a62a9f1095e3a5ba222ad5964e718",
   "runtime_measurement": {
     "environment": "native",
-    "evidence": "/Users/tianli/Library/Caches/app-lightweight/measurement-candidates/323f847dccee476c9b96b446947cf08e.raw.json",
-    "evidence_sha256": "a19f21b5f3f1c6c5b81280774bd9dc6ddb0957a6f16d9f84a5ac1e2390f8d652",
-    "input_sha256": "d45ce87bb9f428c7c121dc8c32d6a0b6d25a62a9f1095e3a5ba222ad5964e718",
+    "evidence": "/Users/tianli/Library/Caches/app-lightweight/measurement-candidates/189795d9e07e44afa4988ba767ebd824.raw.json",
+    "evidence_sha256": "37b2cc2378fcdea1f5f6c0e559efd4b9be979679f63b08bee4027c69e4934726",
+    "input_sha256": "0c76f667edfc2214f14d4288d4645aaf56b7d55487c4ba09638d4d84b951d5b7",
     "ready_signal": "os_log"
   }
 }
