@@ -133,6 +133,7 @@
 - 私有 Homebrew 的 cask、发行资产和 iCloud 里的私有更新记录都没动，仍是 1.0.1-323。构建回执没有刷新，没有做性能测量。
 - `scripts/accept/` 的功能、恢复、隐私三项没有重跑；Chapter 里这四项的证据输入已变。
 - 60 秒超时那条分支没有用真的挂起去测。
-- `dockit public` 只用桩测过。现装的公开版 1.1.3 (39) 没有那个键，实测报 `app_outdated`、没有被启动。与新公开包的联测由协调会话在两边都回报后做。
+- `dockit public`：写这一节时现装的公开版是 1.1.3 (39)，没有那个键，实测报 `app_outdated`、没有被启动。10-07 13:31 公开仓那一半装上了 1.1.3 (46)，`Info.plist` 带 `DocKitCommandVerbs=[status, settings, config, update, help]`，之后的联测（协调会话 10-07 更正，原句只写到桩测）：`dockit public status --json` 退出 0，`dockit public status --no-such --json` 退出 2，`dockit public config status --json` 退出 0；独立核验者另用进程审计确认词表之外的首词（`nosuchword`、`run`、`ops`、`--version`）都报 `app_outdated` 且一次进程都没起。
+- 装机版窗口的证据（协调会话 10-07 补）：对 `/Applications/DocKit.app` 1.0.1 (329) 就地跑进程内离屏自检 `--ui-self-test`，18 项通过、4 张离屏图，偏好域前后逐字节相同；结果在 `build/notarized/agentcli-20261007/evidence/ui-self-test-installed/`。真实窗口仍没有人打开过。装前装后的偏好与数据留底也补进了同目录的 `before/`、`after/`。
 - 父仓 `CLAUDE.md` 的独立入口表里 `mac/bin/dockit` 那一行还没写 `config`／`update`／`public`，不在本轮边界内。
 - `dockit settings set` 改的值，开着的窗口仍要到下次启动才选中，这轮没动。
