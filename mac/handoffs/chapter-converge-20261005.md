@@ -82,3 +82,57 @@
 - `build.sh`、`tests/*.swift`、`catalog.yaml` 都在构建回执的输入里，回执已与当前源码不一致；已装可执行文件在公证时重新签名，哈希也与回执里的不同。要等下一次发行构建刷新。
 - `scripts/accept/` 四项固定验收没有重跑。
 - Chapter 写的 `perf/acceptance/agent_cli.*` 与 `perf/delivery-evidence.json` 没有提交。
+
+## 2026-10-07 追加（三）：接「配置与更新」命令层，公证后装机
+
+本轮授权是本人一句「好，继续做完，铺开」。边界由协调会话裁定，不是本人逐项同意的。
+
+边界：
+
+- 派活原文写「~/Dev/tools/doctools 是引擎，不归你改」，与 Chapter 登记（本组件目录就是 `~/Dev/tools/doctools/mac`）对不上。问过协调会话，裁定可以改三处：`mac/**`、`scripts/document/doc_gui_backend.py`、`scripts/document/tests/test_dockit_cli.py`。
+- `doc_gui_backend.py` 只加了一段：参数解析之前的转调函数、对应的帮助行、`main()` 开头两处判断。文档处理、`ops`／`run`／`status`／`doctor`／`settings` 的行为、字段和退出码没有改。
+- `project.yaml` 只动了 `sop.agent_cli`。`perf/` 下 Chapter 写的验收证据没动、没提交。父仓 `CLAUDE.md` 没动（见「没做的」）。
+- 同一单元还有另一个实例在做公开仓 `~/Apps/oss/doc-tools-oss`，两边用同一个声明身份，`claims.py` 互相拦不住；靠协调会话分工：它不碰 doctools，我不碰公开仓。
+
+做了什么：
+
+- App 侧：`Sources/AppLifecycleCLI.swift` 是总部 `swift-shared` 的逐字节副本（sha256 `c869edf8…`）。`Sources/ProductLifecycle.swift` 的 `Lifecycle` 是唯一工厂，窗口和命令共用。`DocToolsMain.main()` 在第一个参数是 `config` 或 `update` 时只跑共用命令层并退出，不创建 NSApplication。`installApp` 里加了 `AppLifecycleCLI.follow`，运行中的窗口跟随命令的改动。
+- 命令行侧：`dockit config …`、`dockit update …` 整段转给 App 可执行文件，输出和退出码原样带回。App 取法：`DOCKIT_APP_BUNDLE`（只给测试）→ `bin/dockit` 导出的入口所在包 → `/Applications/DocKit.app`。
+- 防开窗的门：只有包的 Info.plist 里 `DocKitCommandVerbs` 列了这个词才转调，否则报 `app_outdated`、不启动。原因：不认这些词的旧版会把它当普通启动，把窗口打开。后端是工作树里的活文件，这道门先于转调接线写好。
+- `dockit public <词…>`：把词原样交给公开包的可执行文件（默认 `/Applications/DocKit Public.app`，bundle id 须是 `io.github.zengtianli.DocTools`），环境带 `DOCKIT_CLI_NAME="dockit public"`，同一道门。公开包那一侧由另一个实例做。
+- 帮助：顶层帮助的读、写两节加了共用层那几行，退出码和 `--json` 形状各补了说明，「暂无命令」改成升级到新版和同步状态那句话。`dockit config --help` 在没装 App 时由后端给出同一份文字。
+- 登记：使用 iCloud 记住配置 → `dockit config sync`，导出配置 → `dockit config export`，导入配置 → `dockit config import`，检查更新 → `dockit update check`。新增一行「iCloud 配置同步状态」记暂缺，「升级到新版」仍记暂缺，原因都写在登记里。
+- README 中英文、本目录 `CLAUDE.md` 同步了这组命令。
+
+怎么验的：
+
+- `python3 -m pytest -q scripts/document/tests`：333 通过、1 跳过（改动前 327）。新增 6 条都用 sh 桩当 App 程序。
+- `./build.sh --check` 通过。它现在多一步：用 swiftc 编出 App 程序跑 `tests/test_lifecycle_cli.py`（9 条，约 45 秒）。
+- `tests/test_lifecycle_cli.py` 走真实进程：sh 薄壳 → 后端 → App 程序。程序再起一份充当运行中的 App（激活策略 prohibited，生产的 `installApp`，真实 `ContentView` 和共用窗口都建出但不显示）。内容：拨三轮开关、on/off 背靠背三次、on/off/on 一次、导入后主视图换到导入的操作、同步开着时连续三次导入加一对背靠背导入。每次判定都另起进程读存下来的值。屏幕上窗口数全程为 0。
+- 分辨力对照，两种坏写法各编一份跑同一套用例，都被抓到：
+  - 共用层换成总部提交 4faeaca 那版：败在「on, off back to back stays off (1)」，隔开拨的三轮照过。
+  - 产品的 `onChange` 把启动时手里的旧设置存回去：两条导入用例都失败。
+- 公证版上的整套用例：签名把程序和 Info.plist 绑在一起，拷进测试包会被系统直接终止（实测退出 -9）。所以加了 `DOCKIT_APP_IN_PLACE`，就地跑那个包本身，偏好仍用一次性域。在随后装机的那份公证包上 9 条全过，跑完本人两个偏好域逐字节未变。
+- 装机版实测：`dockit config status --json` 退出 0（同步关、可迁移项 0 个、App 未运行）；`dockit config status --no-such --json` 退出 2、`error.code` 为 `usage`；`dockit config sync on --json` 不带 `--yes` 退出 2（`confirmation_required`）；`dockit config sync on --dry-run --json` 报 `would_change: true`，没有改动。
+- `chapter sop accept --app doc-tools-doctools --check agent_cli` 后读回：29 项，命令 18、只在窗口 9、暂缺 2，problems 为空，状态仍是暂缺。
+- `scripts/accept/native_ui.sh` 直接跑了一次作回归，通过；没有经 Chapter 写证据。
+
+装机：
+
+- 装前 `/Applications/DocKit.app` 是 1.0.1 (323)，`spctl` 报 Notarized Developer ID。
+- 新包 1.0.1 (329)，源码提交 8a15b10。`build.sh` 构建后另存到 `build/notarized/agentcli-20261007/DocKit.app`，用同一身份（Developer ID Application: tianli Zeng，B9LJH93LA4）加 hardened runtime 和时间戳签名，公证 Accepted（id `c3cf17c3-508f-47ee-908e-9035c0c203b8`），已装订。`spctl -a -vv` 报 Notarized Developer ID，`stapler validate` 通过。
+- 10-07 13:33:09 装机：旧包移到 `~/.Trash/app-rebuild-20261007-133309-44495/`，新包用 ditto 拷入，`~/.local/bin/dockit` 重新链接。这是 `build.sh --install` 的那几步，只是拷的是公证包，因为 `--install` 自己装的是临时签名的包。装后逐文件与公证包相同。
+- 装前装后：两个偏好域导出逐字节相同，数据文件清单（iCloud 里的三份发行文件）和缓存目录相同。原有命令的输出只有 `status` 的 `app.build` 由 323 变 329；帮助只少了旧的「暂无命令」那一行，其余是新增。
+- 证据和装机记录在 `build/notarized/agentcli-20261007/`（`install-record.json`、`evidence/`），该目录不入库。
+
+没做的、没验证的：
+
+- 没有在真实窗口开着时跑过。探针的窗口从未显示，本人开着 DocKit 时拨开关、导入会怎样只有离屏证据。
+- 没有对本人的偏好域和 iCloud Drive 跑 `config sync on --yes`、`config import`、`update check`。生产里命令和窗口都读写 `.standard`，这条跨进程路径没有实测；测试里两边用的是同一个具名测试域。
+- 「配置与更新」窗口没有换版。`Sources/AppLifecycleUI.swift` 仍是旧副本，构建时把 `APP_LIFECYCLE_VENDOR` 指到不存在的文件跳过了分发。以后不带这个变量跑 `./build.sh`，四份共用文件会一起刷新成总部现版，窗口随之变化；要不要换由本人定。
+- 私有 Homebrew 的 cask、发行资产和 iCloud 里的私有更新记录都没动，仍是 1.0.1-323。构建回执没有刷新，没有做性能测量。
+- `scripts/accept/` 的功能、恢复、隐私三项没有重跑；Chapter 里这四项的证据输入已变。
+- 60 秒超时那条分支没有用真的挂起去测。
+- `dockit public` 只用桩测过。现装的公开版 1.1.3 (39) 没有那个键，实测报 `app_outdated`、没有被启动。与新公开包的联测由协调会话在两边都回报后做。
+- 父仓 `CLAUDE.md` 的独立入口表里 `mac/bin/dockit` 那一行还没写 `config`／`update`／`public`，不在本轮边界内。
+- `dockit settings set` 改的值，开着的窗口仍要到下次启动才选中，这轮没动。
