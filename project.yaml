@@ -1,3 +1,15 @@
 name: doctools
 display_name: 文档处理
 lifecycle: active
+compatibility:
+  schema: 1
+  dependencies:
+  - id: python-workspace
+    probe: python
+    consumers: [Dev/tools/doctools]
+    source_files: [pyproject.toml, scripts/document/docx_cli.py]
+    workspace: Dev
+    modules: [docx, pypdf, yaml]
+    check_entry: ~/Dev/.venv/bin/python scripts/document/docx_cli.py --help
+    repair_entry: Dev/pyproject.toml; uv sync --all-packages --frozen
+    evidence_refs: [mac-pair/receipts/doctools-smoke.json]
