@@ -46,9 +46,12 @@ dockit status --json                                # 读回当前状态：已�
 dockit settings --json                              # 界面记住的上次操作与各操作的目标格式
 dockit settings set target_formats.convert md       # 改其中一项；另一个键是 last_operation <op>
 dockit doctor                                       # venv、uv、soffice、markitdown、pdftotext、claude 等依赖
+dockit config status --json                         # 「使用 iCloud 记住配置」开关、可迁移的配置项、App 是否在运行
+dockit config export -o /abs/dockit-config.json     # 导出配置；config import <file> --yes 导入，config sync on|off --yes 拨开关
+dockit update check --json                          # 当前版本、此渠道最新版本、有没有新版、怎么升级
 ```
 
-读命令是 `ops`、`status`、`doctor`、`settings` 和 `run --dry-run`，不写任何文件、偏好或任务记录；写命令是 `run` 和 `settings set`。`dockit --help` 列出这两组命令、每条命令的 `--json` 输出形状、退出码表和只在窗口里的动作。
+读命令是 `ops`、`status`、`doctor`、`settings`、`run --dry-run`、`config status` 和 `update check`，不写任何文件、偏好或任务记录；写命令是 `run`、`settings set`、`config export`（不改设置，只写你指定的那个文件）、`config import` 和 `config sync`。`dockit --help` 列出这两组命令、每条命令的 `--json` 输出形状、退出码表和只在窗口里的动作。
 
 退出码：0 表示成功；1 表示业务失败（有输入失败或被跳过、门检有红门、doctor 有缺项）；2 表示用法或校验错误（未知操作、选项或目标，缺必填项，缺外发同意，破坏性操作缺 `--yes`，会覆盖已有同名文件却没给 `--yes`，没有有效文件）；75 表示同一目录树（含上级或下级目录）正有另一个 DocKit 操作在运行，稍后重试即可；128+N 表示被信号 N 中断（例如 agent 超时发出的 SIGTERM 得到 143），正在运行的引擎进程组会一并终止；69 表示找不到 venv 或后端。
 
@@ -75,12 +78,16 @@ dockit doctor                                       # venv、uv、soffice、mark
 | 敏感词扫描的外发同意 | `--opt privacy.cloud_consent=1`（同一道门） |
 | 记住上次操作与各操作的目标格式 | `dockit settings [--json]`；`dockit settings set <键> <值>` |
 | 「配置与更新」窗口里的版本与构建号 | `dockit status [--json]` 的 `app` |
+| 「配置与更新」窗口：使用 iCloud 记住配置、导出配置、导入配置 | `dockit config sync on\|off --yes [--dry-run]`、`config export -o <file> [--force]`、`config import <file> --yes`；`config status` 读回 |
+| 「配置与更新」窗口：检查更新 | `dockit update check [--json]` |
 
 `settings` 读写的就是 App 的那两个偏好键（`dockit.lastOperation`、`dockit.targetFormats`），不另存一份；值先按操作目录校验，未知操作或目标以 2 退出、不写入。DocKit 在下次启动时按新值选中。偏好域里的窗口位置、最近目录等其他内容，读命令不输出，写命令不改动。
 
 只在窗口里：拖入文件或目录、清空待处理文件、逐个移除待处理文件、恢复默认选项、清除已选参考文件、在 Finder 显示产出、关闭提示条、搜索功能面板（⌘K）、打开「配置与更新…」窗口，以及 `--ui-self-test` 离屏自检。命令行分别用绝对路径参数、`ops` 列出的默认值和 JSON 里的产出路径替代。
 
-暂无命令：使用 iCloud 记住配置、导出配置、导入配置、检查更新、升级到新版。这五项在各产品共用的生命周期模块里，该模块还没有命令入口。逐项对照登记在 `project.yaml` 的 `sop.agent_cli`。
+`config` 与 `update` 是「配置与更新…」窗口里的几项，属于 App 本身（偏好域、版本、发行渠道）：由 `DocKit.app` 的可执行文件执行（各产品共用的命令层，不创建窗口、不进 Dock），`dockit` 只把整段参数转过去，输出与退出码原样带回；已在运行的 DocKit 自己跟随命令的改动。这两组命令的 `--json` 是共用命令层的形状，失败为 `{"ok":false,"command":…,"error":{"code","message"}}`，与其余命令平铺的 `error`／`error_code` 不同；退出码只有 0、1、2，全部用法与各 `error.code` 见 `dockit config --help`。没能交给 App 可执行文件时退出 1：`app_missing`（找不到 `DocKit.app`）、`app_outdated`（装着的是不带这组命令的旧版，不会启动它）、`app_failed`、`timeout`。`config import` 与 `config sync` 要 `--yes`；`update check` 读本人 iCloud Drive 里的发行记录。
+
+暂无命令：升级到新版（命令不做静默安装：`update check` 给出新版、按钮名、安装包地址与步骤，替换并重启 App 仍在窗口确认）；窗口里那句 iCloud 配置同步状态（由运行中的 App 持有，命令只回报自己那一次同步的结果）。逐项对照登记在 `project.yaml` 的 `sop.agent_cli`。
 
 <!-- lightweight:start -->
 ## 资源占用

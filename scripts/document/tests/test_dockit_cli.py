@@ -17,6 +17,9 @@ DocKit 的 GUI 给人用,`dockit` 给 agent 用,两者必须走同一个 gui_run
 
   5. (2026-10-07)顶层帮助的四样(读/写命令、--json 形状、退出码表、「仅在窗口中」)与登记对得上;
      status 读回已装版本与界面记住的设置;settings 读写的是 App 那两个偏好键,值先校验。
+  6. (2026-10-07)「配置与更新…」窗口的几项(config / update)整段转给 App 可执行文件:参数、输出、退出码
+     原样过去原样回来;找不到 App、App 是不带这组命令的旧版、被信号终止各有一个码,旧版一律不启动
+     (它会把这些词当成普通启动、打开窗口)。这里用 sh 桩当 App 程序;编好的真程序在 mac/tests/test_lifecycle_cli.py。
 
 全部输入都是本测试现造的临时文件;不碰用户文档、不联网、不打开浏览器。
 锁与后台任务写进 DOCKIT_CACHE_DIR 指向的临时目录,不碰 ~/Library/Caches。
@@ -486,14 +489,24 @@ def test_top_level_help_has_read_write_json_exit_and_window_only():
     for sub in ("ops", "status", "doctor", "settings"):
         assert re.search(rf"(?m)^\s+dockit {sub}\b", reads), f"读命令没列 {sub}"
     assert re.search(r"(?m)^\s+dockit run\b", writes) and re.search(r"(?m)^\s+dockit settings set\b", writes)
+    for line in ("config status", "update check"):          # 「配置与更新…」窗口的读两项:行首列出
+        assert re.search(rf"(?m)^\s+{line}\s", reads), f"读命令没列 {line}"
+    for line in ("config export", "config import", "config sync"):
+        assert re.search(rf"(?m)^\s+{line}\s", writes), f"写命令没列 {line}"
+    assert "config export" not in reads, "导出会写出指定的文件,不能列在「不写任何文件」的读命令里"
     shapes = _section(text, "--json 输出形状")
     for sub in ("ops", "run", "status", "doctor", "settings"):
         assert re.search(rf"(?m)^\s+{sub}\s+\{{", shapes), f"--json 形状没写 {sub}"
     assert '"error_code"' in shapes
+    assert re.search(r'(?m)^\s+config / update .*"command"', shapes) and '"error":{"code","message"}' in shapes
     codes = _section(text, "退出码")
     for code in ("0", "1", "2", "69", "75", "128+N"):
         assert re.search(rf"(?m)^\s+{re.escape(code)}\s", codes), f"退出码表缺 {code}"
-    _section(text, "仅在窗口中")
+    for code in ("app_missing", "app_outdated", "app_failed", "timeout"):
+        assert code in codes, f"退出码表没写转调失败的 {code}"
+    window = _section(text, "仅在窗口中")
+    assert "升级到新版" not in window.split("暂无命令")[0], "升级不是只能在窗口:列在暂无命令"
+    assert "升级到新版 / 下载新版" in window.split("暂无命令")[1]
 
 
 def test_every_human_feature_is_listed_as_window_only():
@@ -586,3 +599,109 @@ def test_settings_keys_match_the_app_preference_keys():
     backend = BACKEND.read_text(encoding="utf-8")
     assert 'PREF_LAST_OP, PREF_TARGETS = "dockit.lastOperation", "dockit.targetFormats"' in backend
     assert 'or "cyou.tianli.DocTools"' in backend      # 默认域 = App 的 bundle id
+
+
+# ─────────────────────────────── 「配置与更新…」窗口的几项:config / update 转调 App 可执行文件
+
+def _stub_app(root: Path, script: str, verbs=("config", "update"), name: str = "Stub.app") -> Path:
+    """一个假的 App 包:可执行文件是 sh 桩;verbs 为 None 时 Info.plist 不声明命令字(= 旧版)。"""
+    app = root / name
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    exe = app / "Contents" / "MacOS" / "Stub"
+    exe.write_text("#!/bin/sh\n" + script, encoding="utf-8")
+    exe.chmod(0o755)
+    info = {"CFBundleIdentifier": "test.dockit.stub", "CFBundleExecutable": "Stub",
+            "CFBundleShortVersionString": "9.8.7", "CFBundleVersion": "654"}
+    if verbs is not None:
+        info["DocKitCommandVerbs"] = list(verbs)
+    (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info))
+    return app
+
+
+def test_config_and_update_are_forwarded_whole_and_come_back_unchanged(tmp_path: Path):
+    seen = tmp_path / "argv"
+    app = _stub_app(tmp_path, f"""printf '%s\\n' "$@" > '{seen}'; pwd >> '{seen}'
+printf '{{"ok":false,"command":"config sync","error":{{"code":"confirmation_required","message":"m"}}}}\\n'
+printf 'to stderr\\n' >&2
+exit 2
+""")
+    env = _env(DOCKIT_APP_BUNDLE=str(app))
+    where = tmp_path / "typed here"
+    where.mkdir()
+    done = subprocess.run([sys.executable, str(BACKEND), "config", "sync", "on", "-o", "相对 路径.json", "--json"],
+                          cwd=where, capture_output=True, text=True, timeout=60, env=env)
+    assert done.returncode == 2 and done.stderr == "to stderr\n"
+    assert as_json(done)["error"] == {"code": "confirmation_required", "message": "m"}     # 一个字段都没补、没改
+    assert seen.read_text(encoding="utf-8").splitlines() == ["config", "sync", "on", "-o", "相对 路径.json", "--json",
+                                                              str(where.resolve())]   # 参数原样,目录是敲命令的目录
+    update = dockit("update", "check", env=env)
+    assert update.returncode == 2 and seen.read_text(encoding="utf-8").splitlines()[:2] == ["update", "check"]
+    # 原有命令不经转调:config 只认第一个词
+    assert as_json(dockit("ops", "--json", env=env))["ok"] is True
+    assert dockit("--json", "config", "status", env=env).returncode == 2
+
+
+def test_config_without_an_app_or_with_an_old_app_never_starts_anything(tmp_path: Path):
+    marker = tmp_path / "started"
+    absent = _env(DOCKIT_APP_BUNDLE=str(tmp_path / "Absent.app"))
+    missing = dockit("config", "status", "--json", env=absent)
+    assert missing.returncode == 1 and as_json(missing) == {
+        "ok": False, "command": "config status", "error": as_json(missing)["error"]}
+    assert as_json(missing)["error"]["code"] == "app_missing"
+    text = dockit("update", "check", env=absent)
+    assert text.returncode == 1 and text.stdout == "" and "App 可执行文件" in text.stderr
+    # 旧版程序不认 config / update,会当成普通启动打开窗口:没声明命令字的包一律不启动
+    for name, verbs in (("Old.app", None), ("Partial.app", ("update",))):
+        old = _env(DOCKIT_APP_BUNDLE=str(_stub_app(tmp_path, f"touch '{marker}'\n", verbs, name)))
+        refused = dockit("config", "sync", "on", "--yes", "--json", env=old)
+        assert refused.returncode == 1 and as_json(refused)["error"]["code"] == "app_outdated", refused.stdout
+        assert not marker.exists(), f"{name} 被启动了"
+    assert dockit("update", "check", env=old).returncode == 0 and marker.exists()      # 声明了的词照常转调
+    # 帮助不需要 App:没装也看得到用法,退出 0
+    for words in (["config", "--help"], ["config", "sync", "--help"], ["update", "check", "-h"]):
+        shown = dockit(*words, env=absent)
+        assert shown.returncode == 0 and "usage: dockit config [status] [--json]" in shown.stdout, words
+        assert "退出码与 error.code" in shown.stdout
+    # 被信号终止:没有结果可带回,按同一形状说明
+    killed = _env(DOCKIT_APP_BUNDLE=str(_stub_app(tmp_path, "kill -9 $$\n", name="Killed.app")))
+    failed = dockit("config", "status", "--json", env=killed)
+    assert failed.returncode == 1 and as_json(failed)["error"]["code"] == "app_failed"
+
+
+@pytest.mark.skipif(not VENV_PY.exists(), reason="包装脚本固定执行 ~/Dev/.venv(本机布局)")
+def test_wrapper_inside_a_bundle_forwards_to_its_own_bundle(tmp_path: Path):
+    """装进包的 bin/dockit 把 config / update 交给自己所在的包;经软链启动(~/.local/bin/dockit)也一样。"""
+    seen = tmp_path / "which"
+    app = _stub_app(tmp_path, f"printf 'own bundle\\n' > '{seen}'; printf '{{\"ok\":true}}\\n'\n", name="Own.app")
+    entry = app / "Contents" / "Resources" / "bin" / "dockit"
+    entry.parent.mkdir(parents=True)
+    shutil.copy2(WRAPPER, entry)
+    link = tmp_path / "dockit"
+    link.symlink_to(entry)
+    env = {k: v for k, v in _env().items() if k != "DOCKIT_APP_BUNDLE"}
+    env["DOCKIT_ENTRY_APP"] = str(tmp_path / "Stale.app")          # 外面带进来的旧值不算数
+    for start in (entry, link):
+        seen.unlink(missing_ok=True)
+        done = subprocess.run([str(start), "config", "status", "--json"], capture_output=True, text=True, timeout=60, env=env)
+        assert done.returncode == 0 and as_json(done)["ok"] is True, done.stdout + done.stderr
+        assert seen.read_text() == "own bundle\n"
+    # 不在包里的入口(工作树的 mac/bin/dockit)不导出,后端用默认装机位置;这里只核它没把旧值带下去
+    outside = subprocess.run([str(WRAPPER), "config", "status", "--json"], capture_output=True, text=True, timeout=60,
+                             env=dict(env, DOCKIT_APP_BUNDLE=str(tmp_path / "Absent.app")))
+    assert outside.returncode == 1 and as_json(outside)["error"]["code"] == "app_missing"
+
+
+def test_lifecycle_help_lines_are_listed_from_one_place():
+    """顶层帮助里共用层那几行与 `dockit config --help` 用的是同一组常量;逐字是否等于编好的程序,
+    由 mac/tests/test_lifecycle_cli.py 拿真程序核对。"""
+    top = dockit("--help").stdout
+    own = dockit("config", "--help").stdout          # 测试环境没有 App:后端自己的那份
+    lines = own.splitlines()
+    reads = lines[lines.index("读（不写任何文件或状态）:") + 1:lines.index("写:")]
+    writes = lines[lines.index("写:") + 1:next(i for i, line in enumerate(lines) if line.startswith("--json："))]
+    assert len(reads) == 2 and len(writes) == 3
+    for line in reads + writes:
+        assert "\n" + line + "\n" in top, line
+    cli = (ROOT / "mac" / "Sources" / "AppLifecycleCLI.swift").read_text(encoding="utf-8")
+    for line in reads + writes:                      # 与共用层源码里的帮助行逐字相同(命令名代入后)
+        assert line.replace("dockit config status", "\\(command) config status") in cli, line

@@ -42,6 +42,9 @@ dockit status --json                                # read back current state: i
 dockit settings --json                              # the last operation and per-operation target format the app remembers
 dockit settings set target_formats.convert md       # change one of them; the other key is last_operation <op>
 dockit doctor                                       # venv, uv, soffice, markitdown, pdftotext, claude and more
+dockit config status --json                         # the "remember settings in iCloud" switch, portable settings, whether the app is running
+dockit config export -o /abs/dockit-config.json     # export settings; config import <file> --yes imports, config sync on|off --yes flips the switch
+dockit update check --json                          # current version, latest on this channel, whether there is an update, how to upgrade
 ```
 
 Exit codes: 0 success; 1 business failure (an input failed or was skipped, a bid gate is red, or doctor found a missing dependency); 2 usage or validation error (unknown operation, option or target, missing required option, missing cloud consent, destructive operation without `--yes`, an existing file would be overwritten without `--yes`, or no valid files); 75 another DocKit operation is running in the same folder tree (the folder, a parent or a subfolder), so retry later; 128+N interrupted by signal N (an agent timeout's SIGTERM gives 143), and the running engine process group is stopped too; 69 the venv or backend is missing.
@@ -69,14 +72,18 @@ Coverage:
 | Cloud consent for sensitive-word scanning | `--opt privacy.cloud_consent=1` (the same gate) |
 | Remembered last operation and per-operation target format | `dockit settings [--json]`; `dockit settings set <key> <value>` |
 | Version and build shown in the "Settings and Updates" window | `app` in `dockit status [--json]` |
+| "Settings and Updates" window: remember settings in iCloud, export settings, import settings | `dockit config sync on\|off --yes [--dry-run]`, `config export -o <file> [--force]`, `config import <file> --yes`; read back with `config status` |
+| "Settings and Updates" window: check for updates | `dockit update check [--json]` |
 
-The read commands are `ops`, `status`, `doctor`, `settings` and `run --dry-run`; they write no files, preferences or job records. The write commands are `run` and `settings set`. `dockit --help` lists both groups, the `--json` shape of every command, the exit code table and the window-only actions.
+The read commands are `ops`, `status`, `doctor`, `settings`, `run --dry-run`, `config status` and `update check`; they write no files, preferences or job records. The write commands are `run`, `settings set`, `config export` (changes no setting, writes only the file you name), `config import` and `config sync`. `dockit --help` lists both groups, the `--json` shape of every command, the exit code table and the window-only actions.
 
 `settings` reads and writes the app's own two preference keys (`dockit.lastOperation`, `dockit.targetFormats`) rather than keeping a second copy. Values are validated against the operation catalog first; an unknown operation or target exits 2 and writes nothing. DocKit selects the new values the next time it starts. Other content in the preference domain, such as window positions and recent folders, is neither printed by the read command nor changed by the write command.
 
 Window only: dropping files or folders, clearing the pending files, removing a single pending file, restoring default options, clearing a chosen reference file, revealing outputs in Finder, dismissing the banner, the ⌘K search palette, opening the "Settings and Updates" window, and the `--ui-self-test` offscreen check. The command line uses absolute path arguments, the defaults listed by `ops`, and the output paths in its JSON instead.
 
-No command yet: remembering settings in iCloud, exporting settings, importing settings, checking for updates, and upgrading. These five live in the lifecycle module shared across products, which has no command entry yet. The item-by-item mapping is registered under `sop.agent_cli` in `project.yaml`.
+`config` and `update` are the items of the "Settings and Updates" window. They belong to the app itself (its preference domain, version and release channel), so the `DocKit.app` executable runs them through the command layer shared across products, without creating a window or a Dock icon; `dockit` forwards the words unchanged and returns the output and exit code unchanged, and a running DocKit follows the change on its own. Their `--json` output has the shared layer's shape, with failures as `{"ok":false,"command":…,"error":{"code","message"}}` rather than the flat `error` / `error_code` of the other commands; exit codes are 0, 1 and 2 only, and `dockit config --help` lists every form and `error.code`. When the words cannot be handed to the app executable the exit code is 1: `app_missing` (no `DocKit.app`), `app_outdated` (the installed app predates these commands and is not started), `app_failed`, `timeout`. `config import` and `config sync` need `--yes`; `update check` reads the release record in your own iCloud Drive.
+
+No command yet: upgrading (no silent install: `update check` reports the new version, the button name, the package location and the steps, and replacing and restarting the app is still confirmed in the window); the live iCloud sync status sentence in the window (held by the running app; a command reports only the sync pass it ran itself). The item-by-item mapping is registered under `sop.agent_cli` in `project.yaml`.
 
 <!-- lightweight:start -->
 ## Resource use

@@ -30,6 +30,9 @@ swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sou
 # agent CLI:包装脚本语法 + 真实后端 --help(与装进 App 的是同一个文件)
 sh -n bin/dockit
 bin/dockit --help > /dev/null
+# dockit config / update:编出 App 程序,在隔离环境里把 sh 薄壳 → 后端 → App 程序整条链实跑(不上屏、不碰本人偏好;含运行中的 App 跟随与两条命令背靠背)
+swiftc -O -suppress-warnings -parse-as-library Sources/*.swift -o "$CHECK_DIR/DocTools"
+DOCKIT_NATIVE="$CHECK_DIR/DocTools" "$PYTHON" tests/test_lifecycle_cli.py
 [ "$MODE" != --check ] || exit 0
 LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
 if [ -f "$LIFECYCLE_VENDOR" ]; then
@@ -49,6 +52,8 @@ cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP/Contents/Resources/bin"
 install -m 755 bin/dockit "$APP/Contents/Resources/bin/dockit"
 codesign --force -s - "$APP"
+# 装进包的那条链:包内 bin/dockit 把 config / update 交给自己所在包的 App 程序(只跑读命令,隔离偏好域)
+DOCKIT_APP="$APP" "$PYTHON" tests/test_lifecycle_cli.py AssembledBundleTests
 echo "Built: $APP"
 [ "$MODE" = --install ] || exit 0
 DEST="/Applications/$DISPLAY_NAME.app"

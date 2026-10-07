@@ -11,6 +11,8 @@
 		BF0000000000000000000111 /* AppLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000211 /* AppLifecycle.swift */; };
 		BF0000000000000000000112 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000212 /* AppConfiguration.swift */; };
 		BF0000000000000000000113 /* AppLifecycleUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000213 /* AppLifecycleUI.swift */; };
+		BF0000000000000000000114 /* AppLifecycleCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000214 /* AppLifecycleCLI.swift */; };
+		BF0000000000000000000115 /* ProductLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000215 /* ProductLifecycle.swift */; };
 		BF0000000000000000000107 /* UISelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000207 /* UISelfTest.swift */; };
 		BF0000000000000000000101 /* DocToolsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000201 /* DocToolsApp.swift */; };
 		BF0000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0000000000000000000202 /* ContentView.swift */; };
@@ -26,6 +28,8 @@
 		BF0000000000000000000211 /* AppLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycle.swift; sourceTree = "<group>"; };
 		BF0000000000000000000212 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
 		BF0000000000000000000213 /* AppLifecycleUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycleUI.swift; sourceTree = "<group>"; };
+		BF0000000000000000000214 /* AppLifecycleCLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycleCLI.swift; sourceTree = "<group>"; };
+		BF0000000000000000000215 /* ProductLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductLifecycle.swift; sourceTree = "<group>"; };
 		BF0000000000000000000207 /* UISelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UISelfTest.swift; sourceTree = "<group>"; };
 		BF0000000000000000000201 /* DocToolsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocToolsApp.swift; sourceTree = "<group>"; };
 		BF0000000000000000000202 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -74,6 +78,8 @@
 				BF0000000000000000000211 /* AppLifecycle.swift */,
 				BF0000000000000000000212 /* AppConfiguration.swift */,
 				BF0000000000000000000213 /* AppLifecycleUI.swift */,
+				BF0000000000000000000214 /* AppLifecycleCLI.swift */,
+				BF0000000000000000000215 /* ProductLifecycle.swift */,
 				BF0000000000000000000201 /* DocToolsApp.swift */,
 				BF0000000000000000000207 /* UISelfTest.swift */,
 				BF0000000000000000000202 /* ContentView.swift */,
@@ -158,6 +164,8 @@
 				BF0000000000000000000111 /* AppLifecycle.swift in Sources */,
 				BF0000000000000000000112 /* AppConfiguration.swift in Sources */,
 				BF0000000000000000000113 /* AppLifecycleUI.swift in Sources */,
+				BF0000000000000000000114 /* AppLifecycleCLI.swift in Sources */,
+				BF0000000000000000000115 /* ProductLifecycle.swift in Sources */,
 				BF0000000000000000000101 /* DocToolsApp.swift in Sources */,
 				BF0000000000000000000107 /* UISelfTest.swift in Sources */,
 				BF0000000000000000000102 /* ContentView.swift in Sources */,

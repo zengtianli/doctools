@@ -21,13 +21,8 @@ extension Notification.Name {
 
 struct DocToolsApp: App {
     init() {
-        let configuration = AppConfiguration(productID: "cyou.tianli.DocTools",
-            defaultsKeys: AppViewModel.portablePreferenceKeys)
-        configuration.onChange = {
-            NotificationCenter.default.post(name: .dockitPreferencesChanged, object: nil)
-        }
-        AppLifecycleUI.install(name: "DocKit", configuration: configuration,
-                               updateSource: .privateCloud(channel: "private"))
+        // 「配置与更新…」窗口与 `dockit config` / `dockit update` 用同一个工厂(ProductLifecycle.swift)。
+        Lifecycle.installApp(Lifecycle.preferences() ?? .standard)
     }
 
     var body: some Scene {
@@ -54,6 +49,12 @@ struct DocToolsApp: App {
 @main
 enum DocToolsMain {
     @MainActor static func main() {
+        let words = Array(CommandLine.arguments.dropFirst())
+        // `dockit config …` / `dockit update …`:后端把这两个动词整段交到这里,共用命令层在窗口自己的配置与更新源上
+        // 执行后直接退出。此时还没有 NSApplication:没有窗口、不进 Dock、不弹提示;已在运行的实例不被打扰,
+        // 它经 AppLifecycleCLI.follow 自己跟随。
+        if AppLifecycleCLI.handles(words.first) { exit(Lifecycle.runCommand(words)) }
+        if words.contains(Lifecycle.probeFlag) { LifecycleProbe.run(words) }
         if LaneSignal.quiet {
             quietMain()
         } else if CommandLine.arguments.contains("--ui-self-test") {
