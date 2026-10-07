@@ -6,7 +6,8 @@ dockit 是 POSIX sh 薄壳加 Python 后端;「配置与更新…」窗口里的
 
 1. bin/dockit → doc_gui_backend.py → App 程序:参数原样过去,stdout、stderr、退出码原样回来;
 2. 命令读写的就是窗口那份设置(dockit settings 读写的同两个偏好键);
-3. `update check` 只读隔离的发行记录;
+3. `update check` 只读隔离的发行记录;`update install` 没有新版时退出 0、--dry-run 只说会做什么、缺 --yes 退出 2,
+   带 --yes 时在临时目录里把一个测试包真的换成发行记录里的新版(旧包进隔离的废纸篓目录,不重开);
 4. 运行中的 App 跟随命令拨的开关,而且不把旧值写回去:同一个程序再起一份充当运行中的 App
    (`--lifecycle-follow-probe`:生产的 `Lifecycle.installApp`、真实主视图挂在真实 AppViewModel 上、共用窗口
    按菜单项的构造方式建出,激活策略 prohibited,都不显示),把它手里的值定时写进状态文件;
@@ -40,7 +41,9 @@ IN_PLACE = os.environ.get("DOCKIT_APP_IN_PLACE")
 BUNDLE = "test.tianli.dockit.lifecycle"
 PRODUCT = "cyou.tianli.DocTools"
 CHANNEL = "private"
-HEADQUARTERS = Path.home() / "Dev/tools/dev/lib/tools/macapp/swift-shared/AppLifecycleCLI.swift"
+SHARED = Path.home() / "Dev/tools/dev/lib/tools/macapp/swift-shared"
+HEADQUARTERS = SHARED / "AppLifecycleCLI.swift"
+SHARED_FILES = ("AppLifecycle.swift", "AppConfiguration.swift", "AppLifecycleUI.swift", "AppLifecycleCLI.swift")
 KEYS = ["defaults.dockit.lastOperation", "defaults.dockit.targetFormats"]
 OFF = "iCloud 配置同步已关闭"
 
@@ -53,12 +56,12 @@ def sweep(prefix):
         time.sleep(0.3)
 
 
-def bundle(root, binary, name="DocKit.app", verbs=("config", "update")):
+def bundle(root, binary, name="DocKit.app", verbs=("config", "update"), version="1.2", build="7"):
     app = root / name
     (app / "Contents/MacOS").mkdir(parents=True)
     shutil.copy2(binary, app / "Contents/MacOS/DocTools")
     info = {"CFBundleIdentifier": BUNDLE, "CFBundleExecutable": "DocTools", "CFBundlePackageType": "APPL",
-            "CFBundleShortVersionString": "1.2", "CFBundleVersion": "7", "LSUIElement": True}
+            "CFBundleShortVersionString": version, "CFBundleVersion": build, "LSUIElement": True}
     if verbs is not None:
         info["DocKitCommandVerbs"] = list(verbs)
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
@@ -152,7 +155,9 @@ class LifecycleCommandTests(unittest.TestCase):
         lines = shared.stdout.splitlines()
         reads = lines[lines.index("读（不写任何文件或状态）:") + 1:lines.index("写:")]
         writes = lines[lines.index("写:") + 1:next(i for i, line in enumerate(lines) if line.startswith("--json："))]
-        self.assertEqual((len(reads), len(writes)), (2, 3))
+        self.assertEqual((len(reads), len(writes)), (2, 4))
+        self.assertIn("同步状态", reads[0])
+        self.assertTrue(writes[3].lstrip().startswith("update install --yes"), writes[3])
         top = self.dockit("--help").stdout
         for line in reads + writes:
             self.assertIn("\n" + line + "\n", top)      # 顶层帮助里行首列出,文字就是共用层自己的那一行
@@ -160,9 +165,12 @@ class LifecycleCommandTests(unittest.TestCase):
         write_section = top.split("写命令")[1].split("\n\n")[0]
         self.assertTrue(all(line in read_section for line in reads) and all(line in write_section for line in writes))
         self.assertNotIn("config export", read_section)   # 导出会写出你指定的文件,不在「不写任何文件」那一节
-        no_command = next(line for line in lines if line.startswith("暂无命令：")).split("：", 1)[1]
-        self.assertIn(no_command, top.split("暂无命令:")[1])
-        self.assertNotIn("升级到新版", top.split("仅在窗口中")[1].split("暂无命令:")[0])
+        # 窗口的每一项都有命令了:两份帮助都不再有「暂无命令」,升级也不在「仅在窗口中」。
+        self.assertNotIn("暂无命令", shared.stdout)
+        self.assertNotIn("暂无命令", top)
+        self.assertNotIn("升级到新版", top.split("仅在窗口中")[1])
+        self.assertIn("sync_status{text, at, from, live}", shared.stdout)
+        self.assertIn("dockit update install --yes [--dry-run] [--json]", shared.stdout)
         forwarded = self.dockit("config", "--help")
         self.assertEqual((forwarded.returncode, forwarded.stdout), (0, shared.stdout))
         # 没装 App 时后端自己给出的那份帮助,与编好的程序逐字相同。
@@ -175,7 +183,9 @@ class LifecycleCommandTests(unittest.TestCase):
                  (("config", "bogus", "--json"), 2), (("config", "status", "--no-such", "--json"), 2), (("config", "bogus"), 2),
                  (("update", "--json"), 2), (("config", "export", "--json"), 2), (("config", "sync", "maybe", "--json"), 2),
                  (("config", "sync", "on", "--json"), 2), (("config", "import", str(self.root / "absent.json"), "--yes", "--json"), 1),
-                 (("update", "check", "--json"), 1), (("update", "check"), 1))
+                 (("update", "check", "--json"), 1), (("update", "check"), 1),
+                 (("update", "install", "--json"), 1), (("update", "install", "--yes"), 1),
+                 (("update", "install", "--no-such", "--json"), 2), (("update", "install", "extra", "--json"), 2))
         for words, code in cases:
             ours, theirs = self.dockit(*words), self.direct(*words)
             self.assertEqual((ours.returncode, ours.stdout, ours.stderr), (theirs.returncode, theirs.stdout, theirs.stderr), words)
@@ -193,6 +203,8 @@ class LifecycleCommandTests(unittest.TestCase):
         self.assertEqual(self.call("config", "status", "--no-such", expect=2)["error"]["code"], "usage")
         self.assertEqual(self.call("config", "sync", "on", expect=2)["error"]["code"], "confirmation_required")
         self.assertEqual(self.call("update", "check", expect=1)["error"]["code"], "check_incomplete")
+        self.assertEqual(self.call("update", "install", "--yes", expect=1)["error"]["code"], "check_incomplete")
+        self.assertEqual(self.call("update", "install", "--no-such", expect=2)["error"]["code"], "usage")
         # 相对路径按敲命令的目录解析,不是 App 程序所在的目录。
         done = self.dockit("config", "export", "-o", "here.json", "--json", cwd=self.root)
         self.assertEqual((done.returncode, json.loads(done.stdout)["path"]), (0, str(self.root / "here.json")))
@@ -204,6 +216,10 @@ class LifecycleCommandTests(unittest.TestCase):
         self.assertEqual((status["command"], status["has_settings"], status["sync_enabled"], status["problem"]),
                          ("config status", True, False, None))
         self.assertEqual(status["keys"], KEYS)
+        # 开关下面那句同步状态:还没有同步过,按开关给窗口打开时的初值。
+        if not IN_PLACE:   # 就地跑时本人自己开着的 DocKit 也算"在运行",那句话就是它的
+            self.assertEqual(status["sync_status"], {"text": OFF, "at": None, "from": "derived", "live": False})
+        self.assertIn("\n同步状态：", self.dockit("config", "status").stdout)
         self.assertFalse(self.support.exists() or self.cloud.exists())  # 读命令什么都不写
         exported = self.root / "out.json"
         exported.unlink(missing_ok=True)
@@ -243,9 +259,17 @@ class LifecycleCommandTests(unittest.TestCase):
         mirrored = json.loads((self.cloud / (PRODUCT + ".json")).read_text())
         self.assertEqual((on["changed"], on["sync_enabled"], on["check_with"], mirrored["values"][KEYS[0]]),
                          (True, True, "dockit config status", self.others[1]))
-        self.assertTrue(self.call("config", "status")["sync_enabled"])
+        after = self.call("config", "status")
+        self.assertTrue(after["sync_enabled"])
+        if not IN_PLACE:   # App 没在运行:读到的是刚才那次同步留下的那句,与 sync on 自己回报的相同
+            self.assertEqual((after["sync_status"]["text"], after["sync_status"]["from"], after["sync_status"]["live"]),
+                             (on["status"], "record", False))
+            self.assertRegex(after["sync_status"]["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d")
+            self.assertNotEqual(on["status"], OFF)
         self.assertIs(self.call("config", "sync", "on", "--yes")["changed"], False)
         self.assertIs(self.call("config", "sync", "off", "--yes")["sync_enabled"], False)
+        closed = self.call("config", "status")
+        self.assertEqual((closed["sync_enabled"], closed["sync_status"]["text"]), (False, OFF))
 
     def test_update_check_reads_only_the_isolated_release_record(self):
         missing = self.call("update", "check", expect=1)
@@ -262,11 +286,107 @@ class LifecycleCommandTests(unittest.TestCase):
         newer = publish("99.0", "9")
         self.assertEqual((newer["state"], newer["update_available"], newer["latest"]["version"]), ("update_available", True, "99.0"))
         self.assertIn("配置与更新…", newer["upgrade"]["how"])
+        self.assertEqual(newer["upgrade"]["command"], "dockit update install --yes" if newer["upgrade"]["in_app"] else None)
         self.assertIn("有新版 99.0 (9)", self.dockit("update", "check").stdout)
         same = publish(self.version, self.build)
-        self.assertEqual((same["state"], same["update_available"], same["upgrade"]["button"]), ("up_to_date", False, None))
+        self.assertEqual((same["state"], same["update_available"], same["upgrade"]["button"], same["upgrade"]["command"]),
+                         ("up_to_date", False, None, None))
         self.assertEqual(publish("0.1", "1")["state"], "ahead_of_channel")
         self.assertEqual(sorted(path.name for path in feed.iterdir()), ["release.json"])  # 没有下载,没有安装
+
+    def publish(self, version, build, **more):
+        feed = self.cloud / "TianliApps/Updates" / self.bundle_id / CHANNEL
+        feed.mkdir(parents=True, exist_ok=True)
+        record = {"version": version, "build": build, "bundle_id": self.bundle_id, "channel": CHANNEL,
+                  "filename": f"DocKit-{version}.zip", "sha256": "a" * 64, "size_bytes": 10}
+        (feed / "release.json").write_text(json.dumps({**record, **more}))
+        return feed
+
+    def test_update_install_without_a_newer_release_or_without_yes_changes_nothing(self):
+        """窗口「升级到新版…」那条路的命令:没有新版退出 0;有新版时 --dry-run 只说会做什么,缺 --yes 退出 2。
+        这几种都不下载、不替换:包里的程序与 Info.plist 前后逐字节相同。"""
+        def sealed():
+            return [(path.name, path.read_bytes()) for path in (self.binary, self.app / "Contents/Info.plist")]
+
+        before = sealed()
+        current = {"version": self.version, "build": self.build}
+        missing = self.call("update", "install", "--yes", expect=1)
+        self.assertEqual((missing["error"]["code"], missing["current"], missing["source"]),
+                         ("check_incomplete", current, {"kind": "private_cloud", "channel": CHANNEL}))
+        feed = self.publish(self.version, self.build)
+        for words in (("update", "install", "--yes"), ("update", "install"), ("update", "install", "--dry-run")):
+            same = self.call(*words)                       # 没有新版:成功,什么都没装
+            self.assertEqual((same["command"], same["installed"], same["state"], same["current"], same["latest"]["version"]),
+                             ("update install", False, "up_to_date", current, self.version))
+            self.assertIn("message", same)
+        self.publish("0.1", "1")
+        ahead = self.call("update", "install", "--yes")
+        self.assertEqual((ahead["installed"], ahead["state"]), (False, "ahead_of_channel"))
+        self.assertIn("不需要升级", self.dockit("update", "install", "--yes").stdout)
+
+        self.publish("99.0", "9")
+        dry = self.call("update", "install", "--dry-run")
+        self.assertEqual((dry["dry_run"], dry["installed"], dry["would_install"], dry["installation"]),
+                         (True, False, {"from": current, "to": {"version": "99.0", "build": "9"}}, "bundle"))
+        self.assertEqual((dry["will_quit_app"], dry["will_relaunch"]), (dry["app_running"], dry["app_running"]))
+        self.assertEqual(self.call("update", "install", "--dry-run", "--yes")["dry_run"], True)   # --dry-run 压过 --yes
+        refused = self.call("update", "install", expect=2)
+        self.assertEqual((refused["command"], refused["error"]["code"]), ("update install", "confirmation_required"))
+        self.assertIn("99.0 (9)", refused["error"]["message"])     # 要换成哪一版写在原因里
+        text = self.dockit("update", "install")
+        self.assertEqual((text.returncode, text.stdout), (2, ""))
+        self.assertIn("--yes", text.stderr)
+        # 此产品要走自己的安装事务的发行记录:命令不替换,说明原因。
+        self.publish("99.0", "9", installation="something-else")
+        self.assertEqual(self.call("update", "install", "--yes", expect=1)["error"]["code"], "needs_product_installer")
+        self.assertEqual(self.call("update", "install", "--no-such", expect=2)["error"]["code"], "usage")
+        self.assertEqual(sorted(path.name for path in feed.iterdir()), ["release.json"])  # 没有下载
+        self.assertEqual(sealed(), before)                                                 # 没有替换
+        self.assertFalse((self.support / "backups").exists() or (self.support / "trash").exists())
+
+    @unittest.skipIf(IN_PLACE, "replaces the bundle it runs on: only ever on a throwaway bundle in a temporary directory")
+    def test_update_install_replaces_a_throwaway_bundle_and_keeps_the_settings(self):
+        """带 --yes 的整条路,真实进程:sh 薄壳 → 后端 → 测试包里的 App 程序 → 共用安装器。
+        测试包、发行记录、备份与废纸篓目录全在临时目录里(包放在隔离的支持目录下,APP_LIFECYCLE_NO_RELAUNCH=1:
+        共用层据此把备份和旧包留在隔离目录、不重开 App),不碰已装的 DocKit、本人的废纸篓和偏好。"""
+        home = self.root / f"upgrade-{uuid.uuid4().hex[:8]}"
+        support, cloud = home / "support", home / "cloud"
+        old = bundle(support / "apps", NATIVE)
+        new = bundle(home / "next", NATIVE, version="99.0", build="9")
+        for app in (old, new):   # 安装器要核对签名:两个包都做本机的一次性签名(只在临时目录里)
+            subprocess.run(["/usr/bin/codesign", "--force", "-s", "-", str(app)], check=True, capture_output=True, timeout=120)
+        feed = cloud / "TianliApps/Updates" / BUNDLE / CHANNEL
+        feed.mkdir(parents=True)
+        archive = feed / "DocKit-99.0.zip"
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", str(new), str(archive)], check=True, capture_output=True, timeout=120)
+        digest = subprocess.run(["/usr/bin/shasum", "-a", "256", str(archive)], check=True, capture_output=True, text=True,
+                                timeout=60).stdout.split()[0]
+        (feed / "release.json").write_text(json.dumps({"version": "99.0", "build": "9", "bundle_id": BUNDLE, "channel": CHANNEL,
+                                                       "filename": archive.name, "sha256": digest,
+                                                       "size_bytes": archive.stat().st_size}))
+        env = dict(self.env, APP_LIFECYCLE_SUPPORT_DIR=str(support), APP_LIFECYCLE_CLOUD_DIR=str(cloud),
+                   APP_LIFECYCLE_NO_RELAUNCH="1", DOCKIT_APP_BUNDLE=str(old))
+        remembered = self.stored()
+        dry = self.call("update", "install", "--dry-run", env=env)
+        self.assertEqual((dry["would_install"]["to"], dry["will_quit_app"]), ({"version": "99.0", "build": "9"}, False))
+        self.assertEqual(plistlib.loads((old / "Contents/Info.plist").read_bytes())["CFBundleShortVersionString"], "1.2")
+
+        done = self.call("update", "install", "--yes", env=env)
+        self.assertEqual((done["command"], done["installed"], done["state"], done["previous"], done["current"]),
+                         ("update install", True, "installed", {"version": "1.2", "build": "7"}, {"version": "99.0", "build": "9"}))
+        self.assertEqual((done["backup"], done["old_app_cleanup"], done["relaunched"], done["app_running"]),
+                         (None, "trashed", False, False))
+        on_disk = plistlib.loads((old / "Contents/Info.plist").read_bytes())
+        self.assertEqual((on_disk["CFBundleShortVersionString"], on_disk["CFBundleVersion"]), ("99.0", "9"))
+        retired = list((support / "trash").glob("*/DocKit.app/Contents/Info.plist"))
+        self.assertEqual(len(retired), 1, list((support / "trash").rglob("*.app")))      # 旧包在隔离的废纸篓目录里
+        self.assertEqual(plistlib.loads(retired[0].read_bytes())["CFBundleShortVersionString"], "1.2")
+        self.assertFalse((support / "backups" / "DocKit.app").exists())
+        self.assertEqual(self.stored(), remembered)                                       # 记住的设置没动
+        # 换好的包自己回答:已是最新,再装一次什么都不做。
+        again = self.call("update", "install", "--yes", env=env)
+        self.assertEqual((again["installed"], again["state"], again["current"]), (False, "up_to_date", {"version": "99.0", "build": "9"}))
+        self.assertEqual(self.call("update", "check", env=env)["state"], "up_to_date")
 
     def start_app(self, live):
         state = self.root / f"app-{uuid.uuid4().hex}.json"
@@ -342,6 +462,13 @@ class LifecycleCommandTests(unittest.TestCase):
         self.call("config", "sync", "on", "--yes", env=live)
         self.assertTrue(reaches(lambda s: s["enabled"] is True and s["window_switch"] is True and s["status"] != OFF), "settles on after on, off, on")
         self.assertTrue(holds(True, 1.5), "on, off, on back to back stays on")
+        # 开关下面那句同步状态:App 在运行时,命令读到的就是它此刻显示的那句。
+        def sentence(app):
+            now = self.call("config", "status", env=live)["sync_status"]
+            return (now["text"], now["from"], now["live"]) == (app["status"], "app", True) and app["status"] != OFF
+
+        self.assertTrue(reaches(sentence), f"config status reports the running app's own sentence: "
+                                           f"{self.call('config', 'status', env=live)['sync_status']} / {seen()['status']}")
         self.call("config", "sync", "off", "--yes", env=live)
         self.assertTrue(reaches(lambda s: s["enabled"] is False and s["window_switch"] is False and s["status"] == OFF), "back to off")
         # 导入:App 重读设置(主视图换到导入的操作与目标),开关不动,导入值不被 App 写回旧值。
@@ -442,8 +569,10 @@ class LifecycleCommandTests(unittest.TestCase):
 
     @unittest.skipUnless(HEADQUARTERS.is_file(), "shared source not on this machine")
     def test_the_command_layer_is_the_shared_source_byte_for_byte(self):
-        self.assertTrue((MAC / "Sources/AppLifecycleCLI.swift").read_bytes() == HEADQUARTERS.read_bytes(),
-                        f"Sources/AppLifecycleCLI.swift differs from the shared source; copy {HEADQUARTERS} over it and build again")
+        # 四份是一版:命令层依赖另外三份里的接口(安装器、同步状态记录)。
+        for name in SHARED_FILES:
+            self.assertTrue((MAC / "Sources" / name).read_bytes() == (SHARED / name).read_bytes(),
+                            f"Sources/{name} differs from the shared source; copy {SHARED / name} over it and build again")
 
 
 ASSEMBLED = os.environ.get("DOCKIT_APP")
@@ -488,7 +617,11 @@ class AssembledBundleTests(unittest.TestCase):
         linked = subprocess.run([str(link), "config", "status", "--json"], env=self.env, capture_output=True, text=True,
                                 stdin=subprocess.DEVNULL, timeout=90)
         self.assertEqual((linked.returncode, linked.stdout), (status.returncode, status.stdout))
+        # 开关下面那句同步状态:隔离目录里没有同步记录,按开关给初值(本人自己开着 DocKit 时 live 为真)。
+        self.assertEqual(body["sync_status"], {"text": OFF, "at": None, "from": "derived", "live": body["app_running"]})
         wrong = self.entry("config", "status", "--no-such", "--json")
+        self.assertEqual((wrong.returncode, json.loads(wrong.stdout)["error"]["code"]), (2, "usage"))
+        wrong = self.entry("update", "install", "--no-such", "--json")
         self.assertEqual((wrong.returncode, json.loads(wrong.stdout)["error"]["code"]), (2, "usage"))
         # 窗口显示的版本、构建号与 bundle id 来自命令所在的包。
         feed = self.root / "cloud/TianliApps/Updates" / info["CFBundleIdentifier"] / CHANNEL
@@ -500,9 +633,15 @@ class AssembledBundleTests(unittest.TestCase):
         body = json.loads(check.stdout)
         self.assertEqual((check.returncode, body["state"], body["current"]),
                          (0, "up_to_date", {"version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"]}))
+        # 没有新版:update install 成功退出,什么都不装(读的是同一份隔离的发行记录)。
+        install = self.entry("update", "install", "--yes", "--json")
+        body = json.loads(install.stdout)
+        self.assertEqual((install.returncode, body["command"], body["installed"], body["state"]), (0, "update install", False, "up_to_date"))
         top = self.entry("--help").stdout
         self.assertIn("\n  config status ", top)
         self.assertIn("\n  update check ", top)
+        self.assertIn("\n  update install --yes ", top)
+        self.assertNotIn("暂无命令", top)
 
 
 if __name__ == "__main__":

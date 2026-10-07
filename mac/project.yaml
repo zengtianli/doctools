@@ -88,12 +88,13 @@ sop:
       human: 打开窗口本身只在界面里有意义；版本看 dockit status，记住的设置看 dockit settings
     - name: 版本与构建号
       command: dockit status
-    # 「配置与更新…」窗口的几项由 App 可执行文件里的共用命令层执行，dockit 只转调（Sources/ProductLifecycle.swift、
-    # doc_gui_backend.lifecycle_command）；读回用 dockit config status。
+    # 「配置与更新…」窗口的各项由 App 可执行文件里的共用命令层执行，dockit 只转调（Sources/ProductLifecycle.swift、
+    # doc_gui_backend.lifecycle_command）；读回用 dockit config status（开关、开关下面那句同步状态 sync_status）与
+    # dockit update check（版本）。升级走 dockit update install --yes，与窗口「升级到新版…」同一个安装器。
     - name: 使用 iCloud 记住配置
       command: dockit config sync
     - name: iCloud 配置同步状态
-      missing: 窗口里那句实时同步状态由运行中的 App 持有；命令只在自己执行 config sync on 或同步开着时的 config import 时回报那一次同步的结果
+      command: dockit config status
     - name: 导出配置
       command: dockit config export
     - name: 导入配置
@@ -101,7 +102,7 @@ sop:
     - name: 检查更新
       command: dockit update check
     - name: 升级到新版
-      missing: 命令不做静默安装：dockit update check 给出新版、按钮名、安装包地址与步骤，替换并重启 App 仍在「配置与更新…」窗口确认
+      command: dockit update install
   ui:
   - Sources/**
   - icon/**

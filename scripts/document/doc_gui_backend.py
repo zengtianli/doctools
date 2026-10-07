@@ -980,28 +980,31 @@ def settings_text(settings: dict) -> str:
             + " · 目标格式:" + ("、".join(f"{k}={v}" for k, v in targets.items()) or "未记录"))
 
 
-# ───────────────────────────────────────────── 「配置与更新…」窗口的几项(config / update):转调 App 可执行文件
+# ───────────────────────────────────────────── 「配置与更新…」窗口的各项(config / update):转调 App 可执行文件
 #
-# 使用 iCloud 记住配置、导出配置、导入配置、检查更新属于 App 本身(偏好域、版本与构建号、发行渠道),
-# 由 App 可执行文件里的共用命令层执行(mac/Sources/AppLifecycleCLI.swift,入口在 DocToolsApp.swift 的 main 最前面,
-# 不创建窗口)。这里只转调:第一个词是 config 或 update 时,整段参数原样交给 App 程序,stdout、stderr、退出码
-# 原样带回,不解析、不补字段。只有转调本身失败才由这里按共用层的形状报错(退出码 1)。
+# 使用 iCloud 记住配置与它下面那句同步状态、导出配置、导入配置、检查更新、升级到新版属于 App 本身(偏好域、
+# 版本与构建号、发行渠道、安装器),由 App 可执行文件里的共用命令层执行(mac/Sources/AppLifecycleCLI.swift,入口在
+# DocToolsApp.swift 的 main 最前面,不创建窗口)。这里只转调:第一个词是 config 或 update 时,整段参数原样交给
+# App 程序,stdout、stderr、退出码原样带回,不解析、不补字段。只有转调本身失败才由这里按共用层的形状报错(退出码 1)。
 # App 取法:DOCKIT_APP_BUNDLE(只给测试用)→ 入口所在的 .app(bin/dockit 导出的 DOCKIT_ENTRY_APP)→ 默认装机位置。
 # 下面几行帮助照抄共用层自己的文字,mac/tests/test_lifecycle_cli.py 拿编好的程序的 `config --help` 逐行核对。
 
 LIFECYCLE_VERBS = ("config", "update")
 LIFECYCLE_SECONDS = 60     # 共用层一次同步或一次读发行记录最多等 30 秒;同步开着时的导入两样都做
+# update install 另算:共用层下载并验证发行包最多 330 秒、等运行中的 App 退出 20 秒、替换本身最多 330 秒。
+# 到时限只结束等它的这一个进程;替换由共用层另起的脚本做,所以超时后先读回版本,不要直接重发。
+LIFECYCLE_INSTALL_SECONDS = 720
 LIFECYCLE_READS = (
-    "  config status              「使用 iCloud 记住配置」开关、当前可迁移的配置项、App 是否在运行（只读）",
+    "  config status              「使用 iCloud 记住配置」开关、开关下面那句同步状态、当前可迁移的配置项、App 是否在运行（只读）",
     "  update check               检查更新：当前版本、此渠道最新版本、有没有新版、怎么升级"
     "（只读；私有渠道读 iCloud Drive 里的发行记录，公开渠道联网读发行记录）")
 LIFECYCLE_WRITES = (
     "  config export -o <file>        导出配置：与窗口「导出配置…」同一份文件；不改设置，只写你指定的那个文件"
     "（--force 覆盖；-o - 输出到标准输出，不写文件）",
     "  config import <file> --yes     导入配置：先备份原配置再覆盖，与窗口「导入配置…」相同",
-    "  config sync on|off --yes       拨动「使用 iCloud 记住配置」（--dry-run 只看会不会变；用 dockit config status 回读）")
-LIFECYCLE_NO_COMMAND = ("升级到新版 / 下载新版（命令不做静默安装：update check 给出新版、按钮名、安装包地址与步骤，"
-                        "替换并重启 App 仍在「配置与更新…」窗口确认）")
+    "  config sync on|off --yes       拨动「使用 iCloud 记住配置」（--dry-run 只看会不会变；用 dockit config status 回读）",
+    "  update install --yes           升级到新版：与窗口「升级到新版…」同一条路——验证发行包与签名、替换当前 App，"
+    "运行中的先退出、换好再重开；配置保留，替换失败回滚（--dry-run 只看会做什么；用 dockit update check 回读）")
 # 没装 App 时 `dockit config --help` 也要能看;装了 App 就由它自己回答。
 LIFECYCLE_HELP = "\n".join((
     "usage: dockit config [status] [--json]",
@@ -1009,31 +1012,41 @@ LIFECYCLE_HELP = "\n".join((
     "       dockit config import <file.json> --yes [--json]",
     "       dockit config sync on|off --yes [--dry-run] [--json]",
     "       dockit update check [--json]",
-    "「配置与更新…」窗口里的五项，与窗口读写同一份设置。",
+    "       dockit update install --yes [--dry-run] [--json]",
+    "「配置与更新…」窗口里的各项，与窗口读写同一份设置、走同一个安装器。",
     "读（不写任何文件或状态）:",
     *LIFECYCLE_READS,
     "写:",
     *LIFECYCLE_WRITES,
     '--json：成功 {"ok": true, "command": "config status", …}；'
     '失败 {"ok": false, "command": …, "error": {"code", "message"}}，退出码非零。',
-    "  config status  → has_settings, sync_enabled, keys[], app_running, problem",
+    "  config status  → has_settings, sync_enabled, sync_status{text, at, from, live}, keys[], app_running, problem",
     "  config export  → path, bytes, keys[]",
     "  config import  → imported, path, sync_enabled, app_running, sync{completed, status}（仅同步开着时）",
     "  config sync    → action, changed, sync_enabled, status, app_running, check_with；--dry-run 给 would_change",
     "  update check   → current{version, build}, source{kind, …}, latest{version, build, …}, update_available,",
     "                   state（update_available | up_to_date | ahead_of_channel）, message, "
-    "upgrade{in_app, button, how, download_url}",
+    "upgrade{in_app, button, how, download_url, command}",
+    "  update install → installed, state（installed | up_to_date | ahead_of_channel | handed_off）, message, "
+    "current, latest, source, app_running；",
+    "                   装上后另有 previous{version, build}, backup（成功为 null）, old_app_cleanup, relaunched；"
+    "--dry-run 给 would_install{from, to}, installation, will_quit_app, will_relaunch",
+    "sync_status 是窗口开关下面那句话。from：app（运行中的 App 此刻显示的，live 为 true）· "
+    "record（App 没在运行，上一次同步留下的那句，at 是当时）·",
+    "  derived（没有可用的记录，按开关给窗口打开时的初值）",
     "退出码与 error.code：",
-    "  0  成功",
+    "  0  成功（update install 没有新版时也是 0，installed 为 false）",
     "  1  操作未完成：not_found（没有这个文件）· import_rejected（导入被拒，原配置保留）· export_failed（导出未完成）·",
     "     sync_incomplete（开关已打开，首次同步未完成）· check_incomplete（没读到发行记录）· "
-    "no_settings（没有可迁移配置）· failed（其他）",
-    "  2  用法错误或缺确认参数：usage（参数不对）· confirmation_required（import、sync 缺 --yes）· "
+    "no_settings（没有可迁移配置）·",
+    "     manual_install（此渠道或此安装位置不能由命令替换，给出安装包地址）· "
+    "needs_product_installer（此产品要走自己的安装事务）·",
+    "     upgrade_failed（下载或验证未通过，当前 App 未动）· app_busy（运行中的 App 没有退出，未替换）·",
+    "     replace_failed（替换未完成，旧版已保留或已回滚）· cleanup_failed（新版已验证，旧包清理失败并保留）· failed（其他）",
+    "  2  用法错误或缺确认参数：usage（参数不对）· confirmation_required（import、sync、update install 缺 --yes）· "
     "file_exists（导出目标已存在，缺 --force）",
     "仅在窗口中：打开「配置与更新…」窗口",
-    "暂无命令：" + LIFECYCLE_NO_COMMAND,
-    "同步状态那句话由运行中的 App 持有：config sync on 会回报它自己这次同步的结果，之后的实时状态看窗口。",
-    "命令不弹窗、不抢焦点、不申请权限、不做静默安装。"))
+    "命令不弹窗、不抢焦点、不申请权限；升级要带 --yes。"))
 
 
 def lifecycle_app() -> Path:
@@ -1087,15 +1100,22 @@ def lifecycle_failure(words: list[str], code: str, message: str) -> int:
     return EXIT_FAILED
 
 
+def lifecycle_seconds(words: list[str]) -> int:
+    """等 App 可执行文件多久:update install 要下载、验证、替换,另给时限;其余照旧。"""
+    named = [w for w in words if not w.startswith("-")][:2]
+    return LIFECYCLE_INSTALL_SECONDS if named == ["update", "install"] else LIFECYCLE_SECONDS
+
+
 def forward(binary: Path, words: list[str], readback: str, extra_env: dict | None = None) -> int:
     """整段参数原样交给 App 可执行文件,stdout、stderr、退出码原样带回;转调本身失败才由这里说明。"""
     env = {**os.environ, **extra_env} if extra_env else None
+    seconds = lifecycle_seconds(words)
     try:
         done = subprocess.run([str(binary), *words], stdin=subprocess.DEVNULL, capture_output=True,
-                              timeout=LIFECYCLE_SECONDS, env=env)
+                              timeout=seconds, env=env)
     except subprocess.TimeoutExpired:
         return lifecycle_failure(words, "timeout",
-                                 f"{LIFECYCLE_SECONDS} 秒内没有结束,已终止;先用 {readback} 读回当前状态,不要直接重发")
+                                 f"{seconds} 秒内没有结束,已终止;先用 {readback} 读回当前状态,不要直接重发")
     except OSError as exc:
         return lifecycle_failure(words, "app_missing", f"无法运行 {binary}: {exc}")
     if done.returncode < 0:
@@ -1121,7 +1141,8 @@ def lifecycle_command(words: list[str]) -> int:
                                      f"{app} 是还不带 {words[0]} 命令的旧版(Info.plist 没有 {COMMAND_VERBS_KEY}),没有转调;装上新版 DocKit.app 后再用")
         return lifecycle_failure(words, "app_missing",
                                  f"找不到 DocKit 的 App 可执行文件({app}):config / update 由它执行,请从已安装的 DocKit.app 运行 dockit")
-    return forward(binary, words, "dockit config status")
+    installs = lifecycle_seconds(words) == LIFECYCLE_INSTALL_SECONDS
+    return forward(binary, words, "dockit status" if installs else "dockit config status")
 
 
 # ───────────────────────────────────────────── 公开版 DocKit 自己的状态与设置(public):转调公开包的可执行文件
@@ -1142,7 +1163,7 @@ PUBLIC_HELP = """usage: dockit public <命令> [参数…]
 没能交给公开包时退出 1(--json 为 {"ok":false,"command":…,"error":{"code","message"}}):
   app_missing   没有装公开版,或那个位置上不是公开版 DocKit
   app_outdated  装着的公开版还不带这条命令(Info.plist 的 DocKitCommandVerbs 没列这个词),没有启动它
-  app_failed    可执行文件被信号终止 · timeout  60 秒未结束
+  app_failed    可执行文件被信号终止 · timeout  60 秒未结束(update install 为 720 秒)
 文档处理仍用 dockit run(自用版引擎);公开版的 9 个操作都在 dockit ops 里。"""
 
 
@@ -1691,7 +1712,7 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
   dockit doctor [--json]             依赖是否就绪(界面状态行的「已就绪 / 后端不可达」)
   dockit settings [--json]           界面记住的上次操作与各操作的目标格式
   dockit run <op> --dry-run <path>…  只校验:列出将处理的输入与将覆盖的已有文件,不执行
-  「配置与更新…」窗口里的两项(写在 dockit 后面,加 --json;由 App 可执行文件执行,全部用法 dockit config --help):
+  「配置与更新…」窗口里的读两项(写在 dockit 后面,加 --json;由 App 可执行文件执行,全部用法 dockit config --help):
 @LIFECYCLE_READS@
   dockit public status [--json]      公开版 DocKit(DocKit Public.app)自己的版本与构建号、状态行、记住的设置;
                                      public 后面的词原样交给公开包的可执行文件,它认的全部命令见 dockit public help
@@ -1702,10 +1723,10 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
                                      fontunify 与 pptx 的 clean 原地改写;--background 另记一条后台任务
   dockit settings set <键> <值> [--json]
                                      改界面记住的设置:last_operation <op> 或 target_formats.<op> <目标>
-  「配置与更新…」窗口里的三项(同上):
+  「配置与更新…」窗口里的写四项(同上):
 @LIFECYCLE_WRITES@
-  dockit public settings set … | public config import … | public config sync …
-                                     改公开版自己的设置(同样由公开包的可执行文件执行,见 dockit public help)"""
+  dockit public settings set … | public config import … | public config sync … | public update install …
+                                     改公开版自己的设置、升级公开版(同样由公开包的可执行文件执行,见 dockit public help)"""
 _DESCRIPTION = (_DESCRIPTION.replace("@LIFECYCLE_READS@", "\n".join(LIFECYCLE_READS))
                 .replace("@LIFECYCLE_WRITES@", "\n".join(LIFECYCLE_WRITES)))
 
@@ -1738,6 +1759,8 @@ _EPILOG = """示例:
   失败      {"ok":false,"error":"给人看的原因","error_code":"稳定短码"},退出码非零;用法错误加 --json 时同样是这个对象。
   config / update 是共用命令层的形状(字段见 dockit config --help):成功 {"ok":true,"command":"config status",…};
             失败 {"ok":false,"command":…,"error":{"code","message"}},与上面平铺的 error / error_code 不同。
+            config status 带 sync_status{text,at,from,live}(开关下面那句同步状态);
+            update install 带 installed、state,--dry-run 带 would_install{from,to}。
   public …  公开包可执行文件自己的输出(字段见 dockit public help),失败也是 {"ok":false,"command":…,"error":{…}}。
   run 的 ok 是请求级(请求被处理即 true);逐个输入看 results[].ok,整体看 all_ok 或退出码。
 
@@ -1751,7 +1774,8 @@ _EPILOG = """示例:
   128+N  被信号 N 中断(引擎进程组一并终止)
   config / update / public 只用 0、1、2,各自的 error.code 见 dockit config --help 与 dockit public help;
          没能交给 App 可执行文件时为 1:app_missing(找不到那个 App)· app_outdated(已装的是不带这条命令的旧版,没有转调)·
-         app_failed(被信号终止)· timeout(60 秒未结束,先 dockit config status 读回再决定)
+         app_failed(被信号终止)· timeout(60 秒未结束,update install 为 720 秒;先 dockit config status 或
+         dockit status 读回再决定,不要直接重发)
 
 仅在窗口中(界面动作,括号里是命令这边的做法):
   拖入文件或目录(把绝对路径写在 dockit run 后面)
@@ -1762,17 +1786,12 @@ _EPILOG = """示例:
   搜索功能面板 ⌘K(dockit ops 列出全部操作)
   打开「配置与更新…」窗口(版本看 dockit status,记住的设置看 dockit settings)
   公开版的「DocKit 使用教程」(打开帮助网页)
-暂无命令:
-  @LIFECYCLE_NO_COMMAND@
-  iCloud 配置同步状态那句话(由运行中的 App 持有:config sync on 与同步开着时的 config import 只回报自己那一次
-  同步的结果,之后的实时状态看窗口)
 
 产出写在源文件旁:_fixed / _styled / _序号修正 / _lower 等 DocKit 后缀的产出重跑时覆盖上一次;
 与源同名换后缀(b.md → b.docx)、merged.md、按 sheet 命名的产出已存在时默认拒绝(would_overwrite),
 确认覆盖加 --yes。fontunify 与 pptx 的 clean 原地改写(已有 .backup 时另存编号备份,不顶掉原件)。
 run 默认同步:typeset 或 soffice 冷启动可能要数分钟,给命令留 10 分钟超时,或用 --background。
 被 SIGTERM/SIGINT 结束时会连带终止引擎子进程,不会留下无人看管的写盘进程。"""
-_EPILOG = _EPILOG.replace("@LIFECYCLE_NO_COMMAND@", LIFECYCLE_NO_COMMAND)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1840,7 +1859,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help='输出 JSON:另带 "changed":{key,from,to}')
 
     for verb, what in (("config", "「配置与更新…」窗口的配置几项:status / export / import / sync"),
-                       ("update", "「配置与更新…」窗口的检查更新:check")):
+                       ("update", "「配置与更新…」窗口的检查更新与升级到新版:check / install")):
         sub.add_parser(verb, help=what + "(由 App 可执行文件执行,见 dockit config --help)", add_help=False)
     sub.add_parser(PUBLIC_VERB, add_help=False,
                    help="公开版 DocKit 自己的状态、记住的设置、配置与更新(交给公开包的可执行文件,见 dockit public help)")

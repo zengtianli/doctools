@@ -20,6 +20,8 @@ DocKit 的 GUI 给人用,`dockit` 给 agent 用,两者必须走同一个 gui_run
   6. (2026-10-07)「配置与更新…」窗口的几项(config / update)整段转给 App 可执行文件:参数、输出、退出码
      原样过去原样回来;找不到 App、App 是不带这组命令的旧版、被信号终止各有一个码,旧版一律不启动
      (它会把这些词当成普通启动、打开窗口)。这里用 sh 桩当 App 程序;编好的真程序在 mac/tests/test_lifecycle_cli.py。
+  7. (2026-10-07 下午)共用层补了 update install 与 config status 的 sync_status,窗口的每一项都有命令:帮助里
+     不再有「暂无命令」;update install 的转调另有时限(它要下载、验证、替换),其余命令的时限不变。
 
 全部输入都是本测试现造的临时文件;不碰用户文档、不联网、不打开浏览器。
 锁与后台任务写进 DOCKIT_CACHE_DIR 指向的临时目录,不碰 ~/Library/Caches。
@@ -492,22 +494,26 @@ def test_top_level_help_has_read_write_json_exit_and_window_only():
     for line in ("config status", "update check"):          # 「配置与更新…」窗口的读两项:行首列出
         assert re.search(rf"(?m)^\s+{line}\s", reads), f"读命令没列 {line}"
     assert re.search(r"(?m)^\s+dockit public status\b", reads) and re.search(r"(?m)^\s+dockit public settings set\b", writes)
-    for line in ("config export", "config import", "config sync"):
+    for line in ("config export", "config import", "config sync", "update install"):
         assert re.search(rf"(?m)^\s+{line}\s", writes), f"写命令没列 {line}"
+    assert "public update install" in writes
     assert "config export" not in reads, "导出会写出指定的文件,不能列在「不写任何文件」的读命令里"
     shapes = _section(text, "--json 输出形状")
     for sub in ("ops", "run", "status", "doctor", "settings"):
         assert re.search(rf"(?m)^\s+{sub}\s+\{{", shapes), f"--json 形状没写 {sub}"
     assert '"error_code"' in shapes
     assert re.search(r'(?m)^\s+config / update .*"command"', shapes) and '"error":{"code","message"}' in shapes
+    assert "sync_status{text,at,from,live}" in shapes and "would_install{from,to}" in shapes
     codes = _section(text, "退出码")
     for code in ("0", "1", "2", "69", "75", "128+N"):
         assert re.search(rf"(?m)^\s+{re.escape(code)}\s", codes), f"退出码表缺 {code}"
     for code in ("app_missing", "app_outdated", "app_failed", "timeout"):
         assert code in codes, f"退出码表没写转调失败的 {code}"
+    assert "720 秒" in codes, "update install 的转调时限要写在退出码表里"
     window = _section(text, "仅在窗口中")
-    assert "升级到新版" not in window.split("暂无命令")[0], "升级不是只能在窗口:列在暂无命令"
-    assert "升级到新版 / 下载新版" in window.split("暂无命令")[1]
+    assert "升级到新版" not in window, "升级有命令(update install),不是只能在窗口"
+    # 「配置与更新…」窗口的每一项都有命令了:升级到新版 → update install,开关下面那句同步状态 → config status 的 sync_status
+    assert "暂无命令" not in text and "静默安装" not in text
 
 
 def test_every_human_feature_is_listed_as_window_only():
@@ -526,6 +532,9 @@ def test_every_human_feature_is_listed_as_window_only():
     for f in features:   # 暂缺项在帮助里也要有去向,不能只在登记里
         if "missing" in f:
             assert f["name"].rstrip("…") in text, f["name"]
+    by_name = {f["name"]: f for f in features}
+    assert by_name["升级到新版"].get("command") == "dockit update install"
+    assert by_name["iCloud 配置同步状态"].get("command") == "dockit config status"
 
 
 def _fake_app(root: Path, version: str = "9.8.7", build: str = "654") -> Path:
@@ -701,12 +710,52 @@ def test_lifecycle_help_lines_are_listed_from_one_place():
     lines = own.splitlines()
     reads = lines[lines.index("读（不写任何文件或状态）:") + 1:lines.index("写:")]
     writes = lines[lines.index("写:") + 1:next(i for i, line in enumerate(lines) if line.startswith("--json："))]
-    assert len(reads) == 2 and len(writes) == 3
+    assert len(reads) == 2 and len(writes) == 4
+    assert reads[0].lstrip().startswith("config status") and "同步状态" in reads[0]
+    assert writes[3].lstrip().startswith("update install --yes")
     for line in reads + writes:
         assert "\n" + line + "\n" in top, line
+    assert "暂无命令" not in own and "sync_status{text, at, from, live}" in own and "update install →" in own
     cli = (ROOT / "mac" / "Sources" / "AppLifecycleCLI.swift").read_text(encoding="utf-8")
     for line in reads + writes:                      # 与共用层源码里的帮助行逐字相同(命令名代入后)
-        assert line.replace("dockit config status", "\\(command) config status") in cli, line
+        named = line.replace("dockit config status", "\\(command) config status").replace(
+            "dockit update check", "\\(command) update check")
+        assert named in cli, line
+
+
+def test_update_install_is_forwarded_with_its_own_time_limit(tmp_path: Path):
+    """update install 要下载、验证、替换(共用层自己最多等 330 + 20 + 330 秒),转调给它另一个时限;其余命令照旧。
+    两条分支都用会睡的桩实测:时限在子进程里缩短,不改生产常量。dockit public 走同一个转调。"""
+    seen = tmp_path / "argv"
+    script = f"""printf '%s\\n' "$@" > '{seen}'
+sleep 2
+printf '{{"ok":true,"command":"update install","installed":false,"state":"up_to_date"}}\\n'
+"""
+    own = _stub_app(tmp_path, script)
+    public = _stub_app(tmp_path, script, ("status", "settings", "config", "update", "help"), "Public.app", PUBLIC_ID)
+    probe = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import doc_gui_backend as b\n"
+        "assert (b.LIFECYCLE_SECONDS, b.LIFECYCLE_INSTALL_SECONDS) == (60, 720), 'production limits changed'\n"
+        "assert b.lifecycle_seconds(['update', '--json', 'install', '--yes']) == 720\n"
+        "assert b.lifecycle_seconds(['update', 'check']) == b.lifecycle_seconds(['config', 'import', 'install']) == 60\n"
+        "b.LIFECYCLE_SECONDS, b.LIFECYCLE_INSTALL_SECONDS = 1, 30\n"
+        "sys.argv = ['dockit', *sys.argv[2:]]\n"
+        "sys.exit(b.main())\n"
+    )
+    env = _env(DOCKIT_APP_BUNDLE=str(own), DOCKIT_PUBLIC_APP=str(public))
+
+    def typed(*words):
+        return subprocess.run([sys.executable, "-c", probe, str(BACKEND.parent), *words], capture_output=True,
+                              text=True, timeout=60, env=env)
+
+    for prefix in ((), ("public",)):
+        done = typed(*prefix, "update", "install", "--yes", "--dry-run", "--json")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert as_json(done) == {"ok": True, "command": "update install", "installed": False, "state": "up_to_date"}
+        assert seen.read_text(encoding="utf-8").splitlines() == ["update", "install", "--yes", "--dry-run", "--json"]
+        cut = typed(*prefix, "update", "check", "--json")              # 其余命令的时限没有跟着放开
+        assert cut.returncode == 1 and as_json(cut)["error"]["code"] == "timeout", cut.stdout + cut.stderr
+        assert "1 秒内没有结束" in as_json(cut)["error"]["message"]
 
 
 # ─────────────────────────────── 公开版自己的状态与设置:dockit public 转调公开包的可执行文件
