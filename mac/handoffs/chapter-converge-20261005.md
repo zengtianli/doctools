@@ -137,3 +137,41 @@
 - 装机版窗口的证据（协调会话 10-07 补）：对 `/Applications/DocKit.app` 1.0.1 (329) 就地跑进程内离屏自检 `--ui-self-test`，18 项通过、4 张离屏图，偏好域前后逐字节相同；结果在 `build/notarized/agentcli-20261007/evidence/ui-self-test-installed/`。真实窗口仍没有人打开过。装前装后的偏好与数据留底也补进了同目录的 `before/`、`after/`。
 - 父仓 `CLAUDE.md` 的独立入口表里 `mac/bin/dockit` 那一行还没写 `config`／`update`／`public`，不在本轮边界内。
 - `dockit settings set` 改的值，开着的窗口仍要到下次启动才选中，这轮没动。
+
+## 2026-10-07 追加（四）：第二轮 — `update install` 与同步状态那句话（接续被中断的单元）
+
+本轮授权是本人一句「继续全部做完。按照你的意思」（针对主线的五条意见）。本节由接续者写：前一个执行者 17:46 开工、18:05 前后随主会话重启被结束，没有留下回报；它的改动都在工作区，没有提交、没有构建、没有装机。
+
+进度（做一步写一步，未写「完成」的都还没做）：
+
+- 18:20 声明边界（`claims.py --pid 68260 --session agentcli2-dockit`，两仓共 22 个具体文件）。此前三次被拒：前一个执行者用旧主进程号留下的同名租约没放，由主线处理后拿到。
+- 18:21 重新留底：`build/notarized/agentcli2-20261007/evidence/before-resume/`（装机版 1.0.1 (329)、Notarized Developer ID、两个偏好域导出、iCloud 里三份发行文件的哈希、包内文件哈希、只读命令输出；两个 App 都没在运行）。前一个执行者 17:49 的留底在同目录 `before/`。
+- 四份共用副本（`AppLifecycle`／`AppConfiguration`／`AppLifecycleUI`／`AppLifecycleCLI`）与总部现版逐字节相同，不用再刷新。仓里没有 `.sync-conflict-*` 文件，没有东西要移。
+- 前一个执行者留下的改动（后端转调与帮助、两份测试、登记两项改 `command`、README 中英文、`CLAUDE.md`）逐处读过，沿用；测试结果见下。
+- 18:30 `./build.sh --check` 通过（经 2 号槽排队跑）：刷新后的四份共用副本配上原有接线编得过；`tests/test_lifecycle_cli.py` 12 条里 11 过、1 条按设计跳过（要给组装好的包才跑）。新用例含在临时目录里把一个测试包真的换成发行记录里的新版（旧包进隔离的废纸篓目录、不重开、记住的设置不变）。
+- 18:32 `python3 -m pytest -q scripts/document/tests`：334 过、1 跳过。前一个执行者 17:52 改动前的留底是 331 过、2 败、1 跳过：`test_lifecycle_help_lines_are_listed_from_one_place` 是 16:57 副本刷新后帮助行没跟上（已随本轮改好），`test_sigterm_stops_engine_group_and_releases_locks` 这次通过（当时机器负载很高，是计时类偶发；引擎侧，本轮没碰）。
+- 18:33 源码、测试、帮助、登记本地提交 `f27b692`（7 个文件，限定路径，未推送）。构建号取提交数，这一版是 334。
+- 18:38 `APP_LIFECYCLE_VENDOR=/nonexistent/skip-vendor ./build.sh` 从提交 `f27b692` 构建通过（含检查段 12 条用例与组装后的只读用例）。跳过分发是为了让包里的四份共用副本就是测过的那一版；构建前后四份都与总部现版逐字节相同。
+- 18:45 新包另存到 `build/notarized/agentcli2-20261007/DocKit.app`：1.0.1 (334)，同一身份（Developer ID Application: tianli Zeng，B9LJH93LA4）加 hardened runtime 与时间戳签名，公证 Accepted（id `31fe51a9-d9b2-4ebf-836a-8b2b314c3f97`），已装订；`spctl -a -vv` 报 Notarized Developer ID，`stapler validate` 通过。可执行文件 sha256 `eb29baa0b74ed2d0…`。只做了提交与装订，没有碰任何发行渠道。
+- 18:51 装机前，在这份公证包上就地跑整套隔离用例（`DOCKIT_APP_IN_PLACE`，经 2 号槽）：11 条里 10 过、1 条按设计跳过（真实替换那条只在临时包上做，不在就地的包上做）。跑完包的程序与 Info.plist 哈希没变，本人偏好域导出的哈希没变，`spctl` 仍是 Notarized Developer ID。
+- 18:51:46 装机（DocKit 当时没在运行，没有重启任何东西）：旧包 1.0.1 (329) 移到 `~/.Trash/dockit-1.0.1-329-20261007-185146/DocKit.app`，公证包用 ditto 拷入 `/Applications/DocKit.app`，逐文件与公证包相同；`~/.local/bin/dockit` 原本就指向包内入口，没有动。装后 `spctl -a -vv` 报 Notarized Developer ID，`stapler validate` 通过，可执行文件 sha256 `eb29baa0b74ed2d0…`（装前 `b68f1ce5dfe5401b…`）。
+- 装后比对（`evidence/after-self-334/` 对 `before-resume/`）：两个偏好域导出、偏好文件大小与修改时间、iCloud 里三份发行文件、缓存目录、公开版整包文件哈希都逐字节相同；16 条只读命令的退出码全部相同。输出有差别的只有预期的四处：`status` 的 `app.build` 329 → 334；`config status --json` 多了 `sync_status`；文字输出多一行「同步状态：…」；`config --help` 换成新版（少了「暂无命令」与「同步状态那句话由运行中的 App 持有」两行，多了 `update install` 各行）。
+- 装机版只读验证：`dockit --help` 有 `update install --yes` 一行、没有「暂无命令」；`dockit config status --json` 带 `sync_status{text:"iCloud 配置同步已关闭", at:null, from:"derived", live:false}`；`dockit update install --no-such --json` 与 `dockit update install extra --json` 都退出 2、`error.code` 为 `usage`。没有对装机版跑 `update check`、`update install --yes`、`config sync`、`config import`。
+- 18:52 `chapter sop accept --app doc-tools-doctools --check agent_cli` 通过；`chapter agent-cli --json --app doc-tools-doctools` 读回：`passed`，29 项，命令 20、只在窗口 9、暂缺 0，problems 为空（改前是暂缺：命令 18、只在窗口 9、暂缺 2）。
+- 18:53 对装上的 `/Applications/DocKit.app` 1.0.1 (334) 就地跑进程内离屏自检 `--ui-self-test`（经 2 号槽）：18 项通过、4 张离屏图，偏好域前后逐字节相同，没有留下进程；结果在 `build/notarized/agentcli2-20261007/evidence/ui-self-test-installed-334/`。
+- 装机记录 `build/notarized/agentcli2-20261007/install-record.json`，证据在同目录 `evidence/`（不入库）。声明已释放。
+
+本产品事项（派活点名的）：
+
+- 「`update install` 这个词在转调与把关两处都放行」：把关按首词判定，`update` 上一轮就在两个包的 `DocKitCommandVerbs` 里，所以 Info.plist 不用改；转调原样带过去，只给它单独的时限（720 秒，其余 60 秒）。`test_update_install_is_forwarded_with_its_own_time_limit` 用会睡的桩把 `dockit update install` 与 `dockit public update install` 两条都实测了。
+- 只读审计「只能人来」9 项：没有改动。
+
+没做的、没验证的：
+
+- 没有对装机版、本人的偏好域和 iCloud Drive 跑 `update install --yes`、`update check`、`config sync on|off`、`config import`。真实替换只在临时目录里的测试包上做过（本机一次性签名、文件型发行记录、不重开）；从本人 iCloud 里的私有发行记录走一次真实升级没有证据。
+- 「配置与更新…」窗口这一版换成了总部现版：上一轮构建时跳过分发、留着旧副本，这一轮四份共用文件按约定同版（副本是别的会话 16:57 刷新并提交的 `5bff202`）。窗口只有离屏证据：测试里的运行中 App 按菜单项的方式把它建出来（在公证包上就地跑时也建出来了）；18 项界面自检不包含这个窗口。真实窗口没有人打开过。
+- 私有 Homebrew 的 cask、发行资产和 iCloud 里的私有更新记录都没动，仍是 1.0.1-323；现在装着的 334 比更新源新。构建回执没有刷新，没有做性能测量。
+- `scripts/accept/` 的功能、恢复、隐私三项没有重跑；`native_ui.sh` 没有经 Chapter 跑。Chapter 里这几项的证据输入已变。
+- 转调的 720 秒超时那条分支只用缩短时限的桩测过，没有用真的挂起去测。
+- 父仓 `CLAUDE.md` 的独立入口表里 `mac/bin/dockit` 那一行仍没写 `config`／`update`／`public`，不在本轮边界内。
+- 产品 `build/` 下有多份 `DocKit.app` 副本，Spotlight 搜得到：`notarized/private-brew-20261006`（323）、`notarized/agentcli-20261007`（329，上一轮的公证包）、`notarized/agentcli2-20261007`（334，这一轮的公证包，与装机版逐文件相同）、`icon-refresh`、`native-icon-refresh`。它们是构建留存，不是装机换下来的旧包（那个在废纸篓），这一轮没有动；要不要清由本人定。
