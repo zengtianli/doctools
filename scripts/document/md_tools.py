@@ -799,19 +799,87 @@ def strip_md_markers(text):
 
 # **bold** 或 *italic*(首字符非空格/星号,避免 3*4 这类误伤)
 _MD_INLINE = re.compile(r"(\*\*[^*]+?\*\*|\*[^*\s][^*]*?\*)")
+_MD_LINK_START = re.compile(r"\[([^\]\n]+)\]\((https?://)")
 
 
-def add_md_runs(para, text):
-    """把 **bold**/*italic* 渲染成真 Word run —— 星号字面量绝不落进 docx。"""
-    for part in _MD_INLINE.split(clean_markdown_text(text)):
-        if not part:
-            continue
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
-            para.add_run(part[2:-2]).bold = True
-        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            para.add_run(part[1:-1]).italic = True
+def _md_links(text, position=0):
+    """Yield HTTP links with balanced destination parentheses, at any depth."""
+    for match in _MD_LINK_START.finditer(text, position):
+        start = match.end() - len(match[2])
+        depth = 1
+        for end in range(start, len(text)):
+            char = text[end]
+            if char.isspace():
+                break
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    yield match.start(), end + 1, match[1], text[start:end]
+                    break
+
+
+def add_md_runs(para, text, academic=False):
+    """Render Markdown text/links as real Word runs, not literal link syntax."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from sub.fix_superscript_refs import REF_PATTERN, is_ref_list_line
+    reference = academic and is_ref_list_line(text)
+
+    def append_text(value, parent, bold, italic):
+        if not value:
+            return
+        if parent is None:
+            run = para.add_run(value)
+            if bold:
+                run.bold = True
+            if italic:
+                run.italic = True
         else:
-            para.add_run(part)
+            run = OxmlElement("w:r")
+            properties = OxmlElement("w:rPr")
+            color = OxmlElement("w:color")
+            color.set(qn("w:val"), "000000")
+            properties.append(color)
+            if bold:
+                properties.append(OxmlElement("w:b"))
+            if italic:
+                properties.append(OxmlElement("w:i"))
+            run.append(properties)
+            node = OxmlElement("w:t")
+            node.set(qn("xml:space"), "preserve")
+            node.text = value
+            run.append(node)
+            parent.append(run)
+
+    def render(value, parent=None, bold=False, italic=False):
+        position = 0
+        while position < len(value):
+            emphasis = _MD_INLINE.search(value, position)
+            link = next(_md_links(value, position), None) if parent is None else None
+            if emphasis is not None and (link is None or emphasis.start() < link[0]):
+                append_text(value[position:emphasis.start()], parent, bold, italic)
+                part = emphasis[0]
+                width = 2 if part.startswith("**") else 1
+                render(part[width:-width], parent, bold or width == 2, italic or width == 1)
+                position = emphasis.end()
+            elif link is not None:
+                start, end, label, url = link
+                append_text(value[position:start], parent, bold, italic)
+                if academic and REF_PATTERN.fullmatch("[" + label + "]"):
+                    label = "[" + label + "]"
+                if reference and not label.startswith("DOI: "):
+                    label += ": " + url
+                node = OxmlElement("w:hyperlink")
+                node.set(qn("r:id"), para.part.relate_to(url, RT.HYPERLINK, is_external=True))
+                render(label, node, bold, italic)
+                para._p.append(node)
+                position = end
+            else:
+                append_text(value[position:], parent, bold, italic)
+                break
+
+    render(clean_markdown_text(text))
 
 
 def parse_list_item(line):
@@ -1019,7 +1087,7 @@ def parse_markdown(md_content):
     return elements
 
 
-def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
+def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None, academic=False):
     """转换 Markdown 到 Docx"""
 
     print(f"📖 读取: {md_path}")
@@ -1083,7 +1151,7 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
         except KeyError:
             para = doc.add_paragraph()
         if inline:
-            add_md_runs(para, text)
+            add_md_runs(para, text, academic=academic)
         else:
             para.add_run(strip_md_markers(text))
         return para
@@ -1154,6 +1222,13 @@ def convert_md_to_docx(md_path, styles_xml_path, output_path, config=None):
                         with contextlib.suppress(KeyError):
                             para.style = table_cell_style
 
+    if academic:
+        from academic_docx import apply_academic
+        from sub import fix_superscript_refs
+        apply_academic(doc, elements, body_style, fix_superscript_refs)
+        doc.core_properties.author = ""
+        doc.core_properties.last_modified_by = ""
+
     # 保存
     doc.save(output_path)
     clear_quarantine(output_path)
@@ -1169,6 +1244,8 @@ _MD2DOCX_PARSER = None
 def cmd_md2docx(args):
     """md2docx 子命令入口（原 md_docx_template.py main() 三分支 + Finder fallback）"""
     # 无参数时从 Finder 获取选中的 .md 文件
+    if getattr(args, "academic", False) and not args.input:
+        raise SystemExit("❌ --academic 必须显式提供 Markdown 路径，不调用 Finder")
     if not args.input:
         finder_file = get_finder_selection()
         if not finder_file:
@@ -1213,7 +1290,7 @@ def cmd_md2docx(args):
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
-        convert_md_to_docx(md_path, styles_path, output_path, config)
+        convert_md_to_docx(md_path, styles_path, output_path, config, academic=getattr(args, "academic", False))
         return
 
     # 一步完成: input.md -t 模板.docx -o output.docx
@@ -1229,7 +1306,7 @@ def cmd_md2docx(args):
                 print(f"📋 使用模板: {os.path.basename(template)}")
                 styles_path, config = extract_styles_xml(template, tmpdir)
                 output_path = args.output or os.path.splitext(md_path)[0] + ".docx"
-                convert_md_to_docx(md_path, styles_path, output_path, config)
+                convert_md_to_docx(md_path, styles_path, output_path, config, academic=getattr(args, "academic", False))
         else:
             # 使用已提取的样式
             styles_path = args.styles or os.path.join(DEFAULT_STYLES_DIR, "heading_styles.xml")
@@ -1246,7 +1323,7 @@ def cmd_md2docx(args):
                     config = json.load(f)
 
             output_path = args.output or os.path.splitext(md_path)[0] + ".docx"
-            convert_md_to_docx(md_path, styles_path, output_path, config)
+            convert_md_to_docx(md_path, styles_path, output_path, config, academic=getattr(args, "academic", False))
         return
 
     (_MD2DOCX_PARSER or build_parser()).print_help()
@@ -1827,6 +1904,7 @@ def build_parser():
     p_m2d.add_argument("-t", "--template", help="模板 docx 文件")
     p_m2d.add_argument("-s", "--styles", help="样式 XML 文件")
     p_m2d.add_argument("-o", "--output", help="输出文件")
+    p_m2d.add_argument("--academic", action="store_true", help="学术章节：H1-H4、宋体小四、黑色、引文上标、悬挂书目；保留源文本")
     _MD2DOCX_PARSER = p_m2d
 
     return parser

@@ -21,6 +21,28 @@
 default: zdwp
 
 profiles:
+  academic:
+    description: 学术章节MD出稿；保留H1-H4、上标引文及悬挂书目
+    H1_STYLES: ["Heading 1", "Heading1"]
+    H2_STYLES: ["Heading 2", "Heading2"]
+    H3_STYLES: ["Heading 3", "Heading3"]
+    H4_STYLES: ["Heading 4", "Heading4"]
+    BODY_STYLES: ["ZDWP正文", "Normal", "Body Text"]
+    FORMAT:
+      cjk_font: 宋体
+      heading_font: 黑体
+      latin_font: Times New Roman
+      color: "000000"
+      body_pt: 12
+      reference_pt: 10.5
+      heading_pt: [18, 16, 14, 12]
+      line_spacing: 1.5
+      first_line_chars: 2
+      reference_hanging_chars: 2
+      page_cm: [21, 29.7]
+      margins_cm: {top: 2.5, bottom: 2.5, left: 3, right: 2.5}
+      footer_pt: 10.5
+
   zdwp:
     description: 浙江省水利水电勘测设计院 ZDWP 集团命名样式族
     H1_STYLES: ["Heading 1", "标题 1", "heading 1", "Heading1", "heading1", "10", "1.1.1.1 N级标题"]

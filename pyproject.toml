@@ -159,6 +159,7 @@ exclude = ["lib/llm_client.py"]
 # `git ls-tree HEAD -- scripts lib config schemas` 对账，**多一个少一个都判红**
 # （symlink 类由该判据单独处理：既不要求在包里，也不许在包里）。
 "lib/__init__.py" = "doctools/_bundled/lib/__init__.py"
+"lib/academic_docx.py" = "doctools/_bundled/lib/academic_docx.py"
 "lib/caption_re.py" = "doctools/_bundled/lib/caption_re.py"
 "lib/chapter_numbering.py" = "doctools/_bundled/lib/chapter_numbering.py"
 "lib/clipboard.py" = "doctools/_bundled/lib/clipboard.py"

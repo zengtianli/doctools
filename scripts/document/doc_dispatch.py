@@ -513,6 +513,8 @@ def main() -> int:
     for v in ("clean", "typeset", "merge", "split", "view", "scan",
               "quotes", "fontunify", "lowercase", "stripchrome"):
         p = sub.add_parser(v); p.add_argument("files", nargs="+")
+        if v == "typeset":
+            p.add_argument("--academic", action="store_true", help="定稿MD学术章节，保留文字、四级标题、链接与上标引用")
     pf = sub.add_parser("formatclone")
     pf.add_argument("--ref", required=True, help="范式 docx(格式来源)")
     pf.add_argument("--signature", action="store_true",
@@ -535,7 +537,7 @@ def main() -> int:
     if a.verb == "scan":    return do_scan(a.files)
     if a.verb == "merge":   return do_merge(a.files)
     if a.verb == "convert": return do_convert(a.files, a.target)
-    if a.verb == "typeset": return do_typeset(a.files)
+    if a.verb == "typeset": return do_typeset(a.files, academic=a.academic)
     if a.verb == "renum":   return do_renum(a.files, a.target)
     if a.verb == "bidfinal": return do_bidfinal(a.files, a.target)
     if a.verb == "quotes":
@@ -553,9 +555,12 @@ def main() -> int:
 
 # ───────────────────────────────────────────── typeset(md/docx → 院模板成品 Word)
 
-def do_typeset(files) -> int:
+def do_typeset(files, academic=False) -> int:
     """复刻 md2word_pipeline:md→套模板 / docx→套模板,再文本修复,再图注居中,清中间文件。"""
     rc = 0
+    if academic and any(_ext(f) != "md" for f in files):
+        warn("--academic 只用于新建Markdown章节，不重排用户现存DOCX")
+        return 2
     for f in files:
         p = Path(f)
         if not p.exists():
@@ -570,6 +575,18 @@ def do_typeset(files) -> int:
                 rc |= 1; continue
             p, e = Path(nf), "docx"
         d, stem = p.parent, p.stem
+        if academic:
+            if _run(_py("md_tools.py", "md2docx", str(p), "--academic"), "MD → 学术章节 Word（保留源文与链接）"):
+                rc |= 1; continue
+            final = p.with_suffix(".docx")
+            if not final.is_file():
+                warn(f"未产出 {final.name}"); rc |= 1; continue
+            # Academic source is already approved prose: do not rewrite its
+            # punctuation or bibliography as generic Chinese report text.
+            if _run(_py("docx_cli.py", "health", "gate", str(final)), "交付结构检查"):
+                rc |= 1
+            print(f"{GREEN}  ✓ 成品 → {final.name}{RST}")
+            continue
         # Step 1: 转换/套模板
         if e == "md":
             if _run(_py("md_tools.py", "md2docx", str(p)), "1/3 md → Word(套模板)"): rc |= 1; continue
