@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "name": "native_ui",
+  "app_id": "doc-tools",
+  "command": "bash scripts/accept/native_ui.sh",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-10-09T18:51:40.859760+08:00",
+  "finished_at": "2026-10-09T18:52:02.867729+08:00",
+  "input_sha256": "18561055c6dae0e1de5f439d4d29b5a65224a9f6be995b04712a65c17e22235b",
+  "log": "perf/acceptance/run-atg8h7kf/native_ui.log",
+  "log_sha256": "d41d0e5215b71ca1a1d4330000b5207e60b5ac53e28ef9a465a602e0e17e46eb",
+  "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检",
+  "detail": {
+    "captures": [
+      {
+        "file": "native-main.png",
+        "height": 680,
+        "opaque": true,
+        "png_bytes": 134494,
+        "sampled_colors": 277,
+        "width": 1000
+      },
+      {
+        "file": "native-compact.png",
+        "height": 640,
+        "opaque": true,
+        "png_bytes": 120856,
+        "sampled_colors": 237,
+        "width": 900
+      },
+      {
+        "file": "native-palette.png",
+        "height": 500,
+        "opaque": true,
+        "png_bytes": 95782,
+        "sampled_colors": 230,
+        "width": 640
+      },
+      {
+        "file": "native-privacy.png",
+        "height": 680,
+        "opaque": true,
+        "png_bytes": 120734,
+        "sampled_colors": 236,
+        "width": 1000
+      }
+    ],
+    "checks": {
+      "backend_refresh": true,
+      "banner_close": true,
+      "clear_files": true,
+      "file_deduplication": true,
+      "no_activation": true,
+      "no_visible_or_key_window": true,
+      "palette_covers_operations": true,
+      "palette_empty_result": true,
+      "palette_navigation_return": true,
+      "palette_navigation_wrap": true,
+      "palette_search": true,
+      "palette_selection": true,
+      "privacy_default_off": true,
+      "privacy_opt_in_forwarded": true,
+      "privacy_restore_default_off": true,
+      "privacy_selection_resets_consent": true,
+      "refresh_preserves_selection": true,
+      "rendered_four_views": true
+    },
+    "ok": true,
+    "rendering_limit": "Hidden non-key windows; key-window focused selection appearance is not covered. PNG is composited on the system window background without altering selection state.",
+    "scope": "In-process rendering and state assertions, including backend-declared privacy consent defaults/reset; scan is never executed. No synthetic input, window activation, installed app or document mutation.",
+    "summary": "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/native_ui/20261009T185140858071+0800-q3vh2t3f",
+    "manifest_sha256": "6d5d9937d19d8db07189bf71717e0e7183d0d1477a420261571384dbb6b92b6e"
+  },
+  "run_id": "run-atg8h7kf",
+  "evidence_file": "perf/acceptance/run-atg8h7kf/native_ui.json"
+}

@@ -1,0 +1,24 @@
+{
+  "summary": "命令行在 App 里：dockit — DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。",
+  "passed": true,
+  "commands": [
+    "dockit"
+  ],
+  "app": "cyou.tianli.DocTools",
+  "host_app": "/Applications/DocKit.app",
+  "target": "/Applications/DocKit.app/Contents/Resources/bin/dockit",
+  "inside_app": true,
+  "help_summary": "DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。",
+  "entries": [
+    {
+      "command": "dockit",
+      "link": "~/.local/bin/dockit",
+      "target": "/Applications/DocKit.app/Contents/Resources/bin/dockit",
+      "inside_app": true,
+      "executable": true,
+      "exit_code": 0,
+      "summary": "DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。",
+      "error": null
+    }
+  ]
+}
