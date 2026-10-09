@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "name": "recovery",
+  "app_id": "doc-tools",
+  "command": "~/Dev/.venv/bin/python scripts/accept/recovery.py",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-10-09T18:51:40.868095+08:00",
+  "finished_at": "2026-10-09T18:51:42.509213+08:00",
+  "input_sha256": "54b0f8ca3e03a8a6706b57614c2416fe6fd476facc49f69b7542a27191ae5b39",
+  "log": "perf/acceptance/run-o531p3ri/recovery.log",
+  "log_sha256": "e551e5ebd4b8f63fa1434a6e37cac7de03a30e6491fc9d7761793394b9cc20c4",
+  "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
+  "detail": {
+    "summary": "真实 gui-run 错误信封、批次隔离及失败后恢复通过",
+    "cases": [
+      "unknown_operation",
+      "unknown_option",
+      "invalid_bool",
+      "malformed_option",
+      "missing_conversion_target",
+      "missing_required_template",
+      "missing_file",
+      "corrupt_file_failure",
+      "mixed_batch_continues_after_failure",
+      "next_request_recovers",
+      "all_source_hashes_preserved"
+    ],
+    "case_count": 11,
+    "scope": "临时 DOCX 输入；不涵盖进程强杀、系统断电或磁盘故障恢复"
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/recovery/20261009T185140858189+0800-lubaou8b",
+    "manifest_sha256": "47e36b29816b9ed79dc3551ce622d9213660a1cdd9a6e8abc8e958fe139e8a4d"
+  },
+  "run_id": "run-o531p3ri",
+  "evidence_file": "perf/acceptance/run-o531p3ri/recovery.json"
+}

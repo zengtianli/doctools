@@ -5,7 +5,7 @@
       "file" : "native-main.png",
       "height" : 680,
       "opaque" : true,
-      "png_bytes" : 134604,
+      "png_bytes" : 134494,
       "sampled_colors" : 277,
       "width" : 1000
     },
@@ -13,24 +13,24 @@
       "file" : "native-compact.png",
       "height" : 640,
       "opaque" : true,
-      "png_bytes" : 120560,
-      "sampled_colors" : 241,
+      "png_bytes" : 120856,
+      "sampled_colors" : 237,
       "width" : 900
     },
     {
       "file" : "native-palette.png",
       "height" : 500,
       "opaque" : true,
-      "png_bytes" : 95622,
-      "sampled_colors" : 229,
+      "png_bytes" : 95782,
+      "sampled_colors" : 230,
       "width" : 640
     },
     {
       "file" : "native-privacy.png",
       "height" : 680,
       "opaque" : true,
-      "png_bytes" : 119596,
-      "sampled_colors" : 242,
+      "png_bytes" : 120734,
+      "sampled_colors" : 236,
       "width" : 1000
     }
   ],
@@ -59,4 +59,3 @@
   "scope" : "In-process rendering and state assertions, including backend-declared privacy consent defaults\/reset; scan is never executed. No synthetic input, window activation, installed app or document mutation.",
   "summary" : "App 内真实 SwiftUI 视图和命令面板离屏渲染；刷新、选择、搜索、清空、提示关闭路径自检"
 }
-sandbox_extension_issue_file_to_process failed for <scratch>/Build/Products/Release/DocTools.app: 1 (Operation not permitted)

@@ -18,21 +18,37 @@ CHECK_DIR="$(mktemp -d)"
 trap 'rm -rf "$CHECK_DIR"' EXIT
 cp tests/decode_check.swift "$CHECK_DIR/main.swift"
 "$PYTHON" "$BACKEND" gui-ops > "$CHECK_DIR/ops.json"
-swiftc -O -o "$CHECK_DIR/decode_check" "$CHECK_DIR/main.swift" Sources/Models.swift
-"$CHECK_DIR/decode_check" "$CHECK_DIR/ops.json"
-swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
-  tests/PreferencesCheck.swift -o "$CHECK_DIR/preferences_check"
-"$CHECK_DIR/preferences_check"
-# 命令与界面共用设置:dockit settings 写进临时偏好文件,真实 AppViewModel 按它选中;界面改了,命令读得到(离屏,不碰本人偏好)
-swiftc -O -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
-  tests/SettingsFollowCheck.swift -o "$CHECK_DIR/settings_follow_check"
-"$CHECK_DIR/settings_follow_check" "$DIR/bin/dockit" "$CHECK_DIR/ops.json" "$CHECK_DIR/follow"
 # agent CLI:包装脚本语法 + 真实后端 --help(与装进 App 的是同一个文件)
 sh -n bin/dockit
 bin/dockit --help > /dev/null
-# dockit config / update:编出 App 程序,在隔离环境里把 sh 薄壳 → 后端 → App 程序整条链实跑(不上屏、不碰本人偏好;含运行中的 App 跟随与两条命令背靠背)
-swiftc -O -suppress-warnings -parse-as-library Sources/*.swift -o "$CHECK_DIR/DocTools"
-DOCKIT_NATIVE="$CHECK_DIR/DocTools" "$PYTHON" tests/test_lifecycle_cli.py
+# 三组使用独立产物与临时偏好域；12 核 Mini 同时编译，任一组失败都等其余收尾后拒绝构建。
+CHECK_PIDS=()
+(
+  swiftc -O -num-threads 4 -o "$CHECK_DIR/decode_check" "$CHECK_DIR/main.swift" Sources/Models.swift
+  "$CHECK_DIR/decode_check" "$CHECK_DIR/ops.json"
+  swiftc -O -num-threads 4 -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
+    tests/PreferencesCheck.swift -o "$CHECK_DIR/preferences_check"
+  "$CHECK_DIR/preferences_check"
+) &
+CHECK_PIDS+=("$!")
+(
+  # 命令与界面共用设置，隔离偏好文件，不碰本人偏好。
+  swiftc -O -num-threads 4 -parse-as-library Sources/Models.swift Sources/BackendClient.swift Sources/ViewModel.swift \
+    tests/SettingsFollowCheck.swift -o "$CHECK_DIR/settings_follow_check"
+  "$CHECK_DIR/settings_follow_check" "$DIR/bin/dockit" "$CHECK_DIR/ops.json" "$CHECK_DIR/follow"
+) &
+CHECK_PIDS+=("$!")
+(
+  # 共用生命周期命令整条链，含离屏运行中的 App 跟随与背靠背命令。
+  swiftc -O -num-threads 4 -suppress-warnings -parse-as-library Sources/*.swift -o "$CHECK_DIR/DocTools"
+  DOCKIT_NATIVE="$CHECK_DIR/DocTools" "$PYTHON" tests/test_lifecycle_cli.py
+) &
+CHECK_PIDS+=("$!")
+CHECK_STATUS=0
+for CHECK_PID in "${CHECK_PIDS[@]}"; do
+  if ! wait "$CHECK_PID"; then CHECK_STATUS=1; fi
+done
+[ "$CHECK_STATUS" -eq 0 ] || exit "$CHECK_STATUS"
 [ "$MODE" != --check ] || exit 0
 LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
 if [ -f "$LIFECYCLE_VENDOR" ]; then

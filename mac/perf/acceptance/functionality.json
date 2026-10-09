@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "name": "functionality",
-  "app_id": "doc-tools-doctools",
+  "app_id": "doc-tools",
   "command": "~/Dev/.venv/bin/python scripts/accept/functionality.py",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-10-05T12:10:04.844293+08:00",
-  "finished_at": "2026-10-05T12:10:12.055064+08:00",
-  "input_sha256": "b24993d539d17ccd30c2353c169587340d306ccb9f8c0966b3af97051837301b",
-  "log": "perf/acceptance/run-32rt9x_8/functionality.log",
+  "started_at": "2026-10-09T18:51:40.863644+08:00",
+  "finished_at": "2026-10-09T18:51:42.959710+08:00",
+  "input_sha256": "54b0f8ca3e03a8a6706b57614c2416fe6fd476facc49f69b7542a27191ae5b39",
+  "log": "perf/acceptance/run-izw2og9n/functionality.log",
   "log_sha256": "7f2454a771e913f44c8228dbac1601462b3bad910cddb8d9f50f8d0383aa5ef4",
   "summary": "真实 GUI 后端目录、4 条文件处理链及 dockit 命令行退出码通过",
   "detail": {
@@ -26,9 +26,9 @@
     "scope": "Temporary DOCX/Markdown fixtures; no GUI activation, no network operation, no external document access"
   },
   "previous_observation": {
-    "path": "perf/acceptance/attempts/functionality/20261005T121004840594+0800-2di5rtul",
-    "manifest_sha256": "64b9c4d8af1e50b904d0ac13237880bd096e34e57ae726ccafd74df3e3818d1c"
+    "path": "perf/acceptance/attempts/functionality/20261009T185140857404+0800-71arcoku",
+    "manifest_sha256": "bda7c425b35f1011ceec8fb32d19892a741a9973820b56ce22b5b879a9c68e82"
   },
-  "run_id": "run-32rt9x_8",
-  "evidence_file": "perf/acceptance/run-32rt9x_8/functionality.json"
+  "run_id": "run-izw2og9n",
+  "evidence_file": "perf/acceptance/run-izw2og9n/functionality.json"
 }
