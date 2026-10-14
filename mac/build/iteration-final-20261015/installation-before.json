@@ -1,0 +1,8 @@
+{
+  "version": "1.0.1",
+  "build": "340",
+  "bundle_id": "cyou.tianli.DocTools",
+  "executable_sha256": "ec506d7d0b8e68a04e8fc24b8dc3c14fd6fcf279c9ab635fddf21f3e33785ae0",
+  "preferences_sha256": "5dbeaf0f775839bb983caaeb3cd5ea8986b50568ae0433fd6a4f41a303552d30",
+  "processes": ""
+}

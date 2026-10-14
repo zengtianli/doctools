@@ -75,12 +75,12 @@
       "result": "passed",
       "scope": "product_basics",
       "method": "real_product",
-      "checked_at": "2026-10-15T01:40:08.206378+08:00",
+      "checked_at": "2026-10-15T02:24:04.648004+08:00",
       "input_sha256": "88567ac9c6d23fe0efaa1dcb104b94f6eb0c3164e1d632346020f243cf4868d1",
-      "evidence": "perf/acceptance/run-nyw0p84k/product_basics.json",
-      "evidence_sha256": "c1e72f6b98c26504a9c9851e253344f9ae04bd60abad071f7c7c9a34c2440e02",
+      "evidence": "perf/acceptance/run-g9rwec41/product_basics.json",
+      "evidence_sha256": "db282f182d8ea71941bc9068959d3329b0995c89540004f3342e148e28dde612",
       "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/product_basics.py → DocKit candidate 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输"
     }
   },
-  "updated_at": "2026-10-15T01:40:08.218561+08:00"
+  "updated_at": "2026-10-15T02:24:04.665696+08:00"
 }

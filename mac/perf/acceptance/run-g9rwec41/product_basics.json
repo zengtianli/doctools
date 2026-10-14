@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "name": "product_basics",
+  "app_id": "doc-tools",
+  "command": "~/Dev/.venv/bin/python scripts/accept/product_basics.py",
+  "exit_code": 0,
+  "status": "passed",
+  "started_at": "2026-10-15T02:23:59.106692+08:00",
+  "finished_at": "2026-10-15T02:24:04.648004+08:00",
+  "input_sha256": "88567ac9c6d23fe0efaa1dcb104b94f6eb0c3164e1d632346020f243cf4868d1",
+  "log": "perf/acceptance/run-g9rwec41/product_basics.log",
+  "log_sha256": "34c0eaafce2a822849db126ea90d85a49002d7104e47261c57c79d15cd6dc85f",
+  "summary": "DocKit candidate 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输",
+  "detail": {
+    "schema_version": 1,
+    "app_id": "doc-tools",
+    "spec_digest": "04d4f617f88ed6c4c03018acd5ef6602fede19326e815fad38ce332a148cc440",
+    "features": {
+      "settings": {
+        "result": "passed",
+        "method": "ui_automation",
+        "evidence": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/settings.json",
+        "evidence_sha256": "040be3379cfb5e870d1cd6ec03ec2c58da2a35ad36766ab088c841fb3d282b74",
+        "checks": [
+          "settings.interaction",
+          "settings.persisted_readback",
+          "settings.error_preserves_data",
+          "settings.owner_data_unchanged"
+        ]
+      },
+      "shortcuts": {
+        "result": "passed",
+        "method": "real_product",
+        "evidence": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/shortcuts.json",
+        "evidence_sha256": "5043aa16882978a93acd4013ef34e991fd170382ed8f700324fc3bd97d524aa6",
+        "checks": [
+          "shortcuts.action_path",
+          "shortcuts.disable_restore",
+          "shortcuts.conflict_or_reserved_keys",
+          "shortcuts.owner_data_unchanged"
+        ]
+      },
+      "icloud": {
+        "result": "passed",
+        "method": "real_product",
+        "evidence": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/icloud.json",
+        "evidence_sha256": "4264d699db8cd8c1896591225a89db95383be2042428c8ddc02f62ce5317e547",
+        "checks": [
+          "icloud.push_pull",
+          "icloud.conflict_or_corrupt_recovery",
+          "icloud.unavailable_local_fallback",
+          "icloud.disable_preserves_data",
+          "icloud.owner_data_unchanged"
+        ]
+      },
+      "updates": {
+        "result": "passed",
+        "method": "real_product",
+        "evidence": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/updates.json",
+        "evidence_sha256": "97748e60c888cceb7a47106ce79496bc08c1eed8576488079b295cb89b369f24",
+        "checks": [
+          "updates.options_or_store_entry",
+          "updates.check_result",
+          "updates.failure_recovery",
+          "updates.data_preservation",
+          "updates.owner_data_unchanged"
+        ]
+      }
+    },
+    "scope": "Current-source candidate; executable SHA and build inputs verified; isolated re-identified copy, native controls offscreen, real CLI and temporary upgrade transaction. iCloud uses a private local directory transport; Apple server/cross-device delivery was not tested. No production install, release or configuration changes.",
+    "binding": {
+      "mode": "candidate",
+      "original_app": "/Users/tianli/Dev/tools/doctools/mac/build/DerivedData/Build/Products/Release/DocTools.app",
+      "receipt": "/Users/tianli/Dev/tools/doctools/mac/build/accept/product-basics-candidate-20261015-r2.json",
+      "receipt_sha256": "7d46e191fc56f09357bdcf587bf8f05e0d2df187b452fcfcc4f78634d219237d",
+      "artifact": {
+        "bundle_id": "cyou.tianli.DocTools",
+        "version": "1.0.1",
+        "build": "344",
+        "executable": "Contents/MacOS/DocTools",
+        "sha256": "c6544af269f2a0f1c9a64b39fc7f4cd7209fab5cbb1ced56140e98d078444f4f",
+        "icon": {
+          "path": "Contents/Resources/AppIcon.icns",
+          "sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b"
+        }
+      },
+      "source_sha256": "1614e53e27e2d30442540f0a556c1228f45cca54c2e44948a793be54abde31f4",
+      "acceptor_sha256": "87885ddad2803551a324dec6ff2c837b6775cb43c2aa2651f40197138176205f",
+      "ui": {
+        "path": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/ui/ui.json",
+        "sha256": "5d55c9d5ee8d944c31719f12c4446290c5c4d1d76c6d387703b0dd0bdd435084"
+      },
+      "upgrade_log": {
+        "path": "perf/acceptance/product-basics-7b4d7577280c42e587c755b6c7d85a14/upgrade.log",
+        "sha256": "d7ed44e2b030ef157d0623c150f12166877709c1cf76e2dbde5f4e36336095fd"
+      }
+    },
+    "summary": "DocKit candidate 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输"
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/product_basics/20261015T022359105892+0800-qqcpcdwp",
+    "manifest_sha256": "9352a2da314256c31186382b9d5afe9bf910685fe6753544529cfb456ef59ba2"
+  },
+  "run_id": "run-g9rwec41",
+  "evidence_file": "perf/acceptance/run-g9rwec41/product_basics.json"
+}
