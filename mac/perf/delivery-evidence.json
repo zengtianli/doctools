@@ -75,12 +75,12 @@
       "result": "passed",
       "scope": "product_basics",
       "method": "real_product",
-      "checked_at": "2026-10-15T02:24:04.648004+08:00",
-      "input_sha256": "88567ac9c6d23fe0efaa1dcb104b94f6eb0c3164e1d632346020f243cf4868d1",
-      "evidence": "perf/acceptance/run-g9rwec41/product_basics.json",
-      "evidence_sha256": "db282f182d8ea71941bc9068959d3329b0995c89540004f3342e148e28dde612",
-      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/product_basics.py → DocKit candidate 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输"
+      "checked_at": "2026-10-15T02:41:32.430718+08:00",
+      "input_sha256": "c2c7393557fd2a1db909024ce32611720ca5563f3dbd1036c32a3fb070c9b799",
+      "evidence": "perf/acceptance/run-flkcbgls/product_basics.json",
+      "evidence_sha256": "46f41163c3750e2fb7149549a3dc8824fdaeb08294ff698155bae6dba690d3be",
+      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/product_basics.py → DocKit installed 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输"
     }
   },
-  "updated_at": "2026-10-15T02:24:04.665696+08:00"
+  "updated_at": "2026-10-15T02:41:32.441297+08:00"
 }

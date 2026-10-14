@@ -1,0 +1,1 @@
+Use the existing certificate host to sign, then --install-built <signed.app> <receipt.json>; ad-hoc installation refused.

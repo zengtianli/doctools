@@ -1,0 +1,19 @@
+{
+  "version": "1.0.1",
+  "build": "340",
+  "bundle_id": "cyou.tianli.DocTools",
+  "app_members": {
+    "Contents/CodeResources": "c72d506c20f98b6a4f5c6f9632eec5d2fa563038b7a71c54ee1001edf27e6e66",
+    "Contents/Info.plist": "d0d7332887dec36a2ea796e10d946c377b8c841ba74cf0e02f948426389ebdc7",
+    "Contents/PkgInfo": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0",
+    "Contents/_CodeSignature/CodeResources": "4f00f9a8f6b069276c073c1c119c951dfae7872e38e0e0f980035205276ef216",
+    "Contents/MacOS/DocTools": "ec506d7d0b8e68a04e8fc24b8dc3c14fd6fcf279c9ab635fddf21f3e33785ae0",
+    "Contents/Resources/AppIcon.icns": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b",
+    "Contents/Resources/bin/dockit": "1cde931fc3d6d1ab87f8999a9f1b3e42cf47bbef1542e956608e2f1f1a838770"
+  },
+  "preferences_sha256": "ca732355f1e5a1341cc0ea41e06627d5af95046043c1a564e3b2f8445b93c475",
+  "cloud_sha256": null,
+  "cli_link": "/Applications/DocKit.app/Contents/Resources/bin/dockit",
+  "processes": [],
+  "service_configs": {}
+}

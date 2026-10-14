@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "built_at": "2026-10-09T23:25:28+08:00",
+  "artifact": {
+    "bundle_id": "cyou.tianli.DocTools",
+    "version": "1.0.1",
+    "build": "340",
+    "executable": "Contents/MacOS/DocTools",
+    "sha256": "ec506d7d0b8e68a04e8fc24b8dc3c14fd6fcf279c9ab635fddf21f3e33785ae0",
+    "icon": {
+      "path": "Contents/Resources/AppIcon.icns",
+      "sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b"
+    }
+  },
+  "source": {
+    "input_globs": [
+      "Sources/**",
+      "icon/AppIcon.icns",
+      "Info.plist",
+      "DocTools.xcodeproj/project.pbxproj",
+      "build.sh",
+      "bin/**",
+      "catalog.yaml",
+      "tests/*.swift"
+    ],
+    "sha256": "e807326cd80e002a7c49778c784781edd8f08331871877845c81df93a3e8e9ec",
+    "file_count": 26,
+    "files": {
+      "Sources/ProductLifecycle.swift": "7b196f29ea81a598ea23ff78c093805cdbe0cb57b63dcff262e8416a88dc67de",
+      "Sources/BackendClient.swift": "1c0790765cc62f8301f520a86094a05f1f7d1f8784fa23a8e2326d7dfe177218",
+      "Sources/LaneSignal.swift": "e7e68ac41417ddd06e7049a7bd4e01a92d52305bc999cd6ddd323178c64a2ce8",
+      "Sources/AppConfiguration.swift": "ba4d6aa1f52966159e5b74b1ca2878734c61cad80355ace25e19c0f44626947f",
+      "Sources/AppLifecycleUI.swift": "6107d9e91f26769341722667f7b1d4d85843ff2c03c159f3456541d756328614",
+      "Sources/AppLifecycleCLI.swift": "f33393d954dac50331f4fd650066c6ecea573970d53b50b43e8a86cab708241c",
+      "Sources/AppLifecycle.swift": "3033bc6f87a69a2402ff1cda2c8196a4abd677222582c75d21302a65626c2d89",
+      "Sources/DocToolsApp.swift": "5700c6476c5307689f8ae802128d3d5af60f8fbcfac3507dd38db69f6a10ef46",
+      "Sources/ViewModel.swift": "0483095d856a2383f6f3b8508062eccaafca3ab6455fb1db4a2231351a9a31ba",
+      "Sources/Models.swift": "2e1a74142693f1e1004e92fa9f969fd33626859cdf91bb8deb911da92dc43f4c",
+      "Sources/CommandPalette.swift": "4a1905f89cf9e09baaebdf06bfa00ca95bfcea158501d44527d3695f7b1d3590",
+      "Sources/UISelfTest.swift": "a51a7e6669c64b87a833dfe83284fd08079ed04807eeeec049425d28e69fbfbc",
+      "Sources/ContentView.swift": "1167432a14c19de87c2d211c313e78c93f349f2672506a00a8e0aa3a8af3cd5e",
+      "icon/AppIcon.icns": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b",
+      "Info.plist": "c655ff90f243fbeaab688f6888a6d9907b72db8aefa3109435c01364cb9e70a8",
+      "DocTools.xcodeproj/project.pbxproj": "919dbbdbacc0573178ba0174777b30465fe7b7c63b5ca4ff5cd5c31a7acdb045",
+      "build.sh": "8aeef524cbf0812421a3abfe6baf7f86d22ed30eccfd41ed470d7f47b6baa523",
+      "bin/dockit": "1cde931fc3d6d1ab87f8999a9f1b3e42cf47bbef1542e956608e2f1f1a838770",
+      "catalog.yaml": "1eeae56b05bcf979276e95bb8815cc734110fd227d086f30b2b7ae43fab4d159",
+      "tests/PreferencesCheck.swift": "02542c7c8cd5bbee33e7421b5b76a9bc315f90cd2f8a696ca997fdb47b3aa80a",
+      "tests/SettingsFollowCheck.swift": "82922cda779486bcd74fcb965829da6e3ef9d719a003f03638221e8f6c8229e5",
+      "tests/decode_check.swift": "79f4abd2e7c5baa34d3052e0e346abe3f7cacb514a56d1a2ea08e2d0604583ed",
+      "tests/run-check.swift": "6e060aa51c8097f2d11edba3530e317b1d84382d2078242c7f24f9c900c38844",
+      "@external:/Users/tianli/Dev/tools/doctools/scripts/document/doc_gui_backend.py": "29e289750a5207a64c4d90d05e03583f831e1f34d79641c45b06d3467600a92f",
+      "@external:/Users/tianli/Dev/tools/doctools/scripts/document/doc_dispatch.py": "1fbf150721f4208d4fa35a0ea96f4c6abf2f5732fa2d2be759a2127f6962840b",
+      "@external:/Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py": "253b04b835d8e11e423754ec98ece8ec79cf5b1ffa93ce88aeb9799fc8a239a1"
+    },
+    "commit": "f1d21a7c7ffbdb9e55fde2ef4d6285ef783b2a61",
+    "dirty_scope": "组件当前 Git 工作树；跨仓/软链输入的实际内容由 sha256 核验",
+    "dirty": false
+  },
+  "build_command_sha256": "b725ce806dc372b9d019edf751c8a44aeb762bc14eb77cd10ea039b1b3c6f10e"
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>cyou.tianli.DocKit.sign-once.48978.20261015</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/tianli/Dev/.venv/bin/python</string>
+		<string>/Users/tianli/Dev/tools/doctools/mac/build/iteration-install-20261015/sign-candidate.py</string>
+		<string>/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978-r3/signing-r2</string>
+		<string>deee739870e83f389c2232f3ff1f32e20fc878a23f8af8a6cc1ea8eb56c6b90c</string>
+		<string>a2c6062456923210d32374a721bc0554990a9cd0be98a7ee6173e179d23865b8</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978-r3/signing-r2/signer.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978-r3/signing-r2/signer.out</string>
+</dict>
+</plist>

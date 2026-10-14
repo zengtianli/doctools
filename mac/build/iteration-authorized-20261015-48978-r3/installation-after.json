@@ -1,0 +1,16 @@
+{
+  "version": "1.0.1",
+  "build": "345",
+  "bundle_id": "cyou.tianli.DocTools",
+  "team": "B9LJH93LA4",
+  "executable_sha256": "39c8bfc7c62a2f933b17a17c465e2ecf3de15cba9c51d881063fe718d61d0203",
+  "receipt_sha256": "9a5d83307a673f7acd3e4dcc764d52bba53a33f21c7d651804b6986ec3f1e5bb",
+  "source_sha256": "76bb8c6fdc2e3fb61c723438e1d6dedbb0dc05079fcb94193d6ca1231a3fbe7d",
+  "previous_kept_at": "/Users/tianli/.Trash/app-rebuild-20261015-024040-71763/DocKit.app",
+  "old_package_bytes_preserved": true,
+  "installed_matches_signed_candidate": true,
+  "preferences_unchanged": true,
+  "cloud_data_unchanged": true,
+  "cli_link_unchanged": true,
+  "service_configs_unchanged": true
+}

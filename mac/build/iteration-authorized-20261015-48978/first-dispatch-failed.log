@@ -1,0 +1,9 @@
+构建失败，未写 receipt：Traceback (most recent call last):
+  File "/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978/build-and-sign.py", line 49, in <module>
+    run('ssh', '-o', 'BatchMode=yes', 'macbook', f'test ! -e {TASK} && mkdir -p {remote}')
+  File "/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978/build-and-sign.py", line 22, in run
+    return subprocess.run(list(map(str, args)), check=True, capture_output=True, text=True, timeout=60)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tianli/.local/share/uv/python/cpython-3.12.15-macos-aarch64-none/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ssh', '-o', 'BatchMode=yes', 'macbook', 'test ! -e /Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978 && mkdir -p /Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978/signing']' returned non-zero exit status 1.

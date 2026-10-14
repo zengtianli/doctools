@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "source_zip_sha256": "deee739870e83f389c2232f3ff1f32e20fc878a23f8af8a6cc1ea8eb56c6b90c",
+  "signing_engine": "/opt/homebrew/Library/Taps/zengtianli/homebrew-private/scripts/publish.py",
+  "signing_engine_sha256": "a2c6062456923210d32374a721bc0554990a9cd0be98a7ee6173e179d23865b8",
+  "bundle_id": "cyou.tianli.DocTools",
+  "version": "1.0.1",
+  "build": "345",
+  "identity": "Developer ID Application: tianli Zeng (B9LJH93LA4)",
+  "code_content_sha256": "4456b8672f40d878befdd17a542cf5debfbd636289fc322fb9ad9ea850cba499",
+  "files": {
+    "Contents/Info.plist": "294ef7a6c0287b555016539636ea4ee3b41603269ca65ea936efe023079db37a",
+    "Contents/MacOS/DocTools": "39c8bfc7c62a2f933b17a17c465e2ecf3de15cba9c51d881063fe718d61d0203",
+    "Contents/PkgInfo": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0",
+    "Contents/Resources/AppIcon.icns": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b",
+    "Contents/Resources/bin/dockit": "1cde931fc3d6d1ab87f8999a9f1b3e42cf47bbef1542e956608e2f1f1a838770",
+    "Contents/_CodeSignature/CodeResources": "4f00f9a8f6b069276c073c1c119c951dfae7872e38e0e0f980035205276ef216"
+  },
+  "signature_grade": {
+    "app": "/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978-r3/signing-r2/signed/DocKit.app",
+    "stage": "signed",
+    "signature": {
+      "authority": "Developer ID Application: tianli Zeng (B9LJH93LA4)",
+      "runtime": true,
+      "timestamp": "Oct 15, 2026 at 02:39:42",
+      "team": "B9LJH93LA4"
+    },
+    "nested": [],
+    "profiles": [],
+    "problems": [],
+    "owner_exception": "",
+    "ok": true
+  },
+  "notarized": false,
+  "installed": false,
+  "published": false
+}

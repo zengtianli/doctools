@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/Users/tianli/Dev/tools/doctools/mac/scripts/install-built.py", line 122, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/tianli/Dev/tools/doctools/mac/scripts/install-built.py", line 70, in main
+    run('/usr/bin/codesign', '--verify', '-R', requirements[0], candidate)
+  File "/Users/tianli/Dev/tools/doctools/mac/scripts/install-built.py", line 22, in run
+    return subprocess.run(list(map(str, args)), capture_output=True, text=True, check=True, timeout=60)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tianli/.local/share/uv/python/cpython-3.12.15-macos-aarch64-none/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['/usr/bin/codesign', '--verify', '-R', 'identifier "cyou.tianli.DocTools" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = B9LJH93LA4', '/Users/tianli/Dev/tools/doctools/mac/build/iteration-authorized-20261015-48978/signed/DocKit.app']' returned non-zero exit status 1.

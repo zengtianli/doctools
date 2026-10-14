@@ -3,12 +3,34 @@ set -euo pipefail
 MODE="${1:---build}"
 case "$MODE" in
   --build|--check|--install) [ "$#" -le 1 ] || exit 2 ;;
-  --help) echo "Usage: $0 [--build|--check|--install] (default: build only; --install also links ~/.local/bin/dockit)"; exit 0 ;;
+  --install-built) [ "$#" -eq 3 ] || { echo "--install-built <signed.app> <build-receipt.json>" >&2; exit 2; } ;;
+  --help) echo "Usage: $0 [--build|--check|--install|--install-built <signed.app> <receipt.json>] (installation requires stable Developer ID signing)"; exit 0 ;;
   *) echo "Unknown option: $MODE" >&2; exit 2 ;;
 esac
 DIR="$(cd "$(dirname "$0")" && pwd -P)"
 cd "$DIR"
 PYTHON="$HOME/Dev/.venv/bin/python"
+if [ "$MODE" = --install-built ]; then
+  exec "$PYTHON" scripts/install-built.py "$2" "$3"
+fi
+if [ "$MODE" = --install ]; then
+  if [[ "${CODE_SIGN_IDENTITY:-}" != "Developer ID Application:"* ]]; then
+    echo "Use the existing certificate host to sign, then --install-built <signed.app> <receipt.json>; ad-hoc installation refused." >&2
+    exit 69
+  fi
+  "$PYTHON" "$HOME/Apps/chapter/engine/app_sop.py" build-receipt --app doc-tools \
+    --artifact "$DIR/build/DerivedData/Build/Products/Release/DocTools.app" \
+    --source-glob 'Sources/**' --source-glob icon/AppIcon.icns --source-glob Info.plist \
+    --source-glob DocTools.xcodeproj/project.pbxproj --source-glob build.sh --source-glob 'bin/**' \
+    --source-glob catalog.yaml --source-glob scripts/install-built.py \
+    --build-command './build.sh --build' --receipt-out build/accept/install-candidate.json --json
+  exec "$PYTHON" "$HOME/Apps/chapter/engine/app_sop.py" build-receipt --app doc-tools \
+    --artifact /Applications/DocKit.app \
+    --source-glob 'Sources/**' --source-glob icon/AppIcon.icns --source-glob Info.plist \
+    --source-glob DocTools.xcodeproj/project.pbxproj --source-glob build.sh --source-glob 'bin/**' \
+    --source-glob catalog.yaml --source-glob scripts/install-built.py \
+    --build-command './build.sh --install-built build/DerivedData/Build/Products/Release/DocTools.app build/accept/install-candidate.json' --json
+fi
 source "$HOME/Dev/tools/dev/lib/tools/macapp/xcode_env.sh"
 xcode_env_use macosx
 LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
@@ -65,20 +87,11 @@ cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # dockit 进包(签名前),Contents/Resources/bin/dockit exec 共享 venv 里的同一个后端
 mkdir -p "$APP/Contents/Resources/bin"
 install -m 755 bin/dockit "$APP/Contents/Resources/bin/dockit"
-codesign --force -s - "$APP"
+if [ -n "${CODE_SIGN_IDENTITY:-}" ]; then
+  codesign --force --sign "$CODE_SIGN_IDENTITY" --options runtime --timestamp "$APP"
+else
+  codesign --force -s - "$APP"
+fi
 # 装进包的那条链:包内 bin/dockit 把 config / update 交给自己所在包的 App 程序(只跑读命令,隔离偏好域)
 DOCKIT_APP="$APP" "$PYTHON" tests/test_lifecycle_cli.py AssembledBundleTests
 echo "Built: $APP"
-[ "$MODE" = --install ] || exit 0
-DEST="/Applications/$DISPLAY_NAME.app"
-if [ -e "$DEST" ]; then
-  RETIRED="$HOME/.Trash/app-rebuild-$(date +%Y%m%d-%H%M%S)-$$"
-  mkdir -p "$RETIRED"
-  mv "$DEST" "$RETIRED/"
-fi
-cp -R "$APP" "$DEST"
-echo "Installed: $DEST"
-# agent 入口:~/.local/bin/dockit → 已装 App 包内的包装脚本(Chapter cli_entry 验这条链接)
-mkdir -p "$HOME/.local/bin"
-ln -sfn "$DEST/Contents/Resources/bin/dockit" "$HOME/.local/bin/dockit"
-echo "Linked: $HOME/.local/bin/dockit"
