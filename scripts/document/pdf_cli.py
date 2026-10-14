@@ -15,9 +15,9 @@
   pipeline run            <glob> --steps <names> [--parallel ...]
 
 底座依赖:
-  pdfplumber 0.11.9 / pypdf 6.12.2 / python-docx 1.2.0 (仅 convert to-docx 用,惰性加载)
+  pdfplumber / pypdf / python-docx (仅 convert to-docx 用,惰性加载；版本沿 pyproject.toml)
   /opt/homebrew/bin/{pdfimages,pdftotext,pdfinfo,qpdf,ocrmypdf,tesseract}
-  依赖装在 /opt/homebrew/bin/python3,不在 ~/Dev/.venv —— 调用方必须用绝对路径解释器。
+  依赖沿 doctools 的共享 ~/Dev/.venv 管理；调用方用该环境的绝对路径解释器。
 
 设计同源 `docx_cli.py` 双层 dispatch,但所有子命令本仓 native (不转发旧脚本)。
 2026-07-31 家族折叠:原 `pdf_pipeline_lib.py`(pipeline 引擎)与 `pdf_to_docx.py`
@@ -1348,14 +1348,14 @@ def _cmd_read(args: argparse.Namespace) -> int:
         # pypdf outline tree
         if PdfReader is None:
             print("\n[outline] pypdf not installed", file=sys.stderr)
-            return 0 if cp.returncode == 0 else cp.returncode
+            return 2
         try:
             reader = PdfReader(str(pdf_path))
             outline = reader.outline
         except Exception as e:
             print(f"\n[outline] error: {type(e).__name__}: {e}",
                   file=sys.stderr)
-            return 0 if cp.returncode == 0 else cp.returncode
+            return 1
 
         print("\n── outline ──")
         if not outline:
@@ -1375,7 +1375,7 @@ def _cmd_read(args: argparse.Namespace) -> int:
             print(f"{'  ' * depth}- [{page_num}] {title}")
 
         _walk(outline)
-        return 0
+        return 0 if cp.returncode == 0 else cp.returncode
 
     # Default: extract text from page(s) to stdout
     if pdfplumber is None:
@@ -1400,14 +1400,17 @@ def _cmd_read(args: argparse.Namespace) -> int:
         except ValueError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
+        failed_pages = []
         for i in idx:
             try:
                 txt = pdf.pages[i].extract_text() or ""
             except Exception as e:
                 txt = f"[ERROR page {i+1}: {type(e).__name__}: {e}]"
+                failed_pages.append(i + 1)
+                print(txt, file=sys.stderr)
             print(f"===== page {i+1} =====")
             print(txt)
-        return 0
+        return 1 if failed_pages else 0
     finally:
         try:
             pdf.close()

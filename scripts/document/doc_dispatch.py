@@ -41,11 +41,8 @@ DOC = Path(__file__).resolve().parent            # scripts/document
 DATA = DOC.parent / "data"                       # scripts/data
 PY = sys.executable                              # uv 环境的 python
 
-# pdf 系引擎（pdf_cli.py convert to-docx）依赖 pdfplumber/pypdf，**只装在 homebrew python3**，
-# 不在 ~/Dev/.venv —— 而 GUI 经 `uv run --project ~/Dev` 调本文件时 sys.executable
-# 正是 .venv/bin/python。用 PY 跑会 ModuleNotFoundError，必须写死绝对路径
-# （同 pdf_cli.py 的既定运行解释器）。
-PY_PDF = "/opt/homebrew/bin/python3"
+# PDF依赖由doctools声明，与其他文档引擎共用所属Python环境。
+PY_PDF = PY
 
 # 同理:GUI .app 不继承 shell PATH,spawn 的 CLI 一律解析成绝对路径再调
 # (markitdown 是 uv tool,装在 ~/.local/bin,GUI 下裸名必 not found)。
@@ -257,7 +254,7 @@ def route_convert(f: str, target: str) -> tuple[list[str], str] | None:
     # docx→md 走 shell 引擎,特判
     if e == "docx" and target == "md":
         return ["bash", str(DOC / "docx_to_md.sh"), f], "docx → Markdown(markitdown)"
-    # pdf 系:结构提取路线(pdfplumber+python-docx),必须用 homebrew python3
+    # pdf 系:结构提取路线(pdfplumber+python-docx),沿当前共享运行环境
     if e == "pdf":
         if target == "word":
             return [PY_PDF, str(DOC / "pdf_cli.py"), "convert", "to-docx", f], "PDF → Word(段落重组 + 真表格)"
