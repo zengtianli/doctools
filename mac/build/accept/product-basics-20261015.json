@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "built_at": "2026-10-15T01:29:18+08:00",
+  "built_at": "2026-10-15T01:39:18+08:00",
   "artifact": {
     "bundle_id": "cyou.tianli.DocTools",
     "version": "1.0.1",
-    "build": "342",
+    "build": "343",
     "executable": "Contents/MacOS/DocTools",
-    "sha256": "37e8a80afafc07dfd07076ae2fc8cd775afb93ec9f24568d9028b47423d977d3",
+    "sha256": "eb0ad8ca9229a0ce77632cb75a3bb2700c1b1b18294db149af0ea540fce41c3c",
     "icon": {
       "path": "Contents/Resources/AppIcon.icns",
       "sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b"
@@ -22,10 +22,10 @@
       "bin/**",
       "catalog.yaml"
     ],
-    "sha256": "24ce6550a4d79e8a645010f4d9e6fadda5cb81b09b152972a5b313888a9af1e0",
+    "sha256": "1614e53e27e2d30442540f0a556c1228f45cca54c2e44948a793be54abde31f4",
     "file_count": 23,
     "files": {
-      "Sources/ProductLifecycle.swift": "4059e3c7e4eeb3c2375a3185de93e9574f213451654ab61ac2c5a56c07f04232",
+      "Sources/ProductLifecycle.swift": "8514c2932c5a639f589b2e2b010db4b7b41a6dde681ad4e2f5a8b38c6bfb6fb2",
       "Sources/AppShortcuts.swift": "cbbf8e9296424fa1ce05bd1be67a4f171a96ba28c00de3d789423cb27320aac5",
       "Sources/BackendClient.swift": "1c0790765cc62f8301f520a86094a05f1f7d1f8784fa23a8e2326d7dfe177218",
       "Sources/LaneSignal.swift": "e7e68ac41417ddd06e7049a7bd4e01a92d52305bc999cd6ddd323178c64a2ce8",
@@ -49,7 +49,7 @@
       "@external:/Users/tianli/Dev/tools/doctools/scripts/document/doc_dispatch.py": "9b8cd2d26d63a132b4e434f87bf7b8218170cc8212eddd15c84c6004c149fe7c",
       "@external:/Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py": "961d79532eff110a1e964d03431d94d2686e42e475ee115c4df7ca21ea8d8e4e"
     },
-    "commit": "d62d9d5f35cae36256a0bd8eb9867417aee65714",
+    "commit": "9f506e583c10d7ab8dc6c345cf7900448fb2a04f",
     "dirty_scope": "组件当前 Git 工作树；跨仓/软链输入的实际内容由 sha256 核验",
     "dirty": true
   },

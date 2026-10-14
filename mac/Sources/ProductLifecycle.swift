@@ -82,6 +82,20 @@ enum Lifecycle {
         shortcutDetail.stringValue = shortcuts?.descriptionText ?? ""
     }
 
+    /// Runs after the shared layer has attached its app-menu entries. Keep one 操作 menu.
+    static func installMenus() {
+        guard let root = NSApp.mainMenu else { return }
+        let existing = root.items.first(where: { $0.title == "操作" })?.submenu
+        shortcuts?.installMenu()
+        if let existing, let item = shortcuts?.menuItem, let added = item.menu, added !== existing,
+           let parent = root.items.first(where: { $0.submenu === added }) {
+            added.removeItem(item); existing.addItem(item); root.removeItem(parent)
+        }
+        if let item = root.items.first?.submenu?.items.first(where: { $0.title == "配置与更新…" }) {
+            item.keyEquivalent = ","; item.keyEquivalentModifierMask = .command
+        }
+    }
+
     static func product(_ preferences: UserDefaults) -> AppLifecycleCLI.Product {
         AppLifecycleCLI.Product(command: command, name: name, configuration: makeConfiguration(preferences), updateSource: updateSource)
     }
@@ -115,12 +129,8 @@ enum Lifecycle {
         AppLifecycleCLI.follow(configuration)
         if NSApp.activationPolicy() != .prohibited {
             launchObserver = NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated {
-                    shortcuts?.installMenu()
-                    if let item = NSApp.mainMenu?.items.first?.submenu?.items.first(where: { $0.title == "配置与更新…" }) {
-                        item.keyEquivalent = ","; item.keyEquivalentModifierMask = .command
-                    }
-                }
+                // AppLifecycleUI's observer schedules attachMenu first on this queue.
+                DispatchQueue.main.async { installMenus() }
             }
         }
         return configuration
@@ -242,10 +252,20 @@ enum ProductBasicsSelfTest {
             model.selectedOpID = operation.id; model.onOpChanged()
             _ = Lifecycle.installApp(preferences)
             NSApp.mainMenu = NSMenu()
+            let appMenu = NSMenu()
+            AppLifecycleUI.menuItems().forEach { appMenu.addItem($0) }
+            let appParent = NSMenuItem(title: "DocKit", action: nil, keyEquivalent: "")
+            appParent.submenu = appMenu; NSApp.mainMenu!.addItem(appParent)
+            let operationMenu = NSMenu(title: "操作")
+            let operationParent = NSMenuItem(title: "操作", action: nil, keyEquivalent: "")
+            operationParent.submenu = operationMenu; NSApp.mainMenu!.addItem(operationParent)
             let search = NSMenuItem(title: "搜索功能…", action: nil, keyEquivalent: "k")
-            search.keyEquivalentModifierMask = .command; NSApp.mainMenu!.addItem(search)
+            search.keyEquivalentModifierMask = .command; operationMenu.addItem(search)
             guard let shortcuts = Lifecycle.shortcuts else { throw AppUpdateError("快捷键未接入。") }
-            shortcuts.installMenu()
+            Lifecycle.installMenus()
+            checks["settings.menu_shortcut"] = appMenu.items.first(where: { $0.title == "配置与更新…" })?.keyEquivalent == ","
+            checks["shortcuts.one_operation_menu"] = NSApp.mainMenu!.items.filter { $0.title == "操作" }.count == 1
+                && shortcuts.menuItem?.menu === operationMenu
             let main = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 1000, height: 680),
                                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             main.isReleasedWhenClosed = false

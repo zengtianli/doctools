@@ -108,8 +108,12 @@ sop:
       command: dockit config export
     - name: 导入配置
       command: dockit config import
+    - name: 刷新快捷键开关与组合
+      command: dockit config import
     - name: 检查更新
       command: dockit update check
+    - name: 自动检查与下载安装选项
+      command: dockit update options
     - name: 升级到新版
       command: dockit update install
   ui:

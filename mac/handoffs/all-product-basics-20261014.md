@@ -11,10 +11,11 @@
 - 设置窗口增加可持久化的刷新开关/组合（默认 ⌘R，⌘K 搜索，⌘, 配置与更新）；总部适配器拒绝系统保留组合与应用菜单冲突。
 - 原配置工厂继续承接操作/目标格式，加入快捷键与共享更新选项的白名单、导入校验和 iCloud 迁移；外发同意、文档、模板路径、账号和运行记录不迁移。
 - 更新沿原本人 iCloud 私有渠道和共享检查/安装事务，设置窗及 `dockit update options` 同源；自动行为默认关闭。
-- `sop.product_basics` 四项及 `sop.accept.product_basics` 已登记。固定脚本默认验已装包，可用 `--app/--receipt` 或对应 SOP 环境明确验候选；原件身份/版本/签名/可执行 SHA 与回执、全部构建输入哈希必须相符才运行。
+- `sop.product_basics` 四项及 `sop.accept.product_basics` 已登记，新设置在 agent_cli 对照里同步登记（快捷键可导入配置，更新选项有原共享命令）。固定脚本默认验已装包，可用 `--app/--receipt` 或对应 SOP 环境明确验候选；原件身份/版本/签名/可执行 SHA 与回执、全部构建输入哈希必须相符才运行。
 - `build.sh --check` 真实后端 14 项解码、偏好/CLI→视图双向跟随通过；生命周期 12 项用例通过（1 项组装包用例由构建完成后另验）。Release 构建入口也执行这些门和组装包入口用例，退出 0。
-- 候选：`build/DerivedData/Build/Products/Release/DocTools.app`，1.0.1 (342)，bundle `cyou.tianli.DocTools`，临时签名开发候选，未安装。
-- 来源回执：`build/accept/product-basics-20261015.json`，23 项实际生产输入（含父仓已有修改），source SHA `24ce6550a4d79e8a645010f4d9e6fadda5cb81b09b152972a5b313888a9af1e0`；可执行 SHA `37e8a80afafc07dfd07076ae2fc8cd775afb93ec9f24568d9028b47423d977d3`。回执由 app_sop build-receipt 包住 `./build.sh` 的实际成功构建生成；保留旧 `perf/build-receipt.json`。
+- 最后补齐菜单启动顺序：共享层挂好菜单后再配置 ⌘,，刷新项并入原「操作」菜单；离屏自检直接调用同一 `installMenus`，断言设置组合和唯一菜单归属均 true。
+- 候选：`build/DerivedData/Build/Products/Release/DocTools.app`，1.0.1 (343)，bundle `cyou.tianli.DocTools`，临时签名开发候选，未安装。
+- 来源回执：`build/accept/product-basics-20261015.json`，23 项实际生产输入（含父仓已有修改），source SHA `1614e53e27e2d30442540f0a556c1228f45cca54c2e44948a793be54abde31f4`；可执行 SHA `eb0ad8ca9229a0ce77632cb75a3bb2700c1b1b18294db149af0ea540fce41c3c`。回执由 app_sop build-receipt 包住 `./build.sh` 的实际成功构建生成；保留旧 `perf/build-receipt.json`。
 
 ## 固定验收结果
 
@@ -27,7 +28,7 @@ SOP_PRODUCT_BASICS_RECEIPT="$PWD/build/accept/product-basics-20261015.json" \
 chapter sop accept --app doc-tools --check product_basics --json
 ```
 
-退出 0、`product_basics: passed`。最终正式原件 `perf/acceptance/run-4dzy8lsj/product_basics.json`，SHA `08dc24dc9624fde10a8fdd7f806631c75f60d58b3dc75204159b642bbf9f03c5`；Chapter 自动写入 `perf/delivery-evidence.json`，未手写该证据。原始 checks、逐条 CLI 响应、控件结果、浅/深 4 张离屏图及升级日志在 `perf/acceptance/product-basics-11b11efec6a34e78a14806a43d53a912/`。最终登记的更新 readback 是单条可直接执行的 `dockit update check --json`，据此更新政策绑定后复验；此前通过原件 `run-vfrytrkx` 仍保留。
+退出 0、`product_basics: passed`。最终正式原件 `perf/acceptance/run-nyw0p84k/product_basics.json`，SHA `c1e72f6b98c26504a9c9851e253344f9ae04bd60abad071f7c7c9a34c2440e02`；Chapter 自动写入 `perf/delivery-evidence.json`，未手写该证据。原始 checks、逐条 CLI 响应、控件结果、浅/深 4 张离屏图及升级日志在 `perf/acceptance/product-basics-73f956304c474a8c97e3d5bed5d90168/`。最终登记的更新 readback 是单条可直接执行的 `dockit update check --json`；此前阶段原件 `run-vfrytrkx` 和 `run-4dzy8lsj` 仍保留，以本段最终包与原件为准。
 
 四项 14 个必测名全部为严格 true，另有 4 项 owner_data_unchanged：设置真实开关动作/新进程读回/坏导入保留；菜单真实刷新回调与 SwiftUI subscriber/关闭恢复/保留键冲突；云端写入接收/不可用本地回落/同字段本地优先且独立字段合并/坏远端恢复/关闭保留；测试发行源比较/坏源恢复/更新选项持久化/真实临时包替换并保留配置。原件 SHA 与用户偏好、真实配置文件和已装字节的前后哈希一致。
 
