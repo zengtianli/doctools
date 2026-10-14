@@ -1,0 +1,23 @@
+{
+  "app_id": "doc-tools",
+  "check": "product_basics",
+  "saved_at": "2026-10-15T01:30:19.334644+08:00",
+  "files": {
+    "product_basics.log": {
+      "sha256": "0a77a1c331af4601cd83425de7348fcd161246866969e30949f3702f29d97758",
+      "bytes": 3357,
+      "mode": 420
+    },
+    "product_basics.detail.json": {
+      "sha256": "fae930635d916c9185b5ec23a5e50a6a05918d22c247f782b0a9351215b0ae2d",
+      "bytes": 3855,
+      "mode": 420
+    },
+    "product_basics.json": {
+      "sha256": "a5ba3ba12733310fd92ff71aef6325a051465f3a6d5a8c4a65b0c8a10ed7f2c8",
+      "bytes": 4797,
+      "mode": 420
+    }
+  },
+  "missing": []
+}

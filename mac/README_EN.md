@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-The app menu adds configuration import/export, optional iCloud sync (off by default), and update checks. It remembers the last operation and target formats. Rule toggles, external-service consent, template paths, documents and task history remain local to each task. This edition reads updates from your private iCloud release folder.
+The app menu offers Configuration and Updates (⌘,), import/export, optional iCloud sync (off by default), and update checks. Settings can disable/restore the refresh shortcut or select its binding (default ⌘R; ⌘K searches operations); reserved keys and menu conflicts are refused. Portable settings include the last operation, target formats, refresh shortcut and update options. Automatic checks, downloads and installation default to off and can be saved through the settings window or `dockit update options`. Rule toggles, external-service consent, template paths, documents and task history remain local to each task. This edition reads updates from your private iCloud release folder.
 
 SwiftUI client inside [doctools](../README.md), maintained in the parent repository with its existing document backend. Operations and options come from `gui-ops`; the local `~/Dev/.venv` environment is required.
 
@@ -13,10 +13,12 @@ The catalog owns the display name; bundle ID remains `cyou.tianli.DocTools`. Bui
 Fixed acceptance scripts live in `scripts/accept/`. Chapter runs them and records the evidence:
 
 ```sh
-~/Dev/.venv/bin/python ~/Apps/chapter/engine/app_sop.py accept --app doc-tools-doctools --check functionality --check recovery --check privacy --check native_ui --json
+~/Dev/.venv/bin/python ~/Apps/chapter/engine/app_sop.py accept --app doc-tools --check functionality --check recovery --check privacy --check native_ui --json
 ```
 
-Functionality and recovery checks use temporary documents. Native UI acceptance builds current source and calls the app's `--ui-self-test` to render real views offscreen without installation, focus changes or clipboard access. This verifies the local build; the installed icon still requires confirmation in Chapter.
+Functionality and recovery checks use temporary documents. Native UI acceptance builds current source and calls the app's `--ui-self-test` to render real views offscreen without installation, focus changes or clipboard access. This verifies the local build; the installed icon uses Chapter's fixed acceptance rather than owner confirmation.
+
+The fixed `scripts/accept/product_basics.py` covers all 14 policy behaviors. Its default is the installed original and existing receipt; `--app`/`--receipt` explicitly select a current-source candidate. For Chapter acceptance, set `SOP_PRODUCT_BASICS_APP` and `SOP_PRODUCT_BASICS_RECEIPT` before `chapter sop accept --app doc-tools --check product_basics --json`. Source and executable hashes are verified before exercising private preference domains, real hidden settings controls/menu actions, local cloud transport, recovery and an actual upgrade of a temporary bundle. A candidate pass does not claim installation; local iCloud transport does not prove Apple cross-device delivery.
 
 Normalization and quotation operations use local document engines. Sensitive-word scanning sends the names and content of `.md` files in the chosen folder (DOCX is not read) to the external Claude service and requires explicit consent whenever that operation is selected. Acceptance checks exercise refusal and local processing without sending documents; they do not verify external service availability.
 

@@ -70,7 +70,17 @@
       "evidence": "perf/acceptance/run-5d9foabx/cli_entry.json",
       "evidence_sha256": "d71c0bae4a1642e64830ecd30dc7e4015f9c4e864c68734c4f0c01df81b93840",
       "detail": "builtin:cli_entry：~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/cli_entry.py → 命令行在 App 里：dockit — DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。"
+    },
+    "product_basics": {
+      "result": "passed",
+      "scope": "product_basics",
+      "method": "real_product",
+      "checked_at": "2026-10-15T01:34:33.969750+08:00",
+      "input_sha256": "7bbc253b9db269b819bc40a0a3031b13fc426f1040ccc49b1d2d03c5c63f0855",
+      "evidence": "perf/acceptance/run-4dzy8lsj/product_basics.json",
+      "evidence_sha256": "08dc24dc9624fde10a8fdd7f806631c75f60d58b3dc75204159b642bbf9f03c5",
+      "detail": "sop.accept：~/Dev/.venv/bin/python scripts/accept/product_basics.py → DocKit candidate 基础功能通过；14 项必测行为；iCloud 为隔离本机链路，未验苹果跨设备传输"
     }
   },
-  "updated_at": "2026-10-05T12:11:17.882046+08:00"
+  "updated_at": "2026-10-15T01:34:33.982141+08:00"
 }

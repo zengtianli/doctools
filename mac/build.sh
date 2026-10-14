@@ -11,6 +11,8 @@ cd "$DIR"
 PYTHON="$HOME/Dev/.venv/bin/python"
 source "$HOME/Dev/tools/dev/lib/tools/macapp/xcode_env.sh"
 xcode_env_use macosx
+LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
+"$PYTHON" "$LIFECYCLE_VENDOR" --platform mac --shortcuts --target-source-dir "$DIR/Sources" --check
 "$PYTHON" "$HOME/Dev/tools/dev/lib/tools/macapp/check_codingkeys.py" "$DIR"
 BACKEND="$DIR/../scripts/document/doc_gui_backend.py"
 [ -f "$BACKEND" ] && [ -f tests/decode_check.swift ]
@@ -50,13 +52,9 @@ for CHECK_PID in "${CHECK_PIDS[@]}"; do
 done
 [ "$CHECK_STATUS" -eq 0 ] || exit "$CHECK_STATUS"
 [ "$MODE" != --check ] || exit 0
-LIFECYCLE_VENDOR="${APP_LIFECYCLE_VENDOR:-$HOME/Dev/tools/dev/lib/tools/macapp/swift-shared/vendor-lifecycle.py}"
-if [ -f "$LIFECYCLE_VENDOR" ]; then
-  python3 "$LIFECYCLE_VENDOR" --platform mac --target-source-dir "$DIR/Sources"
-fi
 DISPLAY_NAME="$("$PYTHON" -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["display_name"])' "$DIR/catalog.yaml")"
-xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release build | tail -3
-BUILT="$(xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR =/{print $2; exit}')"
+xcodebuild -project DocTools.xcodeproj -scheme DocTools -configuration Release -derivedDataPath "$DIR/build/DerivedData" build | tail -3
+BUILT="$DIR/build/DerivedData/Build/Products/Release"
 APP="$BUILT/DocTools.app"
 [ -d "$APP" ]
 plutil -replace CFBundleName -string "$DISPLAY_NAME" "$APP/Contents/Info.plist"

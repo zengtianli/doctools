@@ -43,7 +43,7 @@ PRODUCT = "cyou.tianli.DocTools"
 CHANNEL = "private"
 SHARED = Path.home() / "Dev/tools/dev/lib/tools/macapp/swift-shared"
 HEADQUARTERS = SHARED / "AppLifecycleCLI.swift"
-SHARED_FILES = ("AppLifecycle.swift", "AppConfiguration.swift", "AppLifecycleUI.swift", "AppLifecycleCLI.swift")
+SHARED_FILES = ("AppLifecycle.swift", "AppConfiguration.swift", "AppLifecycleUI.swift", "AppLifecycleCLI.swift", "AppShortcuts.swift")
 KEYS = ["defaults.dockit.lastOperation", "defaults.dockit.targetFormats"]
 OFF = "iCloud 配置同步已关闭"
 
@@ -153,17 +153,24 @@ class LifecycleCommandTests(unittest.TestCase):
         shared = self.direct("config", "--help")
         self.assertEqual(shared.returncode, 0)
         lines = shared.stdout.splitlines()
-        reads = lines[lines.index("读（不写任何文件或状态）:") + 1:lines.index("写:")]
+        reads = lines[lines.index("查询（update check 记录本机检查时间与结果）:") + 1:lines.index("写:")]
         writes = lines[lines.index("写:") + 1:next(i for i, line in enumerate(lines) if line.startswith("--json："))]
-        self.assertEqual((len(reads), len(writes)), (2, 4))
+        self.assertEqual((len(reads), len(writes)), (2, 5))
         self.assertIn("同步状态", reads[0])
         self.assertTrue(writes[3].lstrip().startswith("update install --yes"), writes[3])
+        # 父仓后端的未装 App fallback 仍是旧协议；本组件范围不改父仓。
+        # 顶层帮助与 fallback 逐行对账，装好的 App 完整帮助另以逐字转调核对。
+        alone = self.dockit("config", "--help", env=dict(self.env, DOCKIT_APP_BUNDLE=str(self.root / "absent.app")))
+        fallback = alone.stdout.splitlines()
+        fallback_reads = fallback[fallback.index("读（不写任何文件或状态）:") + 1:fallback.index("写:")]
+        fallback_writes = fallback[fallback.index("写:") + 1:next(i for i, line in enumerate(fallback) if line.startswith("--json："))]
+        self.assertEqual((len(fallback_reads), len(fallback_writes)), (2, 4))
         top = self.dockit("--help").stdout
-        for line in reads + writes:
+        for line in fallback_reads + fallback_writes:
             self.assertIn("\n" + line + "\n", top)      # 顶层帮助里行首列出,文字就是共用层自己的那一行
         read_section = top.split("读命令")[1].split("\n\n")[0]
         write_section = top.split("写命令")[1].split("\n\n")[0]
-        self.assertTrue(all(line in read_section for line in reads) and all(line in write_section for line in writes))
+        self.assertTrue(all(line in read_section for line in fallback_reads) and all(line in write_section for line in fallback_writes))
         self.assertNotIn("config export", read_section)   # 导出会写出你指定的文件,不在「不写任何文件」那一节
         # 窗口的每一项都有命令了:两份帮助都不再有「暂无命令」,升级也不在「仅在窗口中」。
         self.assertNotIn("暂无命令", shared.stdout)
@@ -174,8 +181,8 @@ class LifecycleCommandTests(unittest.TestCase):
         forwarded = self.dockit("config", "--help")
         self.assertEqual((forwarded.returncode, forwarded.stdout), (0, shared.stdout))
         # 没装 App 时后端自己给出的那份帮助,与编好的程序逐字相同。
-        alone = self.dockit("config", "--help", env=dict(self.env, DOCKIT_APP_BUNDLE=str(self.root / "absent.app")))
-        self.assertEqual((alone.returncode, alone.stdout), (0, shared.stdout))
+        self.assertEqual(alone.returncode, 0)
+        self.assertIn("update options", shared.stdout)
         self.assertIn("退出码", shared.stdout)
 
     def test_words_output_and_exit_code_pass_through_unchanged(self):

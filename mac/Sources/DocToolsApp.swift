@@ -36,10 +36,6 @@ struct DocToolsApp: App {
                     NotificationCenter.default.post(name: .tlPaletteToggle, object: nil)
                 }
                 .keyboardShortcut("k", modifiers: .command)   // ⌘K 命令面板
-                Button("刷新") {
-                    NotificationCenter.default.post(name: .consoleRefresh, object: nil)
-                }
-                .keyboardShortcut("r", modifiers: .command)
             }
         }
     }
@@ -54,6 +50,14 @@ enum DocToolsMain {
         // 执行后直接退出。此时还没有 NSApplication:没有窗口、不进 Dock、不弹提示;已在运行的实例不被打扰,
         // 它经 AppLifecycleCLI.follow 自己跟随。
         if AppLifecycleCLI.handles(words.first) { exit(Lifecycle.runCommand(words)) }
+        if words.first == "shortcuts" { exit(Lifecycle.shortcutCommand(words)) }
+        if words.contains("--product-basics-self-test") {
+            guard Lifecycle.isolated, Lifecycle.preferences() != nil else { fputs(Lifecycle.refusal + "\n", stderr); exit(64) }
+            let application = NSApplication.shared
+            application.setActivationPolicy(.prohibited)
+            Task { await ProductBasicsSelfTest.run() }
+            application.run()
+        }
         if words.contains(Lifecycle.probeFlag) { LifecycleProbe.run(words) }
         if LaneSignal.quiet {
             quietMain()

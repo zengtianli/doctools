@@ -2,7 +2,7 @@
 
 [English](README_EN.md)
 
-App 菜单新增「配置与更新…」和「检查更新…」。记住上次操作与各操作的目标格式，可导出、导入，并选择开启 iCloud 配置同步（默认关闭）。勾选规则仍按操作默认值重新确认；文档、外发同意、模板路径与运行记录不参与同步。本机版从自己的 iCloud 私有更新目录读取发行清单。
+App 菜单提供「配置与更新…」（⌘,）和「检查更新…」。设置窗口可关闭、恢复或选择刷新快捷键（默认 ⌘R；⌘K 搜索功能），拒绝系统保留组合和应用菜单冲突。记住上次操作、各操作目标格式、刷新快捷键及更新选项，可导出、导入，并选择开启 iCloud 配置同步（默认关闭）。勾选规则仍按操作默认值重新确认；文档、外发同意、模板路径与运行记录不参与同步。本机版从自己的 iCloud 私有更新目录读取发行清单；自动检查、下载和安装默认关闭，可在设置窗口或 `dockit update options` 持久保存。
 
 [doctools](../README.md) 的 SwiftUI 桌面端，操作与选项从同一文档后端 `gui-ops` 加载。源码、文档引擎与构建由父仓统一维护；本客户端依赖本机 `~/Dev/.venv`，不是独立分发版。
 
@@ -17,10 +17,20 @@ App 菜单新增「配置与更新…」和「检查更新…」。记住上次�
 固定验收在 `scripts/accept/`，通过 Chapter 运行并由其写入证据：
 
 ```sh
-~/Dev/.venv/bin/python ~/Apps/chapter/engine/app_sop.py accept --app doc-tools-doctools --check functionality --check recovery --check privacy --check native_ui --json
+~/Dev/.venv/bin/python ~/Apps/chapter/engine/app_sop.py accept --app doc-tools --check functionality --check recovery --check privacy --check native_ui --json
 ```
 
-功能与恢复测试只使用临时文档。原生界面验收会构建当前源码，并调用 App 的 `--ui-self-test` 离屏渲染真实视图；不装机、不抢焦点，也不操作剪贴板。它证明本地构建的行为，装机图标仍需本人在 Chapter 确认。
+功能与恢复测试只使用临时文档。原生界面验收会构建当前源码，并调用 App 的 `--ui-self-test` 离屏渲染真实视图；不装机、不抢焦点，也不操作剪贴板。它证明本地构建的行为；装机图标沿 Chapter 固定验收，不要求本人确认。
+
+四项基础能力使用固定 `scripts/accept/product_basics.py`，覆盖政策的 14 项行为。默认检查已装包及其来源回执；`--app` 和 `--receipt` 可明确检查候选，不表示已安装。通过 Chapter 验候选：
+
+```sh
+SOP_PRODUCT_BASICS_APP="$PWD/build/DerivedData/Build/Products/Release/DocTools.app" \
+SOP_PRODUCT_BASICS_RECEIPT="$PWD/build/accept/product-basics-20261015.json" \
+chapter sop accept --app doc-tools --check product_basics --json
+```
+
+验收核对原件 SHA 与构建输入，再用私有测试包、一次性偏好域和隔离目录，运行真实离屏控件、快捷键动作、同步错误恢复和临时包升级。iCloud 本机隔离往返与苹果跨设备传输分别报告；不会修改真实文档、账号、iCloud 配置或已装 App。
 
 规范化、引号等操作由本机文档引擎执行。“敏感词扫描”使用外部 Claude 服务，会发送扫描目录内 `.md` 文件的文件名与正文（不读取 docx）；每次选择该操作时须明确勾选外发同意。验收只检查拒绝路径与本地处理，不发送文档，也不证明外部服务可用。
 

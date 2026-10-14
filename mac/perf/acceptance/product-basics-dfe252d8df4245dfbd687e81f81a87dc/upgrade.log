@@ -1,0 +1,7 @@
+test_update_install_replaces_a_throwaway_bundle_and_keeps_the_settings (__main__.LifecycleCommandTests.test_update_install_replaces_a_throwaway_bundle_and_keeps_the_settings)
+带 --yes 的整条路,真实进程:sh 薄壳 → 后端 → 测试包里的 App 程序 → 共用安装器。 ... skipped 'replaces the bundle it runs on: only ever on a throwaway bundle in a temporary directory'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.957s
+
+OK (skipped=1)

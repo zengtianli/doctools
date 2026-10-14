@@ -20,10 +20,19 @@ sop:
   promo: false
   test: ./build.sh --check
   accept:
+    product_basics: ~/Dev/.venv/bin/python scripts/accept/product_basics.py
     functionality: ~/Dev/.venv/bin/python scripts/accept/functionality.py
     recovery: ~/Dev/.venv/bin/python scripts/accept/recovery.py
     privacy: ~/Dev/.venv/bin/python scripts/accept/privacy.py
     native_ui: bash scripts/accept/native_ui.sh
+  product_basics:
+    schema_version: 1
+    features:
+      settings: {entry: 'App 菜单「配置与更新…」（⌘,）', readback: 'dockit config status --json'}
+      shortcuts: {entry: '配置与更新窗口的刷新快捷键开关与组合；⌘K 搜索', readback: '/Applications/DocKit.app/Contents/MacOS/DocTools shortcuts status --json'}
+      icloud: {entry: '配置与更新窗口「使用 iCloud 记住配置」', readback: 'dockit config status --json'}
+      updates: {entry: 'App 菜单「检查更新…」及配置与更新窗口的更新选项', readback: 'dockit update check --json'}
+    inputs: [scripts/accept/product_basics.py, tests/test_lifecycle_cli.py]
   test_inputs:
   - tests/**
   - scripts/accept/**

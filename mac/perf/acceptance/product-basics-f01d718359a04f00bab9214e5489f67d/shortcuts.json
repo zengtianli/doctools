@@ -1,0 +1,1277 @@
+{
+  "schema_version": 1,
+  "app_id": "doc-tools",
+  "spec_digest": "d16d70a73604b5c0540f7401f4144196991bdbdf41aad964a61f37775846a420",
+  "checks": {
+    "shortcuts.action_path": true,
+    "shortcuts.disable_restore": true,
+    "shortcuts.conflict_or_reserved_keys": true,
+    "shortcuts.owner_data_unchanged": true
+  },
+  "cases": [
+    {
+      "case": "settings.fresh_process",
+      "argv": [
+        "settings"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "domain": "test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12.preferences",
+        "settings": {
+          "last_operation": "view",
+          "target_formats": {}
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "shortcuts.fresh_process",
+      "argv": [
+        "shortcuts",
+        "status"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "binding": {
+          "key": "r",
+          "modifiers": 1048576
+        },
+        "description": "已启用：⌘R（只在本 App 内生效）",
+        "enabled": true,
+        "ok": true,
+        "scope": "application menu",
+        "search": "⌘K",
+        "settings": "⌘,"
+      },
+      "stderr": ""
+    },
+    {
+      "case": "settings.export",
+      "argv": [
+        "config",
+        "export",
+        "-o",
+        "/Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/export.json"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "bytes": 213,
+        "command": "config export",
+        "keys": [
+          "defaults.appShortcuts.refresh.binding",
+          "defaults.appShortcuts.refresh.enabled",
+          "defaults.dockit.lastOperation"
+        ],
+        "ok": true,
+        "path": "/Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/export.json"
+      },
+      "stderr": ""
+    },
+    {
+      "case": "settings.invalid_import",
+      "argv": [
+        "config",
+        "import",
+        "/Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/incoming.json",
+        "--yes"
+      ],
+      "exit": 1,
+      "passed": true,
+      "response": {
+        "command": "config import",
+        "error": {
+          "code": "import_rejected",
+          "message": "导入未完成，原配置已保留：上次操作必须是文字。"
+        },
+        "ok": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "operations",
+      "argv": [
+        "ops"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "ops": [
+          {
+            "id": "clean",
+            "aliases": "normalize clean tidy format punctuation quotes units",
+            "verb": "clean",
+            "title": "规范化",
+            "subtitle": "纯文本修复:引号+标点+单位一起做(docx/md 另存 _fixed;pptx 原地改写并留备份)",
+            "icon": "wand.and.stars",
+            "exts": [
+              "docx",
+              "md",
+              "pptx"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "rule",
+                "title": "修哪些内容"
+              },
+              {
+                "id": "scope",
+                "title": "改哪些范围",
+                "applies_to": [
+                  "docx"
+                ]
+              }
+            ],
+            "options": [
+              {
+                "id": "rule.quotes",
+                "group": "rule",
+                "type": "bool",
+                "default": true,
+                "title": "引号统一为中文引号"
+              },
+              {
+                "id": "rule.punct",
+                "group": "rule",
+                "type": "bool",
+                "default": true,
+                "title": "英文标点转中文",
+                "note": "含 , : ; ! ? ( )"
+              },
+              {
+                "id": "rule.units",
+                "group": "rule",
+                "type": "bool",
+                "default": true,
+                "title": "中文单位转标准符号",
+                "note": "平方米→m²(仅数字后)"
+              },
+              {
+                "id": "rule.quote_font",
+                "group": "rule",
+                "type": "bool",
+                "default": true,
+                "title": "引号设为宋体",
+                "note": "会把引号拆成独立 run"
+              },
+              {
+                "id": "scope.body",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "正文"
+              },
+              {
+                "id": "scope.table",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "表格"
+              },
+              {
+                "id": "scope.revision",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "审阅修订",
+                "note": "w:ins/w:del 插入与删除态"
+              },
+              {
+                "id": "scope.comments",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "批注"
+              },
+              {
+                "id": "scope.notes",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "脚注/尾注"
+              },
+              {
+                "id": "scope.headers",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "页眉页脚"
+              }
+            ]
+          },
+          {
+            "id": "quotes",
+            "aliases": "quotes quotation curly smart 引号",
+            "verb": "quotes",
+            "title": "引号统一",
+            "subtitle": "只把引号统一成中文弯引号,不碰标点/单位(docx·md)",
+            "icon": "quote.opening",
+            "exts": [
+              "docx",
+              "md"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "rule",
+                "title": "怎么处理"
+              },
+              {
+                "id": "scope",
+                "title": "改哪些范围",
+                "applies_to": [
+                  "docx"
+                ]
+              }
+            ],
+            "options": [
+              {
+                "id": "rule.quote_font",
+                "group": "rule",
+                "type": "bool",
+                "default": true,
+                "title": "引号设为宋体",
+                "note": "会把引号拆成独立 run"
+              },
+              {
+                "id": "scope.body",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "正文"
+              },
+              {
+                "id": "scope.table",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "表格"
+              },
+              {
+                "id": "scope.revision",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "审阅修订",
+                "note": "w:ins/w:del 插入与删除态"
+              },
+              {
+                "id": "scope.comments",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "批注"
+              },
+              {
+                "id": "scope.notes",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "脚注/尾注"
+              },
+              {
+                "id": "scope.headers",
+                "group": "scope",
+                "type": "bool",
+                "default": true,
+                "title": "页眉页脚"
+              }
+            ]
+          },
+          {
+            "id": "fontunify",
+            "aliases": "font unify typeface pptx 字体",
+            "verb": "fontunify",
+            "title": "字体统一",
+            "subtitle": "pptx 全篇(含母版/版式)统一字体 ⚠原地覆写原文件(留 .backup)",
+            "icon": "textformat",
+            "exts": [
+              "pptx"
+            ],
+            "kind": "files",
+            "danger": true
+          },
+          {
+            "id": "lowercase",
+            "aliases": "lowercase lower case downcase xlsx 小写",
+            "verb": "lowercase",
+            "title": "英文小写整理",
+            "subtitle": "xlsx 数据行 / docx 正文里的英文转小写(语义级数据改写)",
+            "icon": "textformat.abc",
+            "exts": [
+              "xlsx",
+              "xlsm",
+              "docx"
+            ],
+            "kind": "files",
+            "danger": true
+          },
+          {
+            "id": "stripchrome",
+            "aliases": "strip header footer chrome remove 页眉 页脚",
+            "verb": "stripchrome",
+            "title": "清页眉页脚",
+            "subtitle": "删除 docx 的页眉页脚引用,一个字不改 ⚠不可撤销(产出 _fixed 副本)",
+            "icon": "rectangle.topthird.inset.filled",
+            "exts": [
+              "docx"
+            ],
+            "kind": "files",
+            "danger": true
+          },
+          {
+            "id": "formatclone",
+            "aliases": "format clone style template reference 版式 复刻 公文",
+            "verb": "formatclone",
+            "title": "公文版式复刻",
+            "subtitle": "拿一份范式件当格式源,把内容刷成同款版式(原件不动,产出 _成品.docx,永不覆盖)",
+            "icon": "doc.on.doc",
+            "exts": [
+              "docx",
+              "md"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "src",
+                "title": "格式来源(必选)"
+              },
+              {
+                "id": "opt",
+                "title": "选项"
+              }
+            ],
+            "options": [
+              {
+                "id": "ref",
+                "group": "src",
+                "type": "file",
+                "exts": [
+                  "docx"
+                ],
+                "required": true,
+                "title": "范式 docx",
+                "note": "格式从这份抽(标题/正文/落款的直排版一并复刻)"
+              },
+              {
+                "id": "signature",
+                "group": "opt",
+                "type": "bool",
+                "default": false,
+                "title": "保留落款署名",
+                "note": "默认不含 —— 复刻件多数要另行署名"
+              }
+            ]
+          },
+          {
+            "id": "convert",
+            "aliases": "convert transform export pdf word markdown 转换",
+            "verb": "convert",
+            "title": "格式转换",
+            "subtitle": "源格式自动识别 → 目标格式（含 PDF → 可编辑 Word）",
+            "icon": "arrow.triangle.2.circlepath",
+            "exts": [
+              "pdf",
+              "docx",
+              "doc",
+              "pptx",
+              "ppt",
+              "md",
+              "csv",
+              "txt",
+              "xls",
+              "xlsx",
+              "xlsm"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "output",
+                "title": "已有同名文件",
+                "danger": true
+              }
+            ],
+            "options": [
+              {
+                "id": "output.overwrite",
+                "group": "output",
+                "type": "bool",
+                "default": false,
+                "title": "允许覆盖已有同名文件",
+                "note": "默认遇到同名文件就停下;勾选后直接覆盖,不留备份"
+              }
+            ],
+            "target_required": true,
+            "targets": [
+              {
+                "id": "md",
+                "title": "Markdown"
+              },
+              {
+                "id": "word",
+                "title": "Word"
+              },
+              {
+                "id": "xlsx",
+                "title": "Excel"
+              },
+              {
+                "id": "csv",
+                "title": "CSV"
+              },
+              {
+                "id": "txt",
+                "title": "纯文本"
+              }
+            ]
+          },
+          {
+            "id": "split",
+            "aliases": "split divide separate chapters sheets 拆分",
+            "verb": "split",
+            "title": "拆分",
+            "subtitle": "md 按标题 / xlsx 按 sheet",
+            "icon": "scissors",
+            "exts": [
+              "md",
+              "xlsx",
+              "xlsm"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "output",
+                "title": "已有同名文件",
+                "danger": true
+              }
+            ],
+            "options": [
+              {
+                "id": "output.overwrite",
+                "group": "output",
+                "type": "bool",
+                "default": false,
+                "title": "允许覆盖已有同名文件",
+                "note": "默认遇到同名文件就停下;勾选后直接覆盖,不留备份"
+              }
+            ]
+          },
+          {
+            "id": "merge",
+            "aliases": "merge combine join concat 合并",
+            "verb": "merge",
+            "title": "合并",
+            "subtitle": "多个 md → merged.md / 多个 txt 按列 → merged.csv(产出在第一份旁)",
+            "icon": "arrow.triangle.merge",
+            "exts": [
+              "md",
+              "txt"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "output",
+                "title": "已有同名文件",
+                "danger": true
+              }
+            ],
+            "options": [
+              {
+                "id": "output.overwrite",
+                "group": "output",
+                "type": "bool",
+                "default": false,
+                "title": "允许覆盖已有同名文件",
+                "note": "默认遇到同名文件就停下;勾选后直接覆盖,不留备份"
+              }
+            ]
+          },
+          {
+            "id": "typeset",
+            "aliases": "typeset template word 套模板 成品",
+            "verb": "typeset",
+            "title": "套模板成品 Word",
+            "subtitle": "md/docx/doc → 院模板(套样式·修文本·图注居中)",
+            "icon": "doc.richtext",
+            "exts": [
+              "md",
+              "docx",
+              "doc"
+            ],
+            "kind": "files",
+            "option_groups": [
+              {
+                "id": "output",
+                "title": "已有同名文件",
+                "danger": true
+              }
+            ],
+            "options": [
+              {
+                "id": "output.overwrite",
+                "group": "output",
+                "type": "bool",
+                "default": false,
+                "title": "允许覆盖已有同名文件",
+                "note": "默认遇到同名文件就停下;勾选后直接覆盖,不留备份"
+              }
+            ]
+          },
+          {
+            "id": "renum",
+            "aliases": "renumber renum numbering figures tables headings 序号",
+            "verb": "renum",
+            "title": "序号修正",
+            "subtitle": "标题/图/表编号断号·错号·缺号一键重排(产出 _序号修正.docx,原件不动)",
+            "icon": "list.number",
+            "exts": [
+              "docx"
+            ],
+            "kind": "files",
+            "targets": [
+              {
+                "id": "all",
+                "title": "全部（标题+图+表）"
+              },
+              {
+                "id": "tabfig",
+                "title": "仅图表号"
+              },
+              {
+                "id": "headings",
+                "title": "仅标题号"
+              }
+            ]
+          },
+          {
+            "id": "bidfinal",
+            "aliases": "bid final gate check residue identity print 标书 门检",
+            "verb": "bidfinal",
+            "title": "标书终稿门检",
+            "subtitle": "残留8类/身份泄漏/打印就绪 三道门干跑体检,只诊断不改文件;红门=半成品禁交付",
+            "icon": "checkmark.seal",
+            "exts": [
+              "docx"
+            ],
+            "kind": "files",
+            "produces": "verdict",
+            "targets": [
+              {
+                "id": "pei",
+                "title": "陪标·通用稿"
+              },
+              {
+                "id": "main",
+                "title": "主标·实名"
+              }
+            ]
+          },
+          {
+            "id": "scan",
+            "aliases": "scan sensitive detect audit 敏感词",
+            "verb": "scan",
+            "title": "敏感词扫描",
+            "subtitle": "云端扫描目录内 .md：文件名与内容发送至 Claude，需先明确同意",
+            "icon": "magnifyingglass",
+            "exts": [],
+            "kind": "dir",
+            "option_groups": [
+              {
+                "id": "privacy",
+                "title": "外发授权"
+              }
+            ],
+            "options": [
+              {
+                "id": "privacy.cloud_consent",
+                "group": "privacy",
+                "type": "bool",
+                "default": false,
+                "title": "同意将所选目录内文件名与内容发送至 Claude",
+                "note": "敏感词扫描使用云端模型；规范化与引号统一在本机处理。"
+              }
+            ]
+          },
+          {
+            "id": "view",
+            "aliases": "view preview render html 预览",
+            "verb": "view",
+            "title": "预览",
+            "subtitle": "md → HTML 浏览器预览(2026-06-14 从 raycast doc_preview 并入)",
+            "icon": "eye",
+            "exts": [
+              "md"
+            ],
+            "kind": "files"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "case": "settings.valid_import",
+      "argv": [
+        "config",
+        "import",
+        "/Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/incoming.json",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "app_running": false,
+        "command": "config import",
+        "imported": true,
+        "ok": true,
+        "path": "/Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/incoming.json",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "settings.import_readback",
+      "argv": [
+        "settings"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "domain": "test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12.preferences",
+        "settings": {
+          "last_operation": "clean",
+          "target_formats": {}
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.push",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "on",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "配置已与 iCloud Drive 同步；其他设备由系统下载",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.off_for_remote",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.pull",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "on",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "配置已与 iCloud Drive 同步；其他设备由系统下载",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.remote_applied",
+      "argv": [
+        "settings"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "domain": "test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12.preferences",
+        "settings": {
+          "last_operation": "clean",
+          "target_formats": {}
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.off_for_conflict",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.local_edit",
+      "argv": [
+        "settings",
+        "set",
+        "last_operation",
+        "view"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "domain": "test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12.preferences",
+        "settings": {
+          "last_operation": "view",
+          "target_formats": {}
+        },
+        "changed": {
+          "key": "last_operation",
+          "from": "clean",
+          "to": "view"
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.merge",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "on",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "配置已与 iCloud Drive 同步；其他设备由系统下载",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.off_for_corrupt",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.bad_remote",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 1,
+      "passed": true,
+      "response": {
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "error": {
+          "code": "sync_incomplete",
+          "message": "开关已打开，首次同步未完成：配置同步未完成：The data couldn’t be read because it isn’t in the correct format."
+        },
+        "ok": false,
+        "status": "配置同步未完成：The data couldn’t be read because it isn’t in the correct format.",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.off_for_recover",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.recover",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "on",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "配置已与 iCloud Drive 同步；其他设备由系统下载",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.off_for_unavailable",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.unavailable",
+      "argv": [
+        "config",
+        "sync",
+        "on",
+        "--yes"
+      ],
+      "exit": 1,
+      "passed": true,
+      "response": {
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "error": {
+          "code": "sync_incomplete",
+          "message": "开关已打开，首次同步未完成：配置同步未完成：The file “unavailable-cloud” couldn’t be saved in the folder “product-basics-f01d718359a04f00bab9214e5489f67d” because a file with the same name already exists."
+        },
+        "ok": false,
+        "status": "配置同步未完成：The file “unavailable-cloud” couldn’t be saved in the folder “product-basics-f01d718359a04f00bab9214e5489f67d” because a file with the same name already exists.",
+        "sync_enabled": true
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.local_fallback",
+      "argv": [
+        "settings"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "ok": true,
+        "domain": "test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12.preferences",
+        "settings": {
+          "last_operation": "view",
+          "target_formats": {}
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "icloud.disable",
+      "argv": [
+        "config",
+        "sync",
+        "off",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "action": "off",
+        "app_running": false,
+        "changed": true,
+        "check_with": "dockit config status",
+        "command": "config sync",
+        "ok": true,
+        "status": "iCloud 配置同步已关闭",
+        "sync_enabled": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.default_options",
+      "argv": [
+        "update",
+        "options"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "command": "update options",
+        "history": {
+          "last_attempt_at": 1791999020.622283,
+          "last_error": "iCloud 中还没有此渠道的发行包，当前版本 1.0.1 (342)。"
+        },
+        "ok": true,
+        "options": {
+          "automaticCheck": false,
+          "automaticDownload": false,
+          "automaticInstall": false,
+          "intervalHours": 24
+        },
+        "source": "iCloud 私有渠道 · private"
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.save_options",
+      "argv": [
+        "update",
+        "options",
+        "--interval",
+        "6",
+        "--auto-download",
+        "on",
+        "--yes"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "command": "update options",
+        "history": {
+          "last_attempt_at": 1791999020.622283,
+          "last_error": "iCloud 中还没有此渠道的发行包，当前版本 1.0.1 (342)。"
+        },
+        "ok": true,
+        "options": {
+          "automaticCheck": false,
+          "automaticDownload": true,
+          "automaticInstall": false,
+          "intervalHours": 6
+        },
+        "source": "iCloud 私有渠道 · private"
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.fresh_options",
+      "argv": [
+        "update",
+        "options"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "command": "update options",
+        "history": {
+          "last_attempt_at": 1791999020.622283,
+          "last_error": "iCloud 中还没有此渠道的发行包，当前版本 1.0.1 (342)。"
+        },
+        "ok": true,
+        "options": {
+          "automaticCheck": false,
+          "automaticDownload": true,
+          "automaticInstall": false,
+          "intervalHours": 6
+        },
+        "source": "iCloud 私有渠道 · private"
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.invalid_options",
+      "argv": [
+        "update",
+        "options",
+        "--interval",
+        "0",
+        "--yes"
+      ],
+      "exit": 2,
+      "passed": true,
+      "response": {
+        "command": "update options",
+        "error": {
+          "code": "usage",
+          "message": "间隔必须是 1–720 小时"
+        },
+        "ok": false
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.missing_source",
+      "argv": [
+        "update",
+        "check"
+      ],
+      "exit": 1,
+      "passed": true,
+      "response": {
+        "command": "update check",
+        "current": {
+          "build": "342",
+          "version": "1.0.1"
+        },
+        "error": {
+          "code": "check_incomplete",
+          "message": "检查未完成：iCloud 中还没有此渠道的发行包，当前版本 1.0.1 (342)。"
+        },
+        "ok": false,
+        "source": {
+          "channel": "private",
+          "kind": "private_cloud"
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.corrupt_source",
+      "argv": [
+        "update",
+        "check"
+      ],
+      "exit": 1,
+      "passed": true,
+      "response": {
+        "command": "update check",
+        "current": {
+          "build": "342",
+          "version": "1.0.1"
+        },
+        "error": {
+          "code": "check_incomplete",
+          "message": "检查未完成：The data couldn’t be read because it isn’t in the correct format."
+        },
+        "ok": false,
+        "source": {
+          "channel": "private",
+          "kind": "private_cloud"
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.recovered_check",
+      "argv": [
+        "update",
+        "check"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "command": "update check",
+        "current": {
+          "build": "342",
+          "version": "1.0.1"
+        },
+        "latest": {
+          "build": "343",
+          "channel": "private",
+          "download_url": "file:///Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/cloud/TianliApps/Updates/test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12/private/fixture.txt",
+          "notes": null,
+          "published_at": null,
+          "release_url": null,
+          "sha256": "03ae0d4e737e640c26a66d200821658db794d74fea1b511520594c29863a8822",
+          "size_bytes": 50,
+          "version": "1.0.1"
+        },
+        "message": "有新版 1.0.1 (343)，当前 1.0.1 (342)。升级会保留本机配置。",
+        "ok": true,
+        "preferences": {
+          "history": {
+            "last_attempt_at": 1791999022.4165611,
+            "last_error": "",
+            "last_success_at": 1791999022.4165611,
+            "latest_build": "343",
+            "latest_version": "1.0.1"
+          },
+          "options": {
+            "automaticCheck": false,
+            "automaticDownload": true,
+            "automaticInstall": false,
+            "intervalHours": 6
+          },
+          "source": "iCloud 私有渠道 · private"
+        },
+        "source": {
+          "channel": "private",
+          "kind": "private_cloud"
+        },
+        "state": "update_available",
+        "update_available": true,
+        "upgrade": {
+          "button": "升级到新版…",
+          "command": "dockit update install --yes",
+          "download_url": null,
+          "how": "运行 dockit update install --yes（先加 --dry-run 可只看会做什么），或打开 DocKit，在菜单里选「配置与更新…」→「检查更新」→「升级到新版…」并确认：两条路相同，会验证发行包与签名、替换当前 App 并重新打开，配置保留，替换失败可回滚。",
+          "in_app": true
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "case": "updates.preview",
+      "argv": [
+        "update",
+        "install",
+        "--dry-run"
+      ],
+      "exit": 0,
+      "passed": true,
+      "response": {
+        "app_running": false,
+        "command": "update install",
+        "current": {
+          "build": "342",
+          "version": "1.0.1"
+        },
+        "dry_run": true,
+        "installation": "bundle",
+        "installed": false,
+        "latest": {
+          "build": "343",
+          "channel": "private",
+          "download_url": "file:///Users/tianli/Dev/tools/doctools/mac/perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/cloud/TianliApps/Updates/test.tianli.dockit.basics.63ca784d305343d2ae57c7353a9eda12/private/fixture.txt",
+          "notes": null,
+          "published_at": null,
+          "release_url": null,
+          "sha256": "03ae0d4e737e640c26a66d200821658db794d74fea1b511520594c29863a8822",
+          "size_bytes": 50,
+          "version": "1.0.1"
+        },
+        "message": "有新版 1.0.1 (343)，当前 1.0.1 (342)。升级会保留本机配置。",
+        "ok": true,
+        "source": {
+          "channel": "private",
+          "kind": "private_cloud"
+        },
+        "state": "update_available",
+        "will_quit_app": false,
+        "will_relaunch": false,
+        "would_install": {
+          "from": {
+            "build": "342",
+            "version": "1.0.1"
+          },
+          "to": {
+            "build": "343",
+            "version": "1.0.1"
+          }
+        }
+      },
+      "stderr": ""
+    }
+  ],
+  "binding": {
+    "mode": "candidate",
+    "original_app": "/Users/tianli/Dev/tools/doctools/mac/build/DerivedData/Build/Products/Release/DocTools.app",
+    "receipt": "/Users/tianli/Dev/tools/doctools/mac/build/accept/product-basics-20261015.json",
+    "receipt_sha256": "cd79af5f0b450bdd72eef57a43c588dc4cc8ee32001ba699035e2f12a041bde4",
+    "artifact": {
+      "bundle_id": "cyou.tianli.DocTools",
+      "version": "1.0.1",
+      "build": "342",
+      "executable": "Contents/MacOS/DocTools",
+      "sha256": "37e8a80afafc07dfd07076ae2fc8cd775afb93ec9f24568d9028b47423d977d3",
+      "icon": {
+        "path": "Contents/Resources/AppIcon.icns",
+        "sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b"
+      }
+    },
+    "source_sha256": "24ce6550a4d79e8a645010f4d9e6fadda5cb81b09b152972a5b313888a9af1e0",
+    "acceptor_sha256": "87885ddad2803551a324dec6ff2c837b6775cb43c2aa2651f40197138176205f",
+    "ui": {
+      "path": "perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/ui/ui.json",
+      "sha256": "47edb98afbfa132553063b7a741e52a8ea2bbb523f15d1df9ce7f7cd81e6a069"
+    },
+    "upgrade_log": {
+      "path": "perf/acceptance/product-basics-f01d718359a04f00bab9214e5489f67d/upgrade.log",
+      "sha256": "1e0825a0169e95de13bd801a85f7f1b23eff6023cbdcb2e0862ea56ba9de20dc"
+    }
+  },
+  "scope": "Current-source candidate; executable SHA and build inputs verified; isolated re-identified copy, native controls offscreen, real CLI and temporary upgrade transaction. iCloud uses a private local directory transport; Apple server/cross-device delivery was not tested. No production install, release or configuration changes.",
+  "checked_at": 1791999024.146589,
+  "error": null
+}
