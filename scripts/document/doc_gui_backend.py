@@ -997,14 +997,15 @@ LIFECYCLE_INSTALL_SECONDS = 720
 LIFECYCLE_READS = (
     "  config status              「使用 iCloud 记住配置」开关、开关下面那句同步状态、当前可迁移的配置项、App 是否在运行（只读）",
     "  update check               检查更新：当前版本、此渠道最新版本、有没有新版、怎么升级"
-    "（只读；私有渠道读 iCloud Drive 里的发行记录，公开渠道联网读发行记录）")
+    "（不改配置或安装；记录本机检查结果；私有渠道读 iCloud Drive 里的发行记录，公开渠道联网读发行记录）")
 LIFECYCLE_WRITES = (
     "  config export -o <file>        导出配置：与窗口「导出配置…」同一份文件；不改设置，只写你指定的那个文件"
     "（--force 覆盖；-o - 输出到标准输出，不写文件）",
     "  config import <file> --yes     导入配置：先备份原配置再覆盖，与窗口「导入配置…」相同",
     "  config sync on|off --yes       拨动「使用 iCloud 记住配置」（--dry-run 只看会不会变；用 dockit config status 回读）",
     "  update install --yes           升级到新版：与窗口「升级到新版…」同一条路——验证发行包与签名、替换当前 App，"
-    "运行中的先退出、换好再重开；配置保留，替换失败回滚（--dry-run 只看会做什么；用 dockit update check 回读）")
+    "运行中的先退出、换好再重开；配置保留，替换失败回滚（--dry-run 只看会做什么；用 dockit update check 回读）",
+    "  update options [--yes]     查看或保存自动检查/下载/安装、间隔、渠道、跳过与延后选项（--dry-run 只预演）")
 # 没装 App 时 `dockit config --help` 也要能看;装了 App 就由它自己回答。
 LIFECYCLE_HELP = "\n".join((
     "usage: dockit config [status] [--json]",
@@ -1013,8 +1014,11 @@ LIFECYCLE_HELP = "\n".join((
     "       dockit config sync on|off --yes [--dry-run] [--json]",
     "       dockit update check [--json]",
     "       dockit update install --yes [--dry-run] [--json]",
+    "       dockit update options [--auto-check on|off] [--auto-download on|off] [--auto-install on|off]",
+    "           [--interval 1..720] [--channel <name>] [--skip <version/build|clear>] [--remind 0..720] "
+    "[--yes|--dry-run] [--json]",
     "「配置与更新…」窗口里的各项，与窗口读写同一份设置、走同一个安装器。",
-    "读（不写任何文件或状态）:",
+    "查询（update check 记录本机检查时间与结果）:",
     *LIFECYCLE_READS,
     "写:",
     *LIFECYCLE_WRITES,
@@ -1712,7 +1716,8 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
   dockit doctor [--json]             依赖是否就绪(界面状态行的「已就绪 / 后端不可达」)
   dockit settings [--json]           界面记住的上次操作与各操作的目标格式
   dockit run <op> --dry-run <path>…  只校验:列出将处理的输入与将覆盖的已有文件,不执行
-  「配置与更新…」窗口里的读两项(写在 dockit 后面,加 --json;由 App 可执行文件执行,全部用法 dockit config --help):
+  「配置与更新…」窗口里的查询两项(写在 dockit 后面,加 --json;由 App 可执行文件执行,全部用法 dockit config --help;
+  update check 不改配置或安装,只在 App 里记下本机这次检查的时间与结果):
 @LIFECYCLE_READS@
   dockit public status [--json]      公开版 DocKit(DocKit Public.app)自己的版本与构建号、状态行、记住的设置;
                                      public 后面的词原样交给公开包的可执行文件,它认的全部命令见 dockit public help
@@ -1723,7 +1728,7 @@ GUI 给人用,dockit 给 agent 用;两边读写同一份操作目录与同一份
                                      fontunify 与 pptx 的 clean 原地改写;--background 另记一条后台任务
   dockit settings set <键> <值> [--json]
                                      改界面记住的设置:last_operation <op> 或 target_formats.<op> <目标>
-  「配置与更新…」窗口里的写四项(同上):
+  「配置与更新…」窗口里的写五项(同上):
 @LIFECYCLE_WRITES@
   dockit public settings set … | public config import … | public config sync … | public update install …
                                      改公开版自己的设置、升级公开版(同样由公开包的可执行文件执行,见 dockit public help)"""

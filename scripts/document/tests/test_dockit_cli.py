@@ -37,6 +37,7 @@ import plistlib
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -51,6 +52,7 @@ WRAPPER = ROOT / "mac" / "bin" / "dockit"
 VENV_PY = Path.home() / "Dev" / ".venv" / "bin" / "python"
 SANDBOX = Path("/usr/bin/sandbox-exec")
 NO_NETWORK = "(version 1) (allow default) (deny network*)"
+HAS_DEFAULTS = Path("/usr/bin/defaults").exists()   # 界面记住的设置在 App 的 macOS 偏好域,经它读写
 CACHE = Path(tempfile.mkdtemp(prefix="dockit-cache-"))   # 锁与后台任务的隔离目录
 
 
@@ -222,6 +224,26 @@ def test_scan_refuses_before_touching_directory(tmp_path: Path):
         assert proc.returncode == 2 and as_json(proc)["error_code"] == "consent_required"
 
 
+def _offline_llm_env(root: Path, stub: Path) -> tuple[dict, socket.socket]:
+    """共享 llm_client 发给 claude 之前先过本机的 Claude 网络检查(claude_network_check.require_safe),
+    检查读 LLM_CLIENT_SETTINGS_PATH 指的配置。这里给它一份只属于本测试的配置,不读本人的 llm-client 设置、
+    冷却记录与外发核准:
+      · 只走 claude、不自动换 codex(fallback=false),桩 claude 是唯一会被调到的模型程序;
+      · claude_network_guard 指向本测试开的一个只接入不应答的本地端口:出口 IP 查询在 0.8 秒预算内
+        取不到结果,按检查自身的超时规则继续(status=unverified),不联网;配置缺失或无效仍会照常拦下。
+    返回 (env, 端口);端口要在子进程结束前一直开着。"""
+    hold = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    hold.bind(("127.0.0.1", 0))
+    hold.listen(8)
+    settings = root / "llm-client.json"
+    settings.write_text(json.dumps({"preferred": "claude", "fallback": False, "claude_network_guard": {
+        "proxy": f"http://127.0.0.1:{hold.getsockname()[1]}", "expected_ips": ["192.0.2.1"]}}), encoding="utf-8")
+    env = _env(PATH=f"{stub}{os.pathsep}{os.environ.get('PATH', '')}", LLM_CLIENT_SETTINGS_PATH=str(settings),
+               LLM_CLIENT_STATE_PATH=str(root / "llm-state.json"),
+               CLAUDE_OUTBOUND_APPROVALS_PATH=str(root / "outbound-approvals.json"))
+    return env, hold
+
+
 def test_scan_with_consent_returns_findings_via_stub(tmp_path: Path):
     stub = tmp_path / "stub"
     stub.mkdir()
@@ -233,11 +255,14 @@ def test_scan_with_consent_returns_findings_via_stub(tmp_path: Path):
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "t.md").write_text("# 标书\n\n本方案由竞品甲公司编制。\n", encoding="utf-8")
-    env = _env(PATH=f"{stub}{os.pathsep}{os.environ.get('PATH', '')}")
+    env, hold = _offline_llm_env(tmp_path, stub)
     argv = [sys.executable, str(BACKEND), "run", "scan", "--opt", "privacy.cloud_consent=1", "--json", str(docs)]
-    if SANDBOX.exists():  # 双保险:桩失效也发不出去
-        argv = [str(SANDBOX), "-p", NO_NETWORK, *argv]
-    proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=120, env=env)
+    if SANDBOX.exists():  # 双保险:桩失效也发不出去(只放行上面那个不应答的本地端口)
+        port = hold.getsockname()[1]
+        argv = [str(SANDBOX), "-p", "(version 1) (allow default) (deny network-outbound)"
+                f' (allow network-outbound (remote ip "localhost:{port}"))', *argv]
+    with hold:
+        proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=120, env=env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     row = as_json(proc)["results"][0]
     assert row["findings"] and row["findings"][0]["word"] == "竞品甲公司"
@@ -494,7 +519,7 @@ def test_top_level_help_has_read_write_json_exit_and_window_only():
     for line in ("config status", "update check"):          # 「配置与更新…」窗口的读两项:行首列出
         assert re.search(rf"(?m)^\s+{line}\s", reads), f"读命令没列 {line}"
     assert re.search(r"(?m)^\s+dockit public status\b", reads) and re.search(r"(?m)^\s+dockit public settings set\b", writes)
-    for line in ("config export", "config import", "config sync", "update install"):
+    for line in ("config export", "config import", "config sync", "update install", "update options"):
         assert re.search(rf"(?m)^\s+{line}\s", writes), f"写命令没列 {line}"
     assert "public update install" in writes
     assert "config export" not in reads, "导出会写出指定的文件,不能列在「不写任何文件」的读命令里"
@@ -559,15 +584,20 @@ def test_status_reads_back_version_settings_and_jobs_without_writing(tmp_path: P
     assert proc.returncode == 0 and payload["ok"] and payload["jobs"] == []
     assert payload["app"] == {"path": str(app), "installed": True, "bundle_id": "cyou.tianli.DocTools",
                               "version": "9.8.7", "build": "654"}
-    assert payload["settings"] == {"last_operation": None, "target_formats": {}}
+    if HAS_DEFAULTS:
+        assert payload["settings"] == {"last_operation": None, "target_formats": {}}
+    else:   # 没有 macOS 偏好域:settings 读不到给 null,任务列表与版本照常读回
+        assert payload["settings"] is None
+        assert "读不到(dockit settings 看原因)" in dockit("status", env=env).stdout
     assert "9.8.7 (654)" in dockit("status", env=env).stdout
-    for args in (["settings", "--json"], ["ops", "--json"], ["ops", "convert"], ["status"]):
+    for args in ([["settings", "--json"]] if HAS_DEFAULTS else []) + [["ops", "--json"], ["ops", "convert"], ["status"]]:
         assert dockit(*args, env=env).returncode == 0
     assert _tree(tmp_path) == before, "读命令写了文件"      # 读命令不建缓存目录、不建偏好文件
     gone = as_json(dockit("status", "--json", env={**env, "DOCKIT_APP_BUNDLE": str(tmp_path / "none.app")}))
     assert gone["app"]["installed"] is False and gone["app"]["version"] is None
 
 
+@pytest.mark.skipif(not HAS_DEFAULTS, reason="界面记住的设置在 App 的 macOS 偏好域,经 /usr/bin/defaults 读写;非 macOS 没有这个域")
 def test_settings_set_validates_then_reads_back_only_its_two_keys(tmp_path: Path):
     prefs = tmp_path / "prefs.plist"
     # 域里已有界面自己的其他内容:写命令不许动它,读命令不许外带
@@ -708,11 +738,13 @@ def test_lifecycle_help_lines_are_listed_from_one_place():
     top = dockit("--help").stdout
     own = dockit("config", "--help").stdout          # 测试环境没有 App:后端自己的那份
     lines = own.splitlines()
-    reads = lines[lines.index("读（不写任何文件或状态）:") + 1:lines.index("写:")]
+    reads = lines[lines.index("查询（update check 记录本机检查时间与结果）:") + 1:lines.index("写:")]
     writes = lines[lines.index("写:") + 1:next(i for i, line in enumerate(lines) if line.startswith("--json："))]
-    assert len(reads) == 2 and len(writes) == 4
+    assert len(reads) == 2 and len(writes) == 5
     assert reads[0].lstrip().startswith("config status") and "同步状态" in reads[0]
+    assert reads[1].lstrip().startswith("update check") and "记录本机检查结果" in reads[1]
     assert writes[3].lstrip().startswith("update install --yes")
+    assert writes[4].lstrip().startswith("update options")
     for line in reads + writes:
         assert "\n" + line + "\n" in top, line
     assert "暂无命令" not in own and "sync_status{text, at, from, live}" in own and "update install →" in own

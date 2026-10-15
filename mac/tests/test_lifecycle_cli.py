@@ -158,13 +158,12 @@ class LifecycleCommandTests(unittest.TestCase):
         self.assertEqual((len(reads), len(writes)), (2, 5))
         self.assertIn("同步状态", reads[0])
         self.assertTrue(writes[3].lstrip().startswith("update install --yes"), writes[3])
-        # 父仓后端的未装 App fallback 仍是旧协议；本组件范围不改父仓。
-        # 顶层帮助与 fallback 逐行对账，装好的 App 完整帮助另以逐字转调核对。
+        # 没装 App 时后端自己给的那份(doc_gui_backend.LIFECYCLE_HELP)跟共用层同一协议;顶层帮助与它逐行对账。
         alone = self.dockit("config", "--help", env=dict(self.env, DOCKIT_APP_BUNDLE=str(self.root / "absent.app")))
         fallback = alone.stdout.splitlines()
-        fallback_reads = fallback[fallback.index("读（不写任何文件或状态）:") + 1:fallback.index("写:")]
+        fallback_reads = fallback[fallback.index("查询（update check 记录本机检查时间与结果）:") + 1:fallback.index("写:")]
         fallback_writes = fallback[fallback.index("写:") + 1:next(i for i, line in enumerate(fallback) if line.startswith("--json："))]
-        self.assertEqual((len(fallback_reads), len(fallback_writes)), (2, 4))
+        self.assertEqual((len(fallback_reads), len(fallback_writes)), (2, 5))
         top = self.dockit("--help").stdout
         for line in fallback_reads + fallback_writes:
             self.assertIn("\n" + line + "\n", top)      # 顶层帮助里行首列出,文字就是共用层自己的那一行
@@ -181,7 +180,7 @@ class LifecycleCommandTests(unittest.TestCase):
         forwarded = self.dockit("config", "--help")
         self.assertEqual((forwarded.returncode, forwarded.stdout), (0, shared.stdout))
         # 没装 App 时后端自己给出的那份帮助,与编好的程序逐字相同。
-        self.assertEqual(alone.returncode, 0)
+        self.assertEqual((alone.returncode, alone.stdout), (0, shared.stdout))
         self.assertIn("update options", shared.stdout)
         self.assertIn("退出码", shared.stdout)
 
