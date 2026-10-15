@@ -1,5 +1,5 @@
 {
-  "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0 (313)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
+  "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0.1 (336)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
   "passed": true,
   "method": "NSWorkspace.icon(forFile:)（IconServices，Finder/Dock 同源）离屏渲染 256/512 px，与源图标比对内部像素；不启动 App、不开窗口、不合成输入、不抢焦点",
   "source_icon": "icon/AppIcon.icns",
@@ -30,8 +30,8 @@
     {
       "app": "/Applications/DocKit.app",
       "bundle_id": "cyou.tianli.DocTools",
-      "version": "1.0",
-      "build": "313",
+      "version": "1.0.1",
+      "build": "336",
       "bundle_icon": "/Applications/DocKit.app/Contents/Resources/AppIcon.icns",
       "bundle_icon_sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b",
       "passed": true,

@@ -139,3 +139,13 @@ sop:
     source_visibility: private
     source_url: ''
     rationale: 本人 doctools 工作流的原生桌面入口，连接现有专业文档操作；与独立公开 DocKit 发行版分开维护。
+    role: application
+    product_id: doc-tools
+    primary: false
+    public_summary: 在自用 Mac 窗口选择文档操作，处理副本并逐份查看结果。
+    public_features:
+    - title: 选择操作
+      text: 从本机文档引擎读取真实操作与选项，再处理选定文件。
+    - title: 保留原稿
+      text: 结果与输入分开，查看逐份完成或失败的说明。
+    public_icon: /Users/tianli/Dev/tools/doctools/mac/icon/AppIcon.png

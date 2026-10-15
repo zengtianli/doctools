@@ -1,0 +1,237 @@
+{
+  "summary": "界面功能对照 29 项：命令 20 项，只能真人或只在窗口 9 项，暂缺 0 项；读回 dockit status",
+  "passed": true,
+  "registered": true,
+  "digest": "6db582621a30cb2bd72241721adb6ffc753bc80d5f4daf3a0074b840d73d9bd6",
+  "form": "mac",
+  "readback": "dockit status",
+  "readback_found": true,
+  "readback_run": {
+    "exit_code": 0
+  },
+  "counts": {
+    "total": 29,
+    "command": 20,
+    "human": 9,
+    "device": 0,
+    "missing": 0
+  },
+  "missing": [],
+  "human": [
+    {
+      "name": "搜索功能面板",
+      "reason": "只在窗口里有意义；命令用 dockit ops 列出全部操作"
+    },
+    {
+      "name": "拖入文件或目录",
+      "reason": "拖拽是真人动作；命令把绝对路径直接写在 dockit run 后面"
+    },
+    {
+      "name": "逐个移除待处理文件",
+      "reason": "只在窗口里有意义；命令每次自带文件清单，没有待处理列表"
+    },
+    {
+      "name": "清空待处理文件",
+      "reason": "只在窗口里有意义；命令每次自带文件清单，没有待处理列表"
+    },
+    {
+      "name": "清除已选参考文件",
+      "reason": "只在窗口里有意义；命令不传该选项就是没选"
+    },
+    {
+      "name": "恢复默认选项",
+      "reason": "只在窗口里有意义；命令每次从默认值起，不记上次勾选"
+    },
+    {
+      "name": "在 Finder 显示产出",
+      "reason": "只在窗口里有意义；产出路径在 dockit run 的 results[].outputs"
+    },
+    {
+      "name": "关闭提示条",
+      "reason": "只在窗口里有意义；命令的错误原因在 error 与退出码里"
+    },
+    {
+      "name": "打开「配置与更新…」窗口",
+      "reason": "打开窗口本身只在界面里有意义；版本看 dockit status，记住的设置看 dockit settings"
+    }
+  ],
+  "device": [],
+  "problems": [],
+  "commands": {
+    "dockit": {
+      "link": "~/.local/bin/dockit",
+      "exit_code": 0,
+      "has_json": true,
+      "has_exit_codes": true,
+      "summary": "DocKit 命令行:与 DocKit.app 同一个业务层(操作目录、校验、外发同意门、覆盖门、产出归因都在这里)。",
+      "error": null
+    }
+  },
+  "features": [
+    {
+      "name": "操作列表与说明（标题、副标题、支持源格式、破坏性标记）",
+      "kind": "command",
+      "value": "dockit ops",
+      "found": true
+    },
+    {
+      "name": "刷新操作列表",
+      "kind": "command",
+      "value": "dockit ops",
+      "found": true
+    },
+    {
+      "name": "侧栏点选操作",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "搜索功能面板",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令用 dockit ops 列出全部操作"
+    },
+    {
+      "name": "选择文件或目录",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "拖入文件或目录",
+      "kind": "human",
+      "value": "拖拽是真人动作；命令把绝对路径直接写在 dockit run 后面"
+    },
+    {
+      "name": "逐个移除待处理文件",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令每次自带文件清单，没有待处理列表"
+    },
+    {
+      "name": "清空待处理文件",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令每次自带文件清单，没有待处理列表"
+    },
+    {
+      "name": "目标格式",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "选项勾选（含允许覆盖已有同名文件、外发同意）",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "选项里选择参考文件",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "清除已选参考文件",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令不传该选项就是没选"
+    },
+    {
+      "name": "恢复默认选项",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令每次从默认值起，不记上次勾选"
+    },
+    {
+      "name": "执行",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "执行中的等待",
+      "kind": "command",
+      "value": "dockit status",
+      "found": true
+    },
+    {
+      "name": "结果（逐份成败、产出、成功 N/M）与错误原因",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "后端日志",
+      "kind": "command",
+      "value": "dockit run",
+      "found": true
+    },
+    {
+      "name": "在 Finder 显示产出",
+      "kind": "human",
+      "value": "只在窗口里有意义；产出路径在 dockit run 的 results[].outputs"
+    },
+    {
+      "name": "关闭提示条",
+      "kind": "human",
+      "value": "只在窗口里有意义；命令的错误原因在 error 与退出码里"
+    },
+    {
+      "name": "状态行（已就绪 / 后端不可达）",
+      "kind": "command",
+      "value": "dockit doctor",
+      "found": true
+    },
+    {
+      "name": "记住上次操作与各操作的目标格式",
+      "kind": "command",
+      "value": "dockit settings",
+      "found": true
+    },
+    {
+      "name": "打开「配置与更新…」窗口",
+      "kind": "human",
+      "value": "打开窗口本身只在界面里有意义；版本看 dockit status，记住的设置看 dockit settings"
+    },
+    {
+      "name": "版本与构建号",
+      "kind": "command",
+      "value": "dockit status",
+      "found": true
+    },
+    {
+      "name": "使用 iCloud 记住配置",
+      "kind": "command",
+      "value": "dockit config sync",
+      "found": true
+    },
+    {
+      "name": "iCloud 配置同步状态",
+      "kind": "command",
+      "value": "dockit config status",
+      "found": true
+    },
+    {
+      "name": "导出配置",
+      "kind": "command",
+      "value": "dockit config export",
+      "found": true
+    },
+    {
+      "name": "导入配置",
+      "kind": "command",
+      "value": "dockit config import",
+      "found": true
+    },
+    {
+      "name": "检查更新",
+      "kind": "command",
+      "value": "dockit update check",
+      "found": true
+    },
+    {
+      "name": "升级到新版",
+      "kind": "command",
+      "value": "dockit update install",
+      "found": true
+    }
+  ]
+}

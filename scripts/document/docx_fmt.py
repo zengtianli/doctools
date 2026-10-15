@@ -97,6 +97,62 @@ XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"  # xml:space（内建�
 # ════════════════════════════════════════════════════════════════════════════
 
 
+_STYLE_REF_TAGS = ("pStyle", "rStyle", "tblStyle")
+_STYLE_LINK_TAGS = ("basedOn", "next", "link")
+
+
+def _norm_style_name(name) -> str:
+    return re.sub(r"\s+", "", name or "").casefold()
+
+
+def _style_key(style):
+    name = style.find("w:name", NSMAP)
+    return (style.get(f"{{{W}}}type"), _norm_style_name(name.get(f"{{{W}}}val") if name is not None else ""))
+
+
+def _style_id_remap(orig_root, new_styles):
+    """按样式名把源稿样式对到模板的 styleId。返回 (改接表, 被模板取代的源样式 id)。
+
+    源稿里同名样式的编号可能与模板不同（例：源稿 ZDWP1=表格内容，模板 ZDWP1=表名、
+    ZDWP3=表格内容）。只按编号替换样式定义，表格单元格会整批变成表名。
+    源稿另有样式占了模板的编号而模板里没有同名样式时，给它换一个新编号保住定义。
+    """
+    tmpl_by_key, tmpl_ids = {}, set()
+    for style in new_styles.findall(".//w:style", NSMAP):
+        sid = style.get(f"{{{W}}}styleId")
+        tmpl_ids.add(sid)
+        tmpl_by_key.setdefault(_style_key(style), sid)
+    orig_ids = {s.get(f"{{{W}}}styleId") for s in orig_root.findall(".//w:style", NSMAP)}
+    remap, superseded = {}, set()
+    for style in orig_root.findall(".//w:style", NSMAP):
+        sid = style.get(f"{{{W}}}styleId")
+        target = tmpl_by_key.get(_style_key(style))
+        if target is not None:
+            if target != sid:
+                remap[sid] = target
+                superseded.add(sid)
+        elif sid in tmpl_ids:
+            fresh, n = f"{sid}src", 1
+            while fresh in orig_ids or fresh in tmpl_ids:
+                n += 1
+                fresh = f"{sid}src{n}"
+            orig_ids.add(fresh)
+            style.set(f"{{{W}}}styleId", fresh)
+            remap[sid] = fresh
+    return remap, superseded
+
+
+def _retarget_style_refs(root, remap, tags) -> int:
+    hit = 0
+    for tag in tags:
+        for el in root.iter(f"{{{W}}}{tag}"):
+            val = el.get(f"{{{W}}}val")
+            if val in remap:
+                el.set(f"{{{W}}}val", remap[val])
+                hit += 1
+    return hit
+
+
 def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
     """把模板样式注入到已有 docx 中"""
 
@@ -113,6 +169,27 @@ def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
         orig_styles_path = os.path.join(tmpdir, "word", "styles.xml")
         with open(orig_styles_path, "rb") as f:
             orig_root = etree.parse(f).getroot()
+
+        # 同名不同号的样式先改接到模板编号，再替换定义
+        remap, superseded = _style_id_remap(orig_root, new_styles)
+        retargeted_parts = set()
+        if remap:
+            for style in orig_root.findall(".//w:style", NSMAP):
+                if style.get(f"{{{W}}}styleId") in superseded:
+                    orig_root.remove(style)
+            _retarget_style_refs(orig_root, remap, _STYLE_LINK_TAGS)
+            word_dir = os.path.join(tmpdir, "word")
+            for fname in sorted(os.listdir(word_dir)):
+                if not fname.endswith(".xml") or fname == "styles.xml":
+                    continue
+                part_path = os.path.join(word_dir, fname)
+                with open(part_path, "rb") as f:
+                    part_tree = etree.parse(f)
+                if _retarget_style_refs(part_tree.getroot(), remap, _STYLE_REF_TAGS):
+                    part_tree.write(part_path, encoding="UTF-8", xml_declaration=True, standalone=True)
+                    retargeted_parts.add(f"word/{fname}")
+            print(f"🔗 样式按名称对齐模板编号：{len(remap)} 个（"
+                  + "、".join(f"{k}→{v}" for k, v in sorted(remap.items())) + "）")
 
         # 收集新样式的 ID
         new_style_ids = set()
@@ -155,7 +232,7 @@ def apply_styles_to_docx(docx_path, styles_xml_path, output_path):
     # （其余部件从 tmpdir 原字节回填），丢部件/白名单外改动即抛，不静默。
     # verbose=False 保持既有 stdout 契约。
     assert_parts_intact(docx_path, output_path,
-                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"},
+                        allow_changed=set(DEFAULT_ALLOW_CHANGED) | {"word/styles.xml"} | retargeted_parts,
                         verbose=False)
     print(f"✅ 输出: {output_path}")
     return output_path

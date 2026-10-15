@@ -88,6 +88,12 @@ GATE_SEVERITY = {
     "orphaned-comment-markup":        "High",
 }
 
+# ─── 写法类提示 check 组 (advisory) ────────────────────────────────────────────
+# 不进 ALL_CHECKS 也不进 gate (旧交付件不因它变红), 只在 --checks 里点名才跑。
+ADVISORY_CHECKS = [
+    "table-no-lead-in",
+]
+
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
@@ -367,6 +373,105 @@ def check_revision_tracking(doc_path: Path) -> dict:
                 "total": total, "safe_fix": True,
                 "fix_hint": "strip revisions"}
     return {"found": False}
+
+
+_TBL_CAPTION = re.compile(r"^\s*(续)?(附)?表\s*[0-9A-Za-z一二三四五六七八九十]")
+
+
+#: 扁平表号「表 1 ××」: 不带章号、不带短横。短报告和申报方案常用, 章节式判据不认它。
+_FLAT_TBL_CAPTION = re.compile(r"^\s*表\s*(\d+)(?![\d.\uff0e\-\u2011\u2013\u2014\uff0d])")
+
+
+def _flat_table_captions(doc_path: Path) -> dict:
+    """按正文顺序找每张表上方紧贴的扁平表题。返回 {表序号(1 起): 表号}; 读不了返回 {}。只读。"""
+    try:
+        import xml.etree.ElementTree as ET
+        with zipfile.ZipFile(doc_path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+    except Exception:
+        return {}
+    w = "{%s}" % W_NS
+    body = root.find(w + "body")
+    if body is None:
+        return {}
+    blocks = [e for e in body if e.tag in (w + "p", w + "tbl")]
+    out, n = {}, 0
+    for i, el in enumerate(blocks):
+        if el.tag != w + "tbl":
+            continue
+        n += 1
+        j = i - 1
+        while j >= 0 and blocks[j].tag == w + "p" and not "".join(x.text or "" for x in blocks[j].iter(w + "t")).strip():
+            j -= 1
+        if j < 0 or blocks[j].tag != w + "p":
+            continue
+        m = _FLAT_TBL_CAPTION.match("".join(x.text or "" for x in blocks[j].iter(w + "t")))
+        if m:
+            out[n] = int(m.group(1))
+    return out
+
+
+def check_table_no_lead_in(doc_path: Path) -> dict:
+    """表格前没有引出它的正文段 (本人 2026-10-13: 「所有的表格都不要孤零零的,
+    前面得有一段话」, ~/Work/reference/docx-report-review.md §1.5.6)。
+
+    口径: 只看有表题的表 (表题段紧贴在表上方, 文字以「表 N」开头); 表题再往上
+    第一个非空块必须是正文段。是标题、是另一张表、或已到文首 → 报。
+    没有表题的表 (封面、签字栏、版式表) 不查。只读。
+    """
+    try:
+        import xml.etree.ElementTree as ET
+        with zipfile.ZipFile(doc_path) as z:
+            root = ET.fromstring(z.read("word/document.xml"))
+            try:
+                style_level = _resolve_style_to_heading_level(z.read("word/styles.xml").decode("utf-8"))
+            except Exception:
+                style_level = {}
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+    w = "{%s}" % W_NS
+    body = root.find(w + "body")
+    if body is None:
+        return {"found": False, "error": "no w:body"}
+
+    def text(el) -> str:
+        return "".join(t.text or "" for t in el.iter(w + "t")).strip()
+
+    def is_heading(p) -> bool:
+        st = p.find(f"{w}pPr/{w}pStyle")
+        sid = st.get(w + "val", "") if st is not None else ""
+        if sid in style_level or _style_to_level_1based(sid) is not None:
+            return True
+        return p.find(f"{w}pPr/{w}outlineLvl") is not None
+
+    blocks = [e for e in body if e.tag in (w + "p", w + "tbl")]
+    lonely, checked = [], 0
+    for i, el in enumerate(blocks):
+        if el.tag != w + "tbl":
+            continue
+        j = i - 1
+        while j >= 0 and blocks[j].tag == w + "p" and not text(blocks[j]):
+            j -= 1
+        if j < 0 or blocks[j].tag != w + "p" or not _TBL_CAPTION.match(text(blocks[j])):
+            continue                      # 没有表题的表不查
+        caption = text(blocks[j])
+        checked += 1
+        k = j - 1
+        while k >= 0 and blocks[k].tag == w + "p" and not text(blocks[k]):
+            k -= 1
+        if k < 0:
+            why = "表题上方已到文首"
+        elif blocks[k].tag == w + "tbl":
+            why = "表题上方紧接另一张表"
+        elif is_heading(blocks[k]):
+            why = f"表题上方直接是标题「{text(blocks[k])[:20]}」"
+        else:
+            continue
+        lonely.append({"caption": caption[:40], "why": why})
+    if lonely:
+        return {"found": True, "tables_checked": checked, "lonely": lonely,
+                "fix_hint": f"{len(lonely)} 张表前没有引出段: " + "; ".join(x["caption"] for x in lonely[:5])}
+    return {"found": False, "tables_checked": checked}
 
 
 def check_orphaned_comment_markup(doc_path: Path) -> dict:
@@ -656,6 +761,18 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
         return any(k in cells for k in _COVER_KW)
 
     bad = [i for i in bad if not _is_cover_tbl(i)]
+    # 扁平表号豁免: 「表 1 ××」紧贴在表上方就是配好的, 只是章节式判据认不出这种表题。
+    # 源: 2026-10-13 庆元托溪申报方案, 4 张表全被报成孤儿表。
+    flat = _flat_table_captions(doc_path)
+
+    def _has_flat_caption(i: dict) -> bool:
+        if i.get("type") != "orphan-tbl-no-upstream-caption":
+            return False
+        m = re.fullmatch(r"tbl-(\d+)", str(i.get("tbl_id", "")))
+        return bool(m) and int(m.group(1)) in flat
+
+    flat_paired = sum(1 for i in bad if _has_flat_caption(i))
+    bad = [i for i in bad if not _has_flat_caption(i)]
     advisory = [i for i in issues if i.get("type") == "caption-name-content-mismatch"]
     base = {
         "captions": summary.get("captions", 0),
@@ -666,6 +783,8 @@ def check_caption_table_pairing(doc_path: Path) -> dict:
         "advisory_content_mismatches": len(advisory),
         "empty_names": summary.get("empty_names", 0),
     }
+    if flat_paired:
+        base["flat_numbered_paired"] = flat_paired
     if bad:
         type_counts: Counter = Counter(i["type"] for i in bad)
         base.update({
@@ -895,9 +1014,13 @@ def check_caption_count_consistency(doc_path: Path) -> dict:
     # A) size 不一致 (集合大小 vs caption 段数). 容差: 编号集合可能 < 段数
     #    (无编号 caption 段) 但 > 段数 一定异常 (编号多于段)。两向都报。
     fig_size_mismatch = (fig_cap_cnt > 0 or len(fig_set) > 0) and len(fig_set) != fig_cap_cnt
-    tbl_size_mismatch = (tbl_cap_cnt > 0 or len(tbl_set) > 0) and len(tbl_set) != tbl_cap_cnt
+    # 扁平表号「表 1 ××」不在章节式编号集里, 单独数: 段数对得上、1..N 连续不重复才算过。
+    flat_nums = sorted(_flat_table_captions(doc_path).values())
+    flat_gap = bool(flat_nums) and flat_nums != list(range(1, len(flat_nums) + 1))
+    tbl_size_mismatch = ((tbl_cap_cnt > 0 or len(tbl_set) > 0)
+                         and len(tbl_set) + len(flat_nums) != tbl_cap_cnt)
 
-    found = bool(fig_gaps or tbl_gaps or fig_size_mismatch or tbl_size_mismatch)
+    found = bool(fig_gaps or tbl_gaps or fig_size_mismatch or tbl_size_mismatch or flat_gap)
     base = {
         "figure_number_set_size": len(fig_set),
         "caption_figure_count": fig_cap_cnt,
@@ -906,12 +1029,16 @@ def check_caption_count_consistency(doc_path: Path) -> dict:
         "figure_gaps": fig_gaps,
         "table_gaps": tbl_gaps,
     }
+    if flat_nums:
+        base["flat_table_numbers"] = flat_nums
     if found:
         reasons = []
         if fig_size_mismatch:
             reasons.append(f"图: 编号集 {len(fig_set)} ≠ caption 段 {fig_cap_cnt}")
         if tbl_size_mismatch:
-            reasons.append(f"表: 编号集 {len(tbl_set)} ≠ caption 段 {tbl_cap_cnt}")
+            reasons.append(f"表: 编号集 {len(tbl_set) + len(flat_nums)} ≠ caption 段 {tbl_cap_cnt}")
+        if flat_gap:
+            reasons.append(f"扁平表号不连续或重复: {flat_nums}")
         if fig_gaps:
             reasons.append(f"图跳号 {len(fig_gaps)} 章")
         if tbl_gaps:
@@ -1064,6 +1191,8 @@ class HealthChecker:
             return check_numbering_depth_uniformity(dp)
         if check_id == "orphaned-comment-markup":
             return check_orphaned_comment_markup(dp)
+        if check_id == "table-no-lead-in":
+            return check_table_no_lead_in(dp)
         return {"found": False, "error": f"unknown check: {check_id}"}
 
 
@@ -1185,6 +1314,16 @@ def _print_summary(results: dict[str, dict], doc_path: Path) -> int:
             err = res.get("error", "")
             detail = f"err: {err}" if err else "ok"
             lines.append(f"  {'  ' + cid:<34} {'no':<6} {sev:<5} {safe:<10} {detail}")
+    for cid in ADVISORY_CHECKS:          # 点名才跑的提示项: 有结果才列, 最多算 warning
+        if cid not in results:
+            continue
+        res = results[cid]
+        if res.get("found"):
+            lines.append(f"  {'⚠ ' + cid:<34} {'YES':<6} {'Low':<5} {'❌ plan':<10} {res.get('fix_hint', '')}")
+            max_rc = max(max_rc, 1)
+        else:
+            err = res.get("error", "")
+            lines.append(f"  {'  ' + cid:<34} {'no':<6} {'Low':<5} {'❌ plan':<10} {('err: ' + err) if err else 'ok'}")
     lines.append(f"{'─'*70}")
     lines.append(f"  exit_code={max_rc}  (0=healthy / 1=warning / 2=error)\n")
     print("\n".join(lines))

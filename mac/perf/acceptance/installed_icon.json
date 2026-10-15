@@ -5,14 +5,14 @@
   "command": "~/Dev/.venv/bin/python ~/Apps/chapter/engine/acceptors/installed_icon.py",
   "exit_code": 0,
   "status": "passed",
-  "started_at": "2026-10-01T10:58:58.050937+08:00",
-  "finished_at": "2026-10-01T10:58:59.745143+08:00",
+  "started_at": "2026-10-07T21:51:57.565434+08:00",
+  "finished_at": "2026-10-07T21:51:58.149187+08:00",
   "input_sha256": "925a3cc314b2d261d73698f8cb3dad50587eb40c2aba038fabdd09ee43cce628",
-  "log": "perf/acceptance/installed_icon.log",
-  "log_sha256": "2deae4fe4e11e02303fefd76e1649b82fed225947d848a922c4059b0a54f2d56",
-  "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0 (313)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
+  "log": "perf/acceptance/run-e0w8ibks/installed_icon.log",
+  "log_sha256": "dda758760d2cdd5d8cbef4c4667a083e15603b1c8bcc39f15c441f2c2184cb31",
+  "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0.1 (336)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
   "detail": {
-    "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0 (313)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
+    "summary": "系统实际显示的装机图标与源图标一致（DocKit.app 1.0.1 (336)：256px 均差 5.44 超差 0.00%，512px 均差 6.95 超差 0.11%；macOS 27.2.0，离屏读取）",
     "passed": true,
     "method": "NSWorkspace.icon(forFile:)（IconServices，Finder/Dock 同源）离屏渲染 256/512 px，与源图标比对内部像素；不启动 App、不开窗口、不合成输入、不抢焦点",
     "source_icon": "icon/AppIcon.icns",
@@ -43,8 +43,8 @@
       {
         "app": "/Applications/DocKit.app",
         "bundle_id": "cyou.tianli.DocTools",
-        "version": "1.0",
-        "build": "313",
+        "version": "1.0.1",
+        "build": "336",
         "bundle_icon": "/Applications/DocKit.app/Contents/Resources/AppIcon.icns",
         "bundle_icon_sha256": "0b44c5da5eebc2f78f0218929807351fde3ec481db65361f60e293916399338b",
         "passed": true,
@@ -81,5 +81,11 @@
     ],
     "contact_sheet": "perf/acceptance/installed_icon.png",
     "contact_sheet_sha256": "f672ff7cce0856bcc548b0548324f7ccf58e5c533a5b07b01e1da18a53155b21"
-  }
+  },
+  "previous_observation": {
+    "path": "perf/acceptance/attempts/installed_icon/20261007T215157561640+0800-9ipujslo",
+    "manifest_sha256": "462d4db5d3bba4b82e2e9c440707a8b4bc352c10eee3127319f6b32f2a632b24"
+  },
+  "run_id": "run-e0w8ibks",
+  "evidence_file": "perf/acceptance/run-e0w8ibks/installed_icon.json"
 }

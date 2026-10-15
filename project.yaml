@@ -13,3 +13,8 @@ compatibility:
     check_entry: ~/Dev/.venv/bin/python scripts/document/docx_cli.py --help
     repair_entry: Dev/pyproject.toml; uv sync --all-packages --frozen
     evidence_refs: [mac-pair/receipts/doctools-smoke.json]
+
+sop:
+  product:
+    role: component
+    parent: doc-tools
