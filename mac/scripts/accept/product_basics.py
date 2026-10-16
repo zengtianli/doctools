@@ -18,6 +18,10 @@ import sys
 import time
 import uuid
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path.home() / "Apps/chapter/engine"))
+import app_sop
+
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT = "cyou.tianli.DocTools"
 FEATURES = ("settings", "shortcuts", "icloud", "updates")
@@ -46,6 +50,21 @@ def owner_snapshot():
     return values
 
 
+def verify_original(app, receipt_path):
+    """Keep build provenance immutable; bind hot-read behavior to today's inputs."""
+    component = app_sop.load_apps("doc-tools")[0]
+    assert component["repo"].resolve() == ROOT, "Component source mismatch"
+    receipt = json.loads(receipt_path.read_text())
+    source = receipt["source"]
+    files = source["files"]
+    assert files and source["file_count"] == len(files), "Incomplete build input map"
+    assert hashlib.sha256(json.dumps(files, sort_keys=True, ensure_ascii=False).encode()).hexdigest() == source["sha256"], "Invalid build input digest"
+    valid, reason = app_sop.verify_build_receipt(component, app, receipt_path)
+    assert valid, reason
+    current = app_sop.app_source_snapshot(component, source["input_globs"], include_files=True)
+    return component, receipt, current
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, default=os.environ.get("SOP_PRODUCT_BASICS_APP", "/Applications/DocKit.app"))
@@ -72,7 +91,7 @@ def main():
 
     try:
         app, receipt_path = args.app.resolve(), args.receipt.resolve()
-        receipt = json.loads(receipt_path.read_text())
+        component, receipt, current_source = verify_original(app, receipt_path)
         artifact = receipt["artifact"]
         info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
         executable = app / artifact["executable"]
@@ -80,17 +99,14 @@ def main():
         assert info["CFBundleShortVersionString"] == artifact["version"] and info["CFBundleVersion"] == artifact["build"]
         assert sha(executable) == artifact["sha256"], "Executable differs from build receipt"
         assert receipt.get("built_at") and receipt.get("build_command_sha256")
-        files = receipt["source"]["files"]
-        assert hashlib.sha256(json.dumps(files, sort_keys=True, ensure_ascii=False).encode()).hexdigest() == receipt["source"]["sha256"]
-        for path, digest in files.items():
-            source = Path(path.removeprefix("@external:")) if path.startswith("@external:") else ROOT / path
-            assert source.is_file() and sha(source) == digest, f"Build input changed: {path}"
         signature = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, text=True, timeout=30)
         (run / "signature.log").write_text(signature.stdout + signature.stderr)
         assert signature.returncode == 0, "Invalid original signature"
         binding = {"mode": "installed" if app == Path("/Applications/DocKit.app") else "candidate",
                    "original_app": str(app), "receipt": str(receipt_path), "receipt_sha256": sha(receipt_path),
-                   "artifact": artifact, "source_sha256": receipt["source"]["sha256"], "acceptor_sha256": sha(__file__)}
+                   "artifact": artifact, "build_source_sha256": receipt["source"]["sha256"],
+                   "source_sha256": current_source["sha256"], "current_source": current_source,
+                   "acceptor_sha256": sha(__file__)}
         clone = run / "fixture/DocKit.app"
         clone.parent.mkdir()
         shutil.copytree(app, clone, symlinks=True)
@@ -214,6 +230,8 @@ def main():
         check("updates", "data_preservation", regression.returncode == 0 and "OK" in regression.stderr and "skipped" not in regression.stderr
               and all(defaults(suite).get(key) == value for key, value in portable.items()) and sha(executable) == artifact["sha256"])
         binding["upgrade_log"] = {"path": str((run / "upgrade.log").relative_to(ROOT)), "sha256": sha(run / "upgrade.log")}
+        assert app_sop.app_source_snapshot(component, current_source["input_globs"], include_files=True) == current_source, "Production inputs changed during acceptance"
+        assert sha(receipt_path) == binding["receipt_sha256"], "Build receipt changed during acceptance"
     except Exception as exc:
         error = str(exc)
         for feature in FEATURES:

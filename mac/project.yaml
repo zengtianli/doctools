@@ -40,6 +40,8 @@ sop:
   - /Users/tianli/Dev/tools/doctools/scripts/document/doc_gui_backend.py
   - /Users/tianli/Dev/tools/doctools/scripts/document/doc_dispatch.py
   - /Users/tianli/Dev/tools/doctools/scripts/document/docx_fmt.py
+  source_runtime_files:
+  - /Users/tianli/Dev/tools/doctools/scripts/document/doc_gui_backend.py
   cli:
     # App 包内 Contents/Resources/bin/dockit（源 bin/dockit），exec ~/Dev/.venv 与父仓 doc_gui_backend.py，
     # 与 GUI 同一个 gui_run；子命令 ops / run / status / doctor / settings，见 dockit --help。build.sh --install 链到 ~/.local/bin/dockit
