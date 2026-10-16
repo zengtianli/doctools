@@ -56,3 +56,11 @@ env -u SOP_PRODUCT_BASICS_APP -u SOP_PRODUCT_BASICS_RECEIPT \
 - 本轮是明确授权的 Developer ID 本机迭代，未公证、推送、公开发布、部署或修改真实更新源；正式旧包仍完整可回溯，公开发行走原独立流程。
 - 父仓“未装 App”fallback 帮助仍是旧共享文字；已装 config/update 完整帮助转调当前原件，新增选项实际可用，本轮不改父仓。
 - 当前 product_basics 和授权一次安装均完成，无用户待决策、无当前受阻；其他旧 SOP、公开变体和全量性能未展开。
+
+## 2026-10-16 · 包外热读来源判断已修，现装 product_basics 复验通过
+
+- 09:35 旧失败依据保留：`chapter sop accept --app doc-tools --check product_basics --json` 退出 1，原件 `perf/acceptance/run-vpl1yfe1/product_basics.json`。错误为 `Build input changed`，点名父仓 `scripts/document/doc_gui_backend.py`；四项行为尚未执行，属于来源判断失败。
+- `c806392` 改的是 App 与 CLI 在包外热读的后端帮助文字。现场核对原回执完整 26 项输入，仅该仓外后端变化；现装主程序、版本、图标及原签名仍匹配，包内入口没有变化。后端更新已生效，无需重建或安装。
+- `project.yaml` 将该文件加入既有 `source_runtime_files`；固定验收器复用 Chapter 的严格来源等价证明。原 `perf/build-receipt.json` 保持原字节，功能证据另绑定当前完整输入摘要，并在执行结束后核实未漂移。编译、包内、未声明仓外文件及签名资源变化依旧拒绝。
+- 10:42 同一默认现装命令退出 0，当前通过原件 `perf/acceptance/run-felxrvq7/product_basics.json`；14 项必测行为、settings/shortcuts/icloud/updates 全部通过。本人数据与生产安装前后相同，未重建、安装或修改更新源；回执原件留本机。
+- 新增来源反证测试通过：外部热读变更保留旧构建回执并绑定当前后端；编译输入、未声明外部文件、签名资源和不完整来源 map 均拒绝。iCloud 仍仅验证隔离本机链路，苹果服务器及跨设备传输未测。
